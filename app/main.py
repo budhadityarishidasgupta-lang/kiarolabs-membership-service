@@ -32,13 +32,11 @@ async def gumroad_webhook(request: Request):
     if not email:
         return {"error": "missing email"}
 
-    # simple password generation (temporary)
     temp_password = hashlib.sha256(email.encode()).hexdigest()[:10]
 
     conn = get_connection()
     cur = conn.cursor()
 
-    # Check if user already exists
     cur.execute(
         "SELECT id FROM kiaro_membership.members WHERE email = %s",
         (email,)
@@ -82,12 +80,14 @@ async def gumroad_webhook(request: Request):
         )
 
     conn.commit()
+    cur.close()
+    conn.close()
 
-    @app.get("/test-webhook")
+    return {"status": "membership updated"}
+
+
+@app.get("/test-webhook")
 def test_webhook():
-    from datetime import datetime, timedelta
-    import hashlib
-
     email = "testuser@email.com"
     name = "Test User"
     subscription_id = "test-sub-123"
@@ -128,7 +128,3 @@ def test_webhook():
     conn.close()
 
     return {"status": "test membership created"}
-    cur.close()
-    conn.close()
-
-    return {"status": "membership updated"}
