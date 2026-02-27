@@ -82,6 +82,52 @@ async def gumroad_webhook(request: Request):
         )
 
     conn.commit()
+
+    @app.get("/test-webhook")
+def test_webhook():
+    from datetime import datetime, timedelta
+    import hashlib
+
+    email = "testuser@email.com"
+    name = "Test User"
+    subscription_id = "test-sub-123"
+
+    temp_password = hashlib.sha256(email.encode()).hexdigest()[:10]
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO kiaro_membership.members
+        (name, email, password_hash, subscription_status,
+         subscription_start, subscription_end,
+         gumroad_subscription_id)
+        VALUES (%s, %s, %s, 'active', %s, %s, %s)
+        ON CONFLICT (email) DO UPDATE
+        SET subscription_status = 'active',
+            subscription_start = %s,
+            subscription_end = %s,
+            gumroad_subscription_id = %s
+        """,
+        (
+            name,
+            email,
+            temp_password,
+            datetime.utcnow(),
+            datetime.utcnow() + timedelta(days=30),
+            subscription_id,
+            datetime.utcnow(),
+            datetime.utcnow() + timedelta(days=30),
+            subscription_id
+        )
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"status": "test membership created"}
     cur.close()
     conn.close()
 
