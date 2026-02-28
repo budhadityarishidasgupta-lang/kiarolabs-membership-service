@@ -8,7 +8,7 @@ app = FastAPI()
 
 @app.get("/")
 def root():
-    return {"status": "membership service running v3"}
+    return {"status": "membership service running v4"}
 
 
 @app.get("/health")
@@ -28,69 +28,20 @@ async def gumroad_webhook(request: Request):
     email = data.get("email")
     name = data.get("full_name")
     subscription_id = data.get("subscription_id")
+    cancelled_at_payload = data.get("subscription_cancelled_at")
 
     if not email:
         return {"error": "missing email"}
 
-    temp_password = hashlib.sha256(email.encode()).hexdigest()[:10]
+    now = datetime.utcnow()
+    end_date = now + timedelta(days=30)
 
-    conn = get_connection()
-    cur = conn.cursor()
+    subscription_status = "active"
+    cancelled_at = None
 
-    cur.execute(
-        "SELECT id FROM kiaro_membership.members WHERE email = %s",
-        (email,)
-    )
-    existing_user = cur.fetchone()
-
-    if existing_user:
-        cur.execute(
-            """
-            UPDATE kiaro_membership.members
-            SET subscription_status = 'active',
-                subscription_start = %s,
-                subscription_end = %s,
-                gumroad_subscription_id = %s
-            WHERE email = %s
-            """,
-            (
-                datetime.utcnow(),
-                datetime.utcnow() + timedelta(days=30),
-                subscription_id,
-                email
-            )
-        )
-    else:
-        cur.execute(
-            """
-            INSERT INTO kiaro_membership.members
-            (name, email, password_hash, subscription_status,
-             subscription_start, subscription_end,
-             gumroad_subscription_id)
-            VALUES (%s, %s, %s, 'active', %s, %s, %s)
-            """,
-            (
-                name,
-                email,
-                temp_password,
-                datetime.utcnow(),
-                datetime.utcnow() + timedelta(days=30),
-                subscription_id
-            )
-        )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return {"status": "membership updated"}
-
-
-@app.get("/test-webhook")
-def test_webhook():
-    email = "testuser@email.com"
-    name = "Test User"
-    subscription_id = "test-sub-123"
+    if cancelled_at_payload:
+        subscription_status = "cancelled"
+        cancelled_at = now
 
     temp_password = hashlib.sha256(email.encode()).hexdigest()[:10]
 
@@ -102,24 +53,38 @@ def test_webhook():
         INSERT INTO kiaro_membership.members
         (name, email, password_hash, subscription_status,
          subscription_start, subscription_end,
-         gumroad_subscription_id)
-        VALUES (%s, %s, %s, 'active', %s, %s, %s)
+         gumroad_subscription_id,
+         subscription_event,
+         cancelled_at,
+         updated_at)
+        VALUES (%s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, NOW())
         ON CONFLICT (email) DO UPDATE
-        SET subscription_status = 'active',
+        SET subscription_status = %s,
             subscription_start = %s,
             subscription_end = %s,
-            gumroad_subscription_id = %s
+            gumroad_subscription_id = %s,
+            subscription_event = %s,
+            cancelled_at = %s,
+            updated_at = NOW()
         """,
         (
             name,
             email,
             temp_password,
-            datetime.utcnow(),
-            datetime.utcnow() + timedelta(days=30),
+            subscription_status,
+            now,
+            end_date,
             subscription_id,
-            datetime.utcnow(),
-            datetime.utcnow() + timedelta(days=30),
-            subscription_id
+            "gumroad_webhook",
+            cancelled_at,
+            subscription_status,
+            now,
+            end_date,
+            subscription_id,
+            "gumroad_webhook",
+            cancelled_at
         )
     )
 
@@ -127,7 +92,7 @@ def test_webhook():
     cur.close()
     conn.close()
 
-    return {"status": "test membership created"}
+    return {"status": "webhook processed"}
 
 
 @app.get("/system-check")
@@ -146,13 +111,18 @@ def system_check():
             INSERT INTO kiaro_membership.members
             (name, email, password_hash, subscription_status,
              subscription_start, subscription_end,
-             gumroad_subscription_id)
+             gumroad_subscription_id,
+             subscription_event,
+             updated_at)
             VALUES (%s, %s, %s, 'active',
                     NOW(),
                     NOW() + INTERVAL '30 days',
-                    %s)
+                    %s,
+                    'system_check',
+                    NOW())
             ON CONFLICT (email) DO UPDATE
-            SET subscription_status = 'active'
+            SET subscription_status = 'active',
+                updated_at = NOW()
             """,
             ("System Check", test_email, "testpass", "sys-check")
         )
