@@ -8,7 +8,7 @@ app = FastAPI()
 
 @app.get("/")
 def root():
-    return {"status": "membership service running"}
+    return {"status": "membership service running v2"}
 
 
 @app.get("/health")
