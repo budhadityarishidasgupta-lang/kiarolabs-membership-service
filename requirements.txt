@@ -1,5 +1,6 @@
 fastapi
 uvicorn
 psycopg2-binary
-python-dotenv
 python-multipart
+passlib[bcrypt]
+python-jose[cryptography]
