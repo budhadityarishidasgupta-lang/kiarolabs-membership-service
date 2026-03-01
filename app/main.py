@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
