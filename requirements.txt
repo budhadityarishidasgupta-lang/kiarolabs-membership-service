@@ -2,6 +2,7 @@ fastapi
 uvicorn
 psycopg2-binary
 python-multipart
-passlib[bcrypt]
+passlib
+bcrypt
 python-jose[cryptography]
 email-validator
