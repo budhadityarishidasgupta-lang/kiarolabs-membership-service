@@ -8,7 +8,7 @@ app = FastAPI()
 
 @app.get("/")
 def root():
-    return {"status": "membership service running v4"}
+    return {"status": "membership service running v5"}
 
 
 @app.get("/health")
@@ -34,8 +34,6 @@ async def gumroad_webhook(request: Request):
         return {"error": "missing email"}
 
     now = datetime.utcnow()
-    end_date = now + timedelta(days=30)
-
     subscription_status = "active"
     cancelled_at = None
 
@@ -47,6 +45,19 @@ async def gumroad_webhook(request: Request):
 
     conn = get_connection()
     cur = conn.cursor()
+
+    # Get existing end date (if exists)
+    cur.execute(
+        "SELECT subscription_end FROM kiaro_membership.members WHERE email = %s",
+        (email,)
+    )
+    existing = cur.fetchone()
+
+    if existing and existing[0] and subscription_status == "active":
+        # Extend from existing end date if still active
+        end_date = existing[0] + timedelta(days=30)
+    else:
+        end_date = now + timedelta(days=30)
 
     cur.execute(
         """
@@ -62,7 +73,6 @@ async def gumroad_webhook(request: Request):
                 %s, %s, NOW())
         ON CONFLICT (email) DO UPDATE
         SET subscription_status = %s,
-            subscription_start = %s,
             subscription_end = %s,
             gumroad_subscription_id = %s,
             subscription_event = %s,
@@ -80,7 +90,6 @@ async def gumroad_webhook(request: Request):
             "gumroad_webhook",
             cancelled_at,
             subscription_status,
-            now,
             end_date,
             subscription_id,
             "gumroad_webhook",
@@ -129,17 +138,6 @@ def system_check():
         conn.commit()
         results["write_test"] = "OK"
 
-        cur.execute(
-            "SELECT subscription_status FROM kiaro_membership.members WHERE email = %s",
-            (test_email,)
-        )
-        row = cur.fetchone()
-
-        if row and row[0] == "active":
-            results["read_test"] = "OK"
-        else:
-            results["read_test"] = "FAILED"
-
         cur.close()
         conn.close()
 
@@ -147,3 +145,47 @@ def system_check():
         results["error"] = str(e)
 
     return results
+
+
+@app.get("/validate-user")
+def validate_user(email: str):
+    if not email:
+        return {"active": False, "reason": "email_required"}
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT subscription_status, subscription_end
+            FROM kiaro_membership.members
+            WHERE email = %s
+            """,
+            (email,)
+        )
+
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row:
+            return {"active": False, "reason": "user_not_found"}
+
+        subscription_status, subscription_end = row
+        now = datetime.utcnow()
+
+        if subscription_status != "active":
+            return {"active": False, "reason": subscription_status}
+
+        if subscription_end and subscription_end < now:
+            return {"active": False, "reason": "subscription_expired"}
+
+        return {
+            "active": True,
+            "subscription_status": subscription_status,
+            "subscription_end": subscription_end.isoformat() if subscription_end else None
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
