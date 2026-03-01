@@ -9,7 +9,7 @@ from jose import jwt, JWTError
 # =========================
 # Config (keep simple)
 # =========================
-JWT_SECRET = "CHANGE_ME_IN_RENDER_ENV"  # put in Render env var later
+JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 2
 
