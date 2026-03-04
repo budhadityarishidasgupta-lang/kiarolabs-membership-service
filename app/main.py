@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from app.database import get_connection
 from datetime import datetime, timedelta
@@ -8,7 +9,7 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 
 # =========================
-# Config (keep simple)
+# Config
 # =========================
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
@@ -17,13 +18,14 @@ ACCESS_TOKEN_EXPIRE_HOURS = 2
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-from fastapi.middleware.cors import CORSMiddleware
-
 app = FastAPI()
 
+# =========================
+# CORS
+# =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later we restrict this
+    allow_origins=["*"],  # restrict later in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,9 +39,11 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
 
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
 
 # =========================
 # Helpers
@@ -50,11 +54,14 @@ def create_access_token(email: str, account_type: str):
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
     return token, expire
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
+
 def hash_password(plain: str) -> str:
     return pwd_context.hash(plain)
+
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
@@ -66,14 +73,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+
 def derive_subscription_state(subscription_status: str | None, subscription_end):
-    """
-    Keeps behavior predictable for your apps:
-    - active + end>=now -> active
-    - cancelled + end>=now -> still treated as active access (but reason=cancelled)
-    - end<now -> expired
-    - otherwise -> inactive
-    """
     now = datetime.utcnow()
 
     if subscription_end and subscription_end < now:
@@ -83,10 +84,10 @@ def derive_subscription_state(subscription_status: str | None, subscription_end)
         return True, "active"
 
     if subscription_status == "cancelled":
-        # Still allow access until end date (common subscription behavior)
         return True, "cancelled"
 
     return False, subscription_status or "inactive"
+
 
 # =========================
 # Health
@@ -94,6 +95,7 @@ def derive_subscription_state(subscription_status: str | None, subscription_end)
 @app.get("/")
 def root():
     return {"status": "membership service running v6"}
+
 
 @app.get("/health")
 def health_check():
@@ -104,16 +106,22 @@ def health_check():
     except Exception as e:
         return {"database": "error", "details": str(e)}
 
+
 # =========================
-# Auth: Register + Login
+# Auth: Register
 # =========================
 @app.post("/register")
 def register(req: RegisterRequest):
+    email = req.email.strip().lower()
+
     conn = get_connection()
     cur = conn.cursor()
 
-    # Check existing
-    cur.execute("SELECT id FROM kiaro_membership.members WHERE email = %s", (req.email,))
+    cur.execute(
+        "SELECT id FROM kiaro_membership.members WHERE email = %s",
+        (email,),
+    )
+
     if cur.fetchone():
         cur.close()
         conn.close()
@@ -127,19 +135,29 @@ def register(req: RegisterRequest):
         (name, email, password_hash, subscription_status, account_type, auth_provider, created_at, updated_at)
         VALUES (%s, %s, %s, 'inactive', 'free', 'email', NOW(), NOW())
         """,
-        (req.name, req.email, pw_hash),
+        (req.name, email, pw_hash),
     )
 
     conn.commit()
     cur.close()
     conn.close()
 
-    # Auto-login after register
-    token, exp = create_access_token(req.email, "free")
-    return {"access_token": token, "token_type": "bearer", "expires_at": exp.isoformat()}
+    token, exp = create_access_token(email, "free")
 
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_at": exp.isoformat(),
+    }
+
+
+# =========================
+# Auth: Login
+# =========================
 @app.post("/login")
 def login(req: LoginRequest):
+    email = req.email.strip().lower()
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -149,8 +167,9 @@ def login(req: LoginRequest):
         FROM kiaro_membership.members
         WHERE email = %s
         """,
-        (req.email,),
+        (email,),
     )
+
     row = cur.fetchone()
     cur.close()
     conn.close()
@@ -161,29 +180,39 @@ def login(req: LoginRequest):
     password_hash, account_type = row
 
     if not password_hash:
-        # e.g. created via Gumroad webhook before setting password
-        raise HTTPException(status_code=401, detail="Password not set. Please register or set password.")
+        raise HTTPException(
+            status_code=401,
+            detail="Password not set. Please register or set password.",
+        )
 
     if not verify_password(req.password, password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token, exp = create_access_token(req.email, account_type or "free")
-    return {"access_token": token, "token_type": "bearer", "expires_at": exp.isoformat()}
+    token, exp = create_access_token(email, account_type or "free")
 
-@app.get("/me")
-def me(user=Depends(get_current_user)):
-    # user contains sub + account_type
-    return {"email": user["sub"], "account_type": user.get("account_type")}
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_at": exp.isoformat(),
+    }
+
 
 # =========================
-# Gumroad webhook
+# Current User
+# =========================
+@app.get("/me")
+def me(user=Depends(get_current_user)):
+    return {
+        "email": user["sub"],
+        "account_type": user.get("account_type"),
+    }
+
+
+# =========================
+# Gumroad Webhook
 # =========================
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
-    """
-    Gumroad sends form-encoded payloads.
-    Needs python-multipart installed.
-    """
     data = await request.form()
 
     email = (data.get("email") or "").strip().lower()
@@ -196,14 +225,13 @@ async def gumroad_webhook(request: Request):
 
     now = datetime.utcnow()
 
-    # Basic status handling
     subscription_status = "active"
     cancelled_at = None
+
     if cancelled_at_payload:
         subscription_status = "cancelled"
         cancelled_at = now
 
-    # Extend logic
     conn = get_connection()
     cur = conn.cursor()
 
@@ -220,8 +248,6 @@ async def gumroad_webhook(request: Request):
 
     account_type = "paid" if subscription_status in ("active", "cancelled") else "free"
 
-    # If user doesn't exist yet: create user WITHOUT password (they can register later)
-    # If user exists: upgrade to paid
     cur.execute(
         """
         INSERT INTO kiaro_membership.members
@@ -259,7 +285,7 @@ async def gumroad_webhook(request: Request):
             "gumroad_webhook",
             cancelled_at,
             account_type,
-            email,  # for COALESCE subquery
+            email,
         ),
     )
 
@@ -269,15 +295,12 @@ async def gumroad_webhook(request: Request):
 
     return {"status": "webhook processed"}
 
+
 # =========================
-# Validate user (keep for apps)
+# Validate User
 # =========================
 @app.get("/validate-user")
 def validate_user(email: str):
-    """
-    Keep this endpoint for now (simple integration for your apps/website).
-    Later we can switch to JWT-only access checks.
-    """
     if not email:
         return {"active": False, "reason": "email_required"}
 
@@ -292,8 +315,8 @@ def validate_user(email: str):
         """,
         (email.strip().lower(),),
     )
-    row = cur.fetchone()
 
+    row = cur.fetchone()
     cur.close()
     conn.close()
 
