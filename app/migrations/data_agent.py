@@ -69,10 +69,10 @@ def build_member_apps_insert_sql(source):
 
     if app_code_col:
         app_code_expr = app_code_col
-        where_clause = f"{email_col} IS NOT NULL AND {app_code_col} IS NOT NULL"
+        where_clause = f"s.{email_col} IS NOT NULL AND s.{app_code_col} IS NOT NULL"
     else:
         app_code_expr = f"'{default_app_code}'"
-        where_clause = f"{email_col} IS NOT NULL"
+        where_clause = f"s.{email_col} IS NOT NULL"
 
     sql = f"""
     INSERT INTO kiaro_membership.member_apps (member_id, app_code)

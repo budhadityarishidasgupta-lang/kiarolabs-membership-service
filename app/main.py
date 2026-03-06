@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from app.practice.router import router as practice_router
-app.include_router(practice_router)
+
 
 # =========================
 # Config
@@ -335,3 +335,7 @@ def validate_user(email: str):
         "subscription_status": subscription_status,
         "subscription_end": subscription_end.isoformat() if subscription_end else None,
     }
+# =========================
+# Practice Engine Routes
+# =========================
+app.include_router(practice_router)
