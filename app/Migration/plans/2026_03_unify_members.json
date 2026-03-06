@@ -1,1 +1,35 @@
-
+{
+  "migration_name": "2026_03_unify_members",
+  "sources": [
+    {
+      "source_name": "public_users",
+      "schema": "public",
+      "table": "users",
+      "email_col": "email",
+      "name_col": "name",
+      "password_hash_col": "password_hash",
+      "app_code_col": "app_source",
+      "default_app_code": null
+    },
+    {
+      "source_name": "public_mcq_users",
+      "schema": "public",
+      "table": "mcq_users",
+      "email_col": "email",
+      "name_col": "name",
+      "password_hash_col": null,
+      "app_code_col": null,
+      "default_app_code": "mcq"
+    },
+    {
+      "source_name": "public_nvr_users",
+      "schema": "public",
+      "table": "nvr_users",
+      "email_col": "email",
+      "name_col": null,
+      "password_hash_col": null,
+      "app_code_col": null,
+      "default_app_code": "nvr"
+    }
+  ]
+}
