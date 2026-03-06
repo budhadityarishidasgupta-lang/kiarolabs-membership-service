@@ -7,6 +7,8 @@ from app.database import get_connection
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
+from app.practice.router import router as practice_router
+app.include_router(practice_router)
 
 # =========================
 # Config
