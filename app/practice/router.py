@@ -3,7 +3,13 @@ from pydantic import BaseModel
 from app.auth import get_current_user
 from app.practice.math_engine import get_math_question
 from app.practice.spelling_engine import get_spelling_question
-from app.practice.synonym_engine import get_synonym_question, submit_synonym_answer
+from app.practice.synonym_engine import (
+    get_synonym_question,
+    submit_synonym_answer,
+    get_synonym_progress,
+    get_next_synonym_question,
+    get_dashboard_stats,
+)
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 
@@ -38,3 +44,18 @@ def synonym_answer(req: SynonymAnswerRequest, user=Depends(get_current_user)):
         chosen=req.chosen,
         response_ms=req.response_ms,
     )
+
+
+@router.get("/synonym/progress")
+def synonym_progress(user=Depends(get_current_user)):
+    return get_synonym_progress(user["sub"])
+
+
+@router.get("/synonym/next-question")
+def synonym_next(user=Depends(get_current_user)):
+    return get_next_synonym_question(user["sub"])
+
+
+@router.get("/dashboard")
+def dashboard(user=Depends(get_current_user)):
+    return get_dashboard_stats(user["sub"])
