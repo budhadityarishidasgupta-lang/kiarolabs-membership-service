@@ -18,4 +18,4 @@ def spelling_question(user=Depends(get_current_user)):
 
 @router.get("/synonym/question")
 def synonym_question(user=Depends(get_current_user)):
-    return get_synonym_question(user["id"])
+    return get_synonym_question(user["sub"])
