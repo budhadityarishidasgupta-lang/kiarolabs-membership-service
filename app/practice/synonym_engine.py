@@ -2,7 +2,7 @@ from app.database import get_connection
 import random
 
 
-def get_synonym_question(user_id):
+def get_synonym_question(user_email):
 
     conn = get_connection()
     cur = conn.cursor()
