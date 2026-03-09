@@ -9,6 +9,7 @@ from app.practice.synonym_engine import (
     get_synonym_progress,
     get_next_synonym_question,
     get_dashboard_stats,
+    get_practice_session,
 )
 
 router = APIRouter(prefix="/practice", tags=["practice"])
@@ -59,3 +60,8 @@ def synonym_next(user=Depends(get_current_user)):
 @router.get("/dashboard")
 def dashboard(user=Depends(get_current_user)):
     return get_dashboard_stats(user["sub"])
+
+
+@router.get("/session/start")
+def start_session(user=Depends(get_current_user)):
+    return get_practice_session(user["sub"])

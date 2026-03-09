@@ -349,3 +349,17 @@ def get_dashboard_stats(user_email):
         "streak": 0,
         "xp": progress["total_attempts"] * 10,
     }
+
+
+
+def get_practice_session(user_email):
+    progress = get_synonym_progress(user_email)
+    question = get_next_synonym_question(user_email)
+
+def get_dashboard_stats(user_email):
+    progress = get_synonym_progress(user_email)
+    return {
+        "course": "synonyms",
+        "progress": progress,
+        "question": question,
+    }
