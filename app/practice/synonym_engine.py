@@ -45,7 +45,6 @@ def get_synonym_question(user_id):
 
     return {
         "word_id": word_id,
-        "headword": headword,
-        "options": options,
-        "correct": correct
+        "word": headword,
+        "options": options
     }
