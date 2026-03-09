@@ -356,10 +356,18 @@ def get_practice_session(user_email):
     progress = get_synonym_progress(user_email)
     question = get_next_synonym_question(user_email)
 
-def get_dashboard_stats(user_email):
-    progress = get_synonym_progress(user_email)
     return {
         "course": "synonyms",
         "progress": progress,
         "question": question,
     }
+
+def get_dashboard_stats(user_email):
+    progress = get_synonym_progress(user_email)
+
+    return {
+        "synonyms": progress,
+        "streak": 0,
+        "xp": progress["total_attempts"] * 10
+    }
+    
