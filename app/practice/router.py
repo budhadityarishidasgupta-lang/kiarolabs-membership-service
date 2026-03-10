@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
 from app.auth import get_current_user
+
+# Engines
 from app.practice.math_engine import get_math_question
 from app.practice.spelling_engine import get_spelling_question
 from app.practice.synonym_engine import (
@@ -15,21 +18,43 @@ from app.practice.synonym_engine import (
 router = APIRouter(prefix="/practice", tags=["practice"])
 
 
+# -----------------------------
+# Request Models
+# -----------------------------
+
 class SynonymAnswerRequest(BaseModel):
     word_id: int
     chosen: str
     response_ms: int
 
 
+class SessionAnswerRequest(BaseModel):
+    word_id: int
+    chosen: str
+    response_ms: int
+
+
+# -----------------------------
+# MathSprint Endpoints
+# -----------------------------
+
 @router.get("/math/question")
 def math_question(user=Depends(get_current_user)):
     return get_math_question(user["id"])
 
 
+# -----------------------------
+# SpellingSprint Endpoints
+# -----------------------------
+
 @router.get("/spelling/question")
 def spelling_question(user=Depends(get_current_user)):
     return get_spelling_question(user["id"])
 
+
+# -----------------------------
+# WordSprint (Synonym) Endpoints
+# -----------------------------
 
 @router.get("/synonym/question")
 def synonym_question(user=Depends(get_current_user)):
@@ -57,11 +82,52 @@ def synonym_next(user=Depends(get_current_user)):
     return get_next_synonym_question(user["sub"])
 
 
-@router.get("/dashboard")
-def dashboard(user=Depends(get_current_user)):
-    return get_dashboard_stats(user["sub"])
-
+# -----------------------------
+# Unified Practice Session API
+# -----------------------------
 
 @router.get("/session/start")
 def start_session(user=Depends(get_current_user)):
+    """
+    Starts a learning session and returns:
+    - user progress
+    - first question
+    - session metadata
+    """
     return get_practice_session(user["sub"])
+
+
+@router.post("/session/answer")
+def session_answer(req: SessionAnswerRequest, user=Depends(get_current_user)):
+    """
+    Unified answer endpoint for frontend session handling.
+    Currently routes to synonym engine.
+    """
+    return submit_synonym_answer(
+        user_id=user["id"],
+        user_email=user["sub"],
+        word_id=req.word_id,
+        chosen=req.chosen,
+        response_ms=req.response_ms,
+    )
+
+
+@router.get("/session/next")
+def session_next(user=Depends(get_current_user)):
+    """
+    Returns next question in session.
+    """
+    return get_next_synonym_question(user["sub"])
+
+
+# -----------------------------
+# Dashboard
+# -----------------------------
+
+@router.get("/dashboard")
+def dashboard(user=Depends(get_current_user)):
+    """
+    Returns student progress summary
+    across learning modules.
+    """
+    return get_dashboard_stats(user["sub"])
