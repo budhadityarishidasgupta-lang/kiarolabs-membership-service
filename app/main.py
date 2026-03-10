@@ -23,25 +23,19 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # allow Lovable preview
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # =========================
 # CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # restrict later in production
+    allow_origins=[
+        "https://preview--growth-leap-studio.lovable.app",
+        "https://growth-leap-studio.lovable.app",
+    ]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # =========================
 # Models
 # =========================
