@@ -3,7 +3,7 @@ uvicorn
 psycopg2-binary
 python-multipart
 passlib[bcrypt]
-pip install psycopg2-binary
+
 python-jose[cryptography]
 email-validator
 psycopg2-binary
