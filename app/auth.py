@@ -4,7 +4,7 @@ from jose import jwt, JWTError
 import os
 from app.database import get_connection
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
@@ -16,6 +16,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
 
         email = payload.get("sub")
+        account_type = payload.get("account_type")
+
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -42,7 +44,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
             "id": row[0],
             "email": email,
             "sub": email,
-            "account_type": payload.get("account_type"),
+            "account_type": account_type,
         }
 
     except JWTError:
