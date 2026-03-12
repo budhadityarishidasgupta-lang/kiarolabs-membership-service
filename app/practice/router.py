@@ -55,7 +55,7 @@ def get_courses(user=Depends(get_current_user)):
         cur.execute("""
             SELECT
                 c.course_id,
-                c.course_name,
+                c.course_type AS course_name,
                 l.lesson_id,
                 l.lesson_name,
                 l.lesson_order
@@ -63,7 +63,7 @@ def get_courses(user=Depends(get_current_user)):
             JOIN public.lessons l
                 ON l.course_id = c.course_id
             WHERE c.app = 'synonym'
-            ORDER BY c.course_id, COALESCE(l.lesson_order, 0)
+            ORDER BY c.course_id, COALESCE(l.lesson_order,0)
         """)
 
         rows = cur.fetchall()
