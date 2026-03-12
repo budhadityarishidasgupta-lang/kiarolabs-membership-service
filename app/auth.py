@@ -10,42 +10,52 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+dfrom fastapi import Header
 
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+def get_current_user(authorization: str = Header(None)):
 
-        email = payload.get("sub")
-        account_type = payload.get("account_type")
+if not authorization:
+    raise HTTPException(status_code=401, detail="Missing Authorization header")
 
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
+if not authorization.startswith("Bearer "):
+    raise HTTPException(status_code=401, detail="Invalid Authorization header")
 
-        conn = get_connection()
-        cur = conn.cursor()
+token = authorization.split(" ")[1]
 
-        cur.execute(
-            """
-            SELECT id
-            FROM kiaro_membership.members
-            WHERE email = %s
-            """,
-            (email,),
-        )
+try:
+    payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
 
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
+    email = payload.get("sub")
+    account_type = payload.get("account_type")
 
-        if not row:
-            raise HTTPException(status_code=401, detail="User not found")
-
-        return {
-            "id": row[0],
-            "email": email,
-            "sub": email,
-            "account_type": account_type,
-        }
-
-    except JWTError:
+    if not email:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT id
+        FROM kiaro_membership.members
+        WHERE email = %s
+        """,
+        (email,),
+    )
+
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    return {
+        "id": row[0],
+        "email": email,
+        "sub": email,
+        "account_type": account_type,
+    }
+
+except JWTError:
+    raise HTTPException(status_code=401, detail="Invalid token")
