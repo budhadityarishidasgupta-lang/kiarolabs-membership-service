@@ -57,7 +57,7 @@ def get_courses(user=Depends(get_current_user)):
                 c.course_id,
                 c.course_type AS course_name,
                 l.lesson_id,
-                l.lesson_name,
+                l.name AS lesson_name,
                 l.lesson_order
             FROM public.courses c
             JOIN public.lessons l
