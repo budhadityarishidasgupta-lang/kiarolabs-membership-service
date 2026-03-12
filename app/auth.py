@@ -1,24 +1,17 @@
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 import os
 from app.database import get_connection
 
+# OAuth2 token extractor
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGO = "HS256"
 
 
-def get_current_user(Authorization: str = Header(None)):
-
-    if not Authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-
-    if not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid Authorization header")
-
-    token = Authorization.split(" ")[1]
+def get_current_user(token: str = Depends(oauth2_scheme)):
 
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
@@ -42,6 +35,7 @@ def get_current_user(Authorization: str = Header(None)):
         )
 
         row = cur.fetchone()
+
         cur.close()
         conn.close()
 
@@ -56,4 +50,4 @@ def get_current_user(Authorization: str = Header(None)):
         }
 
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
