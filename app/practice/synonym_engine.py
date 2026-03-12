@@ -373,9 +373,58 @@ def get_dashboard_stats(user_email):
 # SESSION START
 # --------------------------------------------------
 
-def get_practice_session(user_email):
+def _get_lesson_synonym_question(lesson_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT w.word_id, w.headword, w.synonyms
+            FROM public.words w
+            JOIN public.lesson_words lw ON lw.word_id = w.word_id
+            WHERE lw.lesson_id = %s
+              AND w.synonyms IS NOT NULL
+              AND TRIM(w.synonyms) <> ''
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (lesson_id,),
+        )
+
+        row = cur.fetchone()
+        if not row:
+            return {"error": "No synonym word found for lesson"}
+
+        word_id, headword, synonyms = row
+
+        synonym_list = [
+            s.strip() for s in synonyms.split(",") if s.strip()
+        ]
+
+        if not synonym_list:
+            return {"error": "No valid synonyms"}
+
+        correct = random.choice(synonym_list)
+
+        options = _build_options(cur, word_id, correct)
+        if not options:
+            return {"error": "Not enough distractors"}
+
+        return {
+            "word_id": word_id,
+            "word": headword,
+            "options": options,
+        }
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_practice_session(user_email, lesson_id):
     progress = get_synonym_progress(user_email)
-    question = get_next_synonym_question(user_email)
+    question = _get_lesson_synonym_question(lesson_id)
 
     return {
         "course": "synonyms",

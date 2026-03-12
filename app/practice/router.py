@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from typing import Optional
 from pydantic import BaseModel
 
 from app.auth import get_current_user
@@ -87,14 +89,17 @@ def synonym_next(user=Depends(get_current_user)):
 # -----------------------------
 
 @router.get("/session/start")
-def start_session(user=Depends(get_current_user)):
+def start_session(lesson_id: Optional[int] = None, user=Depends(get_current_user)):
     """
     Starts a learning session and returns:
     - user progress
     - first question
     - session metadata
     """
-    return get_practice_session(user["sub"])
+    if lesson_id is None:
+        return JSONResponse(status_code=400, content={"error": "lesson_id is required"})
+
+    return get_practice_session(user["sub"], lesson_id)
 
 
 @router.post("/session/answer")
