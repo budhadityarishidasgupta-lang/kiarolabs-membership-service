@@ -10,7 +10,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
 
 
-dfrom fastapi import Header
+from fastapi import Header
 
 def get_current_user(Authorization: str = Header(None)):
 
