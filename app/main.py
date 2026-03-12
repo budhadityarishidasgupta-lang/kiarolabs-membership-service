@@ -57,8 +57,15 @@ class LoginRequest(BaseModel):
 # =========================
 def create_access_token(email: str, account_type: str):
     expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    payload = {"sub": email, "account_type": account_type, "exp": expire}
+
+    payload = {
+        "sub": email,
+        "account_type": account_type,
+        "exp": expire
+    }
+
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
     return token, expire
 
 
@@ -347,4 +354,4 @@ def validate_user(email: str):
 # =========================
 # Practice Engine Routes
 # =========================
-app.include_router(practice_router)
+app.include_router(practice_router, prefix="")
