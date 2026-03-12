@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
 
 from app.auth import get_current_user
+from app.database import get_connection
 
 # Engines
 from app.practice.math_engine import get_math_question
@@ -34,6 +34,54 @@ class SessionAnswerRequest(BaseModel):
     word_id: int
     chosen: str
     response_ms: int
+
+
+# -----------------------------
+# Course / Lesson Discovery
+# -----------------------------
+
+@router.get("/courses")
+def get_courses(user=Depends(get_current_user)):
+    """
+    Returns all courses and lessons for WordSprint
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            c.id as course_id,
+            c.name as course_name,
+            l.id as lesson_id,
+            l.name as lesson_name,
+            l.lesson_order
+        FROM courses c
+        JOIN lessons l ON l.course_id = c.id
+        WHERE c.app = 'synonym'
+        ORDER BY c.id, l.lesson_order
+    """)
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    result = {}
+
+    for course_id, course_name, lesson_id, lesson_name, lesson_order in rows:
+        if course_id not in result:
+            result[course_id] = {
+                "course_name": course_name,
+                "lessons": []
+            }
+
+        result[course_id]["lessons"].append({
+            "lesson_id": lesson_id,
+            "lesson_name": lesson_name,
+            "lesson_order": lesson_order
+        })
+
+    return result
 
 
 # -----------------------------
@@ -96,8 +144,6 @@ def start_session(lesson_id: Optional[int] = 7, user=Depends(get_current_user)):
     - first question
     - session metadata
     """
-
-    # Default fallback lesson for legacy frontend
     if lesson_id is None:
         lesson_id = 7
 
