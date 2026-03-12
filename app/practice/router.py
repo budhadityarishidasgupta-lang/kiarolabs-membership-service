@@ -43,8 +43,8 @@ class SessionAnswerRequest(BaseModel):
 @router.get("/courses")
 def get_courses(user=Depends(get_current_user)):
     """
-    Returns all WordSprint courses and lessons
-    structured for the frontend curriculum panel
+    Returns WordSprint courses and lessons
+    used by the curriculum sidebar
     """
 
     conn = get_connection()
@@ -72,6 +72,7 @@ def get_courses(user=Depends(get_current_user)):
         cur.close()
         conn.close()
 
+
     courses = {}
 
     for course_id, course_name, lesson_id, lesson_name, lesson_order in rows:
@@ -89,8 +90,9 @@ def get_courses(user=Depends(get_current_user)):
             "lesson_order": lesson_order
         })
 
-    # return array instead of dictionary
+
     return list(courses.values())
+
 
 
 # -----------------------------
