@@ -89,15 +89,17 @@ def synonym_next(user=Depends(get_current_user)):
 # -----------------------------
 
 @router.get("/session/start")
-def start_session(lesson_id: Optional[int] = None, user=Depends(get_current_user)):
+def start_session(lesson_id: Optional[int] = 7, user=Depends(get_current_user)):
     """
     Starts a learning session and returns:
     - user progress
     - first question
     - session metadata
     """
+
+    # Default fallback lesson for legacy frontend
     if lesson_id is None:
-        return JSONResponse(status_code=400, content={"error": "lesson_id is required"})
+        lesson_id = 7
 
     return get_practice_session(user["sub"], lesson_id)
 
