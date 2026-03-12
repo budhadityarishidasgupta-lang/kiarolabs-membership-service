@@ -1,8 +1,8 @@
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.security import OAuth2PasswordBearer
-
+#from fastapi.security import OAuth2PasswordBearer
+from app.auth import get_current_user
 from pydantic import BaseModel, EmailStr
 from app.database import get_connection
 from datetime import datetime, timedelta
@@ -19,7 +19,7 @@ JWT_ALGO = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 2
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
+#oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 app = FastAPI()
 
@@ -31,6 +31,8 @@ app.add_middleware(
     allow_origins=[
         "https://preview--growth-leap-studio.lovable.app",
         "https://growth-leap-studio.lovable.app",
+        "http://localhost:3000",
+        "http://localhost:5173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -68,15 +70,15 @@ def hash_password(plain: str) -> str:
     return pwd_context.hash(plain)
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
-        email = payload.get("sub")
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return payload
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+#def get_current_user(token: str = Depends(oauth2_scheme)):
+#    try:
+#        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+#        email = payload.get("sub")
+#        if not email:
+#            raise HTTPException(status_code=401, detail="Invalid token")
+#        return payload
+#    except JWTError:
+#        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 def derive_subscription_state(subscription_status: str | None, subscription_end):
@@ -99,7 +101,11 @@ def derive_subscription_state(subscription_status: str | None, subscription_end)
 # =========================
 @app.get("/")
 def root():
-    return {"status": "membership service running v6"}
+    return {
+    "service": "kiarolabs-membership",
+    "version": "v6",
+    "status": "running"
+}
 
 
 @app.get("/health")
