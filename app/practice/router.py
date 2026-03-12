@@ -43,45 +43,56 @@ class SessionAnswerRequest(BaseModel):
 @router.get("/courses")
 def get_courses(user=Depends(get_current_user)):
     """
-    Returns all courses and lessons for WordSprint
+    Returns WordSprint courses and lessons
+    used by the curriculum sidebar
     """
+
     conn = get_connection()
-    cur = conn.cursor()
 
-    cur.execute("""
-        SELECT
-            c.id as course_id,
-            c.name as course_name,
-            l.id as lesson_id,
-            l.name as lesson_name,
-            l.lesson_order
-        FROM courses c
-        JOIN lessons l ON l.course_id = c.id
-        WHERE c.app = 'synonym'
-        ORDER BY c.id, l.lesson_order
-    """)
+    try:
+        cur = conn.cursor()
 
-    rows = cur.fetchall()
+        cur.execute("""
+            SELECT
+                c.course_id,
+                c.course_name,
+                l.lesson_id,
+                l.lesson_name,
+                l.lesson_order
+            FROM public.courses c
+            JOIN public.lessons l
+                ON l.course_id = c.course_id
+            WHERE c.app = 'synonym'
+            ORDER BY c.course_id, COALESCE(l.lesson_order, 0)
+        """)
 
-    cur.close()
-    conn.close()
+        rows = cur.fetchall()
 
-    result = {}
+    finally:
+        cur.close()
+        conn.close()
+
+
+    courses = {}
 
     for course_id, course_name, lesson_id, lesson_name, lesson_order in rows:
-        if course_id not in result:
-            result[course_id] = {
+
+        if course_id not in courses:
+            courses[course_id] = {
+                "course_id": course_id,
                 "course_name": course_name,
                 "lessons": []
             }
 
-        result[course_id]["lessons"].append({
+        courses[course_id]["lessons"].append({
             "lesson_id": lesson_id,
             "lesson_name": lesson_name,
             "lesson_order": lesson_order
         })
 
-    return result
+
+    return list(courses.values())
+
 
 
 # -----------------------------
