@@ -12,15 +12,15 @@ JWT_ALGO = "HS256"
 
 dfrom fastapi import Header
 
-def get_current_user(authorization: str = Header(None)):
+def get_current_user(Authorization: str = Header(None)):
 
-if not authorization:
+if not Authorization:
     raise HTTPException(status_code=401, detail="Missing Authorization header")
 
-if not authorization.startswith("Bearer "):
+if not Authorization.startswith("Bearer "):
     raise HTTPException(status_code=401, detail="Invalid Authorization header")
 
-token = authorization.split(" ")[1]
+token = Authorization.split(" ")[1]
 
 try:
     payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
