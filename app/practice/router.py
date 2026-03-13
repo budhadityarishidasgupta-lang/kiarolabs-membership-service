@@ -119,12 +119,12 @@ def get_spelling_courses(user=Depends(get_current_user)):
                 c.course_id,
                 c.course_name,
                 l.lesson_id,
-                COALESCE(l.display_name, l.lesson_name) AS lesson_name
+                COALESCE(l.display_name, l.lesson_name) AS lesson_name,
+                COALESCE(l.sort_order,0) AS lesson_order
             FROM spelling_courses c
             JOIN spelling_lessons l
                 ON l.course_id = c.course_id
-            WHERE l.is_active = true
-            ORDER BY c.course_id, l.lesson_id
+            ORDER BY c.course_id, COALESCE(l.sort_order,0)
         """)
 
         rows = cur.fetchall()
@@ -135,7 +135,7 @@ def get_spelling_courses(user=Depends(get_current_user)):
 
     courses = {}
 
-    for course_id, course_name, lesson_id, lesson_name in rows:
+    for course_id, course_name, lesson_id, lesson_name, lesson_order in rows:
 
         if course_id not in courses:
             courses[course_id] = {
@@ -146,7 +146,8 @@ def get_spelling_courses(user=Depends(get_current_user)):
 
         courses[course_id]["lessons"].append({
             "lesson_id": lesson_id,
-            "lesson_name": lesson_name
+            "lesson_name": lesson_name,
+            "lesson_order": lesson_order
         })
 
     return list(courses.values())
