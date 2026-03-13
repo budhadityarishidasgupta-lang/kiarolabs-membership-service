@@ -39,34 +39,6 @@ class SessionAnswerRequest(BaseModel):
 # -----------------------------
 # Course / Lesson Discovery
 # -----------------------------
-@router.get("/schema-debug")
-def schema_debug():
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name = 'lessons'
-    """)
-
-    lessons_cols = [r[0] for r in cur.fetchall()]
-
-    cur.execute("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name = 'courses'
-    """)
-
-    courses_cols = [r[0] for r in cur.fetchall()]
-
-    cur.close()
-    conn.close()
-
-    return {
-        "courses_columns": courses_cols,
-        "lessons_columns": lessons_cols
-    }
 
 @router.get("/courses")
 def get_courses(user=Depends(get_current_user)):
@@ -83,15 +55,15 @@ def get_courses(user=Depends(get_current_user)):
         cur.execute("""
             SELECT
                 c.course_id,
-                c.course_type AS course_name,
+                c.title AS course_name,
                 l.lesson_id,
-                l.name AS lesson_name,
-                l.lesson_order
+                l.title AS lesson_name,
+                l.sort_order AS lesson_order
             FROM public.courses c
             JOIN public.lessons l
                 ON l.course_id = c.course_id
-            WHERE c.app = 'synonym'
-            ORDER BY c.course_id, COALESCE(l.lesson_order,0)
+            WHERE c.course_type = 'synonym'
+            ORDER BY c.course_id, COALESCE(l.sort_order,0)
         """)
 
         rows = cur.fetchall()
@@ -118,9 +90,7 @@ def get_courses(user=Depends(get_current_user)):
             "lesson_order": lesson_order
         })
 
-
     return list(courses.values())
-
 
 
 # -----------------------------
