@@ -40,7 +40,7 @@ class SessionAnswerRequest(BaseModel):
 # Course / Lesson Discovery
 # -----------------------------
 @router.get("/schema-debug")
-def schema_debug(user=Depends(get_current_user)):
+def schema_debug():
     conn = get_connection()
     cur = conn.cursor()
 
