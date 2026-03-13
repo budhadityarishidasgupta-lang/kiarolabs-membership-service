@@ -106,10 +106,50 @@ def math_question(user=Depends(get_current_user)):
 # SpellingSprint Endpoints
 # -----------------------------
 
-@router.get("/spelling/question")
-def spelling_question(user=Depends(get_current_user)):
-    return get_spelling_question(user["id"])
+@router.get("/spelling/courses")
+def get_spelling_courses(user=Depends(get_current_user)):
 
+    conn = get_connection()
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                c.course_id,
+                c.course_name,
+                l.lesson_id,
+                COALESCE(l.display_name, l.lesson_name) AS lesson_name
+            FROM spelling_courses c
+            JOIN spelling_lessons l
+                ON l.course_id = c.course_id
+            WHERE l.is_active = true
+            ORDER BY c.course_id, l.lesson_id
+        """)
+
+        rows = cur.fetchall()
+
+    finally:
+        cur.close()
+        conn.close()
+
+    courses = {}
+
+    for course_id, course_name, lesson_id, lesson_name in rows:
+
+        if course_id not in courses:
+            courses[course_id] = {
+                "course_id": course_id,
+                "course_name": course_name,
+                "lessons": []
+            }
+
+        courses[course_id]["lessons"].append({
+            "lesson_id": lesson_id,
+            "lesson_name": lesson_name
+        })
+
+    return list(courses.values())
 
 # -----------------------------
 # WordSprint (Synonym) Endpoints
