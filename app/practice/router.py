@@ -39,6 +39,34 @@ class SessionAnswerRequest(BaseModel):
 # -----------------------------
 # Course / Lesson Discovery
 # -----------------------------
+@router.get("/schema-debug")
+def schema_debug(user=Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'lessons'
+    """)
+
+    lessons_cols = [r[0] for r in cur.fetchall()]
+
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'courses'
+    """)
+
+    courses_cols = [r[0] for r in cur.fetchall()]
+
+    cur.close()
+    conn.close()
+
+    return {
+        "courses_columns": courses_cols,
+        "lessons_columns": lessons_cols
+    }
 
 @router.get("/courses")
 def get_courses(user=Depends(get_current_user)):
