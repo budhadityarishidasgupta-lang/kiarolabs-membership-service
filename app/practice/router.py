@@ -114,23 +114,23 @@ def get_spelling_courses(user=Depends(get_current_user)):
     try:
         cur = conn.cursor()
 
-       cur.execute("""
-        SELECT
-            c.course_id,
-            c.course_name,
-            l.lesson_id,
-            COALESCE(l.display_name, l.lesson_name) AS lesson_name,
-            l.sort_order
-        FROM spelling_courses c
-        JOIN spelling_lessons l
-        ON l.course_id = c.course_id
-        WHERE l.is_active = true
-        AND l.lesson_id IN (
-            866,867,868,869,
-            847,848,849,
-            857,858,860,870
-        )
-        ORDER BY c.course_id, l.sort_order
+        cur.execute("""
+            SELECT
+                c.course_id,
+                c.course_name,
+                l.lesson_id,
+                COALESCE(l.display_name, l.lesson_name) AS lesson_name,
+                l.sort_order
+            FROM spelling_courses c
+            JOIN spelling_lessons l
+                ON l.course_id = c.course_id
+            WHERE l.is_active = true
+            AND l.lesson_id IN (
+                866,867,868,869,
+                847,848,849,
+                857,858,860,870
+            )
+            ORDER BY c.course_id, l.sort_order
         """)
 
         rows = cur.fetchall()
@@ -157,7 +157,6 @@ def get_spelling_courses(user=Depends(get_current_user)):
         })
 
     return list(courses.values())
-
 # -----------------------------
 # WordSprint (Synonym) Endpoints
 # -----------------------------
