@@ -158,6 +158,21 @@ def get_spelling_courses(user=Depends(get_current_user)):
 
     return list(courses.values())
 # -----------------------------
+# SpellingSprint Question
+# -----------------------------
+
+@router.get("/spelling/question")
+def spelling_question(lesson_id: int, user=Depends(get_current_user)):
+    """
+    Returns the next spelling word for a lesson
+    """
+    return get_spelling_question(
+        user_id=user["id"],
+        lesson_id=lesson_id
+    )
+
+
+# -----------------------------
 # WordSprint (Synonym) Endpoints
 # -----------------------------
 
