@@ -1,6 +1,10 @@
 from app.database import get_connection
 
 
+# --------------------------------------------------
+# Get Spelling Question
+# --------------------------------------------------
+
 def get_spelling_question(user_id: int, lesson_id: int):
     """
     Returns one spelling question for a given lesson.
@@ -40,6 +44,12 @@ def get_spelling_question(user_id: int, lesson_id: int):
         "word_audio": word,
         "instructions": "Type the correct spelling"
     }
+
+
+# --------------------------------------------------
+# Submit Spelling Answer
+# --------------------------------------------------
+
 def submit_spelling_answer(user_id: int, word_id: int, answer: str):
 
     conn = get_connection()
@@ -47,6 +57,7 @@ def submit_spelling_answer(user_id: int, word_id: int, answer: str):
 
     try:
 
+        # Get correct word
         cur.execute(
             "SELECT word FROM spelling_words WHERE word_id = %s",
             (word_id,)
@@ -61,15 +72,19 @@ def submit_spelling_answer(user_id: int, word_id: int, answer: str):
 
         correct = answer.strip().lower() == correct_word.lower()
 
+        # Insert attempt using your actual table structure
         cur.execute("""
             INSERT INTO spelling_attempts
-            (user_id, word_id, user_answer, correct)
-            VALUES (%s, %s, %s, %s)
+            (user_id, word_id, correct, time_taken, blanks_count, wrong_letters_count, course_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (
             user_id,
             word_id,
-            answer,
-            correct
+            correct,
+            0,
+            0,
+            0,
+            0
         ))
 
         conn.commit()
