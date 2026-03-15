@@ -7,7 +7,7 @@ from app.database import get_connection
 
 # Engines
 from app.practice.math_engine import get_math_question
-from app.practice.spelling_engine import get_spelling_question
+
 from app.practice.synonym_engine import (
     get_synonym_question,
     submit_synonym_answer,
@@ -15,6 +15,10 @@ from app.practice.synonym_engine import (
     get_next_synonym_question,
     get_dashboard_stats,
     get_practice_session,
+)
+from app.practice.spelling_engine import (
+    get_spelling_question,
+    submit_spelling_answer
 )
 
 router = APIRouter(prefix="/practice", tags=["practice"])
@@ -29,6 +33,9 @@ class SynonymAnswerRequest(BaseModel):
     chosen: str
     response_ms: int
 
+class SpellingAnswerRequest(BaseModel):
+    word_id: int
+    answer: str
 
 class SessionAnswerRequest(BaseModel):
     word_id: int
@@ -157,6 +164,8 @@ def get_spelling_courses(user=Depends(get_current_user)):
         })
 
     return list(courses.values())
+
+
 # -----------------------------
 # SpellingSprint Question
 # -----------------------------
@@ -175,18 +184,12 @@ def spelling_question(lesson_id: int, user=Depends(get_current_user)):
 # SpellingSprint Submit Answer
 # -----------------------------
 
-class SpellingAnswerRequest(BaseModel):
-    word_id: int
-    answer: str
-
-
 @router.post("/spelling/answer")
 def spelling_answer(req: SpellingAnswerRequest, user=Depends(get_current_user)):
     """
     Saves spelling attempt and validates answer
     """
-    from app.practice.spelling_engine import submit_spelling_answer
-
+    
     return submit_spelling_answer(
         user_id=user["id"],
         word_id=req.word_id,
