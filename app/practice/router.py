@@ -171,6 +171,28 @@ def spelling_question(lesson_id: int, user=Depends(get_current_user)):
         lesson_id=lesson_id
     )
 
+# -----------------------------
+# SpellingSprint Submit Answer
+# -----------------------------
+
+class SpellingAnswerRequest(BaseModel):
+    word_id: int
+    answer: str
+
+
+@router.post("/spelling/answer")
+def spelling_answer(req: SpellingAnswerRequest, user=Depends(get_current_user)):
+    """
+    Saves spelling attempt and validates answer
+    """
+    from app.practice.spelling_engine import submit_spelling_answer
+
+    return submit_spelling_answer(
+        user_id=user["id"],
+        word_id=req.word_id,
+        answer=req.answer
+    )
+
 
 # -----------------------------
 # WordSprint (Synonym) Endpoints
