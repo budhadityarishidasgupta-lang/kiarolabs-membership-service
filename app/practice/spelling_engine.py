@@ -22,11 +22,31 @@ def get_spelling_question(user_id: int, lesson_id: int):
         JOIN spelling_lesson_words lw
             ON w.word_id = lw.word_id
         WHERE lw.lesson_id = %s
+        AND w.word_id NOT IN (
+            SELECT word_id
+            FROM spelling_attempts
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        )
         ORDER BY RANDOM()
         LIMIT 1
-    """, (lesson_id,))
-
+    """, (lesson_id, user_id))
+    
     row = cur.fetchone()
+    # fallback if filter removes all options
+    if not row:
+        cur.execute("""
+            SELECT w.word_id, w.word
+            FROM spelling_words w
+            JOIN spelling_lesson_words lw
+                ON w.word_id = lw.word_id
+            WHERE lw.lesson_id = %s
+            ORDER BY RANDOM()
+            LIMIT 1
+        """, (lesson_id,))
+        
+        row = cur.fetchone()
 
     cur.close()
     conn.close()
@@ -70,7 +90,7 @@ def submit_spelling_answer(user_id: int, word_id: int, answer: str):
 
         correct_word = row[0]
 
-        correct = answer.strip().lower() == correct_word.lower()
+        correct = answer.strip().lower() == correct_word.strip().lower()
 
         # Insert attempt using your actual table structure
         cur.execute("""
