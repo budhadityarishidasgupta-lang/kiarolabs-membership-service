@@ -40,3 +40,45 @@ def get_spelling_question(user_id: int, lesson_id: int):
         "word_audio": word,
         "instructions": "Type the correct spelling"
     }
+def submit_spelling_answer(user_id: int, word_id: int, answer: str):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+
+        cur.execute(
+            "SELECT word FROM spelling_words WHERE word_id = %s",
+            (word_id,)
+        )
+
+        row = cur.fetchone()
+
+        if not row:
+            return {"error": "Word not found"}
+
+        correct_word = row[0]
+
+        correct = answer.strip().lower() == correct_word.lower()
+
+        cur.execute("""
+            INSERT INTO spelling_attempts
+            (user_id, word_id, user_answer, correct)
+            VALUES (%s, %s, %s, %s)
+        """, (
+            user_id,
+            word_id,
+            answer,
+            correct
+        ))
+
+        conn.commit()
+
+    finally:
+        cur.close()
+        conn.close()
+
+    return {
+        "correct": correct,
+        "correct_word": correct_word
+    }
