@@ -1,119 +1,129 @@
+import random
 from app.database import get_connection
 
 
-# --------------------------------------------------
-# Get Spelling Question
-# --------------------------------------------------
-
-def get_spelling_question(user_id: int, lesson_id: int):
+def mask_word(word: str, blanks_count: int = 2):
     """
-    Returns one spelling question for a given lesson.
-    Router passes user_id and lesson_id.
-
-    The question is selected randomly from the lesson's word pool.
+    Replace internal letters with underscores.
+    Keeps first and last letters visible.
     """
+
+    if not word or len(word) <= 3:
+        return word
+
+    chars = list(word)
+
+    candidates = [i for i in range(1, len(chars) - 1) if chars[i].isalpha()]
+
+    if not candidates:
+        return word
+
+    blanks_count = min(blanks_count, len(candidates))
+
+    hidden_positions = random.sample(candidates, blanks_count)
+
+    for pos in hidden_positions:
+        chars[pos] = "_"
+
+    return "".join(chars)
+
+
+def get_spelling_question(lesson_id: int, user_id: int):
 
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT w.word_id, w.word
+    cur.execute(
+        """
+        SELECT
+            w.word_id,
+            w.word,
+            COALESCE(lw.hint, '') AS hint,
+            COALESCE(lw.example_sentence, '') AS example_sentence
         FROM spelling_words w
         JOIN spelling_lesson_words lw
             ON w.word_id = lw.word_id
         WHERE lw.lesson_id = %s
-        AND w.word_id NOT IN (
-            SELECT word_id
-            FROM spelling_attempts
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        )
         ORDER BY RANDOM()
         LIMIT 1
-    """, (lesson_id, user_id))
-    
+        """,
+        (lesson_id,),
+    )
+
     row = cur.fetchone()
-    # fallback if filter removes all options
-    if not row:
-        cur.execute("""
-            SELECT w.word_id, w.word
-            FROM spelling_words w
-            JOIN spelling_lesson_words lw
-                ON w.word_id = lw.word_id
-            WHERE lw.lesson_id = %s
-            ORDER BY RANDOM()
-            LIMIT 1
-        """, (lesson_id,))
-        
-        row = cur.fetchone()
 
     cur.close()
     conn.close()
 
     if not row:
-        return {
-            "error": "No question available for this lesson yet"
-        }
+        return None
 
-    word_id, word = row
+    word_id, word, hint, example_sentence = row
+
+    masked_word = mask_word(word, 2)
 
     return {
-        "question_type": "spelling",
         "word_id": word_id,
         "word_audio": word,
-        "instructions": "Type the correct spelling"
+        "masked_word": masked_word,
+        "hint": hint,
+        "example_sentence": example_sentence,
     }
 
 
-# --------------------------------------------------
-# Submit Spelling Answer
-# --------------------------------------------------
-
-def submit_spelling_answer(user_id: int, word_id: int, answer: str):
+def submit_spelling_answer(word_id: int, answer: str, user_id: int):
 
     conn = get_connection()
     cur = conn.cursor()
 
-    try:
+    cur.execute(
+        """
+        SELECT
+            w.word,
+            COALESCE(lw.hint, '') AS hint,
+            COALESCE(lw.example_sentence, '') AS example_sentence
+        FROM spelling_words w
+        LEFT JOIN spelling_lesson_words lw
+            ON w.word_id = lw.word_id
+        WHERE w.word_id = %s
+        LIMIT 1
+        """,
+        (word_id,),
+    )
 
-        # Get correct word
-        cur.execute(
-            "SELECT word FROM spelling_words WHERE word_id = %s",
-            (word_id,)
-        )
+    row = cur.fetchone()
 
-        row = cur.fetchone()
-
-        if not row:
-            return {"error": "Word not found"}
-
-        correct_word = row[0]
-
-        correct = answer.strip().lower() == correct_word.strip().lower()
-
-        # Insert attempt using your actual table structure
-        cur.execute("""
-            INSERT INTO spelling_attempts
-            (user_id, word_id, correct, time_taken, blanks_count, wrong_letters_count, course_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            user_id,
-            word_id,
-            correct,
-            0,
-            0,
-            0,
-            0
-        ))
-
-        conn.commit()
-
-    finally:
+    if not row:
         cur.close()
         conn.close()
+        return {
+            "correct": False,
+            "correct_word": "",
+            "hint": "",
+            "example_sentence": "",
+        }
+
+    correct_word, hint, example_sentence = row
+
+    correct = answer.strip().lower() == correct_word.strip().lower()
+
+    cur.execute(
+        """
+        INSERT INTO spelling_attempts
+        (user_id, word_id, answer, correct)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (user_id, word_id, answer, correct),
+    )
+
+    conn.commit()
+
+    cur.close()
+    conn.close()
 
     return {
         "correct": correct,
-        "correct_word": correct_word
+        "correct_word": correct_word,
+        "hint": hint,
+        "example_sentence": example_sentence,
     }
