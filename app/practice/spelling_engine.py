@@ -53,7 +53,7 @@ def get_spelling_question(lesson_id: int, user_id: int):
         conn = get_connection()
         cur = conn.cursor()
 
-        # Main query
+        # Query 1: unseen words in lesson
         cur.execute(
             """
             SELECT
@@ -63,45 +63,96 @@ def get_spelling_question(lesson_id: int, user_id: int):
                 COALESCE(w.example_sentence,'') AS example_sentence
             FROM spelling_lesson_words lw
             JOIN spelling_words w
-                ON lw.word_id = w.word_id
+            ON lw.word_id = w.word_id
+            LEFT JOIN spelling_attempts sa
+            ON sa.word_id = w.word_id AND sa.user_id = %s
             WHERE lw.lesson_id = %s
-            ORDER BY RANDOM()
+            AND sa.word_id IS NULL
             LIMIT 1
             """,
-            (lesson_id,),
+            (user_id, lesson_id),
         )
 
         row = cur.fetchone()
 
-        # Fallback if lesson mapping missing
+        # Query 2: words answered incorrectly
         if not row:
-
             cur.execute(
                 """
-                SELECT word_id, word
-                FROM spelling_words
-                ORDER BY RANDOM()
+                SELECT
+                    w.word_id,
+                    w.word,
+                    COALESCE(w.hint,'') AS hint,
+                    COALESCE(w.example_sentence,'') AS example_sentence
+                FROM spelling_attempts sa
+                JOIN spelling_words w
+                ON sa.word_id = w.word_id
+                JOIN spelling_lesson_words lw
+                ON lw.word_id = w.word_id
+                WHERE sa.user_id = %s
+                AND lw.lesson_id = %s
+                AND sa.correct = FALSE
+                ORDER BY sa.created_at DESC
                 LIMIT 1
-                """
+                """,
+                (user_id, lesson_id),
             )
-
             row = cur.fetchone()
 
-            if not row:
-                return {
-                    "word_id": None,
-                    "word_audio": "",
-                    "masked_word": "",
-                    "hint": "",
-                    "example_sentence": "",
-                }
+        # Query 3: least recently practiced
+        if not row:
+            cur.execute(
+                """
+                SELECT
+                    w.word_id,
+                    w.word,
+                    COALESCE(w.hint,'') AS hint,
+                    COALESCE(w.example_sentence,'') AS example_sentence
+                FROM spelling_attempts sa
+                JOIN spelling_words w
+                ON sa.word_id = w.word_id
+                JOIN spelling_lesson_words lw
+                ON lw.word_id = w.word_id
+                WHERE sa.user_id = %s
+                AND lw.lesson_id = %s
+                GROUP BY w.word_id
+                ORDER BY MAX(sa.created_at) ASC
+                LIMIT 1
+                """,
+                (user_id, lesson_id),
+            )
+            row = cur.fetchone()
 
-            word_id, word = row
-            hint = ""
-            example_sentence = ""
+        # Random fallback within lesson
+        if not row:
+            cur.execute(
+                """
+                SELECT
+                    w.word_id,
+                    w.word,
+                    COALESCE(w.hint,'') AS hint,
+                    COALESCE(w.example_sentence,'') AS example_sentence
+                FROM spelling_lesson_words lw
+                JOIN spelling_words w
+                ON lw.word_id = w.word_id
+                WHERE lw.lesson_id = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (lesson_id,),
+            )
+            row = cur.fetchone()
 
-        else:
-            word_id, word, hint, example_sentence = row
+        if not row:
+            return {
+                "word_id": None,
+                "word_audio": "",
+                "masked_word": "",
+                "hint": "",
+                "example_sentence": "",
+            }
+
+        word_id, word, hint, example_sentence = row
 
         # difficulty scaling
         word_len = len(word)
