@@ -59,11 +59,11 @@ def get_spelling_question(lesson_id: int, user_id: int):
             SELECT
                 w.word_id,
                 w.word,
-                COALESCE(lw.hint, '') AS hint,
-                COALESCE(lw.example_sentence, '') AS example_sentence
-            FROM spelling_words w
-            JOIN spelling_lesson_words lw
-                ON w.word_id = lw.word_id
+                COALESCE(w.hint,'') AS hint,
+                COALESCE(w.example_sentence,'') AS example_sentence
+            FROM spelling_lesson_words lw
+            JOIN spelling_words w
+                ON lw.word_id = w.word_id
             WHERE lw.lesson_id = %s
             ORDER BY RANDOM()
             LIMIT 1
