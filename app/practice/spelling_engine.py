@@ -184,10 +184,10 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
         cur.execute(
             """
             INSERT INTO spelling_attempts
-            (user_id, word_id, answer, correct)
-            VALUES (%s, %s, %s, %s)
+            (user_id, word_id, correct, time_taken, blanks_count, wrong_letters_count, course_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (user_id, word_id, answer, correct),
+            (user_id, word_id, correct, 0, 0, 0, 0),
         )
 
         conn.commit()
