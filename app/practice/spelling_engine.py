@@ -53,67 +53,62 @@ def get_spelling_question(lesson_id: int, user_id: int):
         conn = get_connection()
         cur = conn.cursor()
 
-        # Main query
+        # Query: unseen words first
         cur.execute(
             """
             SELECT
                 w.word_id,
                 w.word,
-                COALESCE(w.hint,'') AS hint,
-                COALESCE(w.example_sentence,'') AS example_sentence
+                COALESCE(w.hint, '') AS hint,
+                COALESCE(w.example_sentence, '') AS example_sentence
             FROM spelling_lesson_words lw
             JOIN spelling_words w
                 ON lw.word_id = w.word_id
+            LEFT JOIN spelling_attempts sa
+                ON sa.word_id = w.word_id
+                AND sa.user_id = %s
             WHERE lw.lesson_id = %s
-            ORDER BY RANDOM()
+            AND sa.word_id IS NULL
+            ORDER BY w.word_id
             LIMIT 1
             """,
-            (lesson_id,),
+            (user_id, lesson_id),
         )
 
         row = cur.fetchone()
 
-        # Fallback if lesson mapping missing
+        # Fallback: random within lesson
         if not row:
-
             cur.execute(
                 """
-                SELECT word_id, word
-                FROM spelling_words
+                SELECT
+                    w.word_id,
+                    w.word,
+                    COALESCE(w.hint, '') AS hint,
+                    COALESCE(w.example_sentence, '') AS example_sentence
+                FROM spelling_lesson_words lw
+                JOIN spelling_words w
+                    ON lw.word_id = w.word_id
+                WHERE lw.lesson_id = %s
                 ORDER BY RANDOM()
                 LIMIT 1
-                """
+                """,
+                (lesson_id,),
             )
-
             row = cur.fetchone()
 
-            if not row:
-                return {
-                    "word_id": None,
-                    "word_audio": "",
-                    "masked_word": "",
-                    "hint": "",
-                    "example_sentence": "",
-                }
+        if not row:
+            return {
+                "word_id": None,
+                "word_audio": "",
+                "masked_word": "",
+                "hint": "",
+                "example_sentence": "",
+            }
 
-            word_id, word = row
-            hint = ""
-            example_sentence = ""
+        word_id, word, hint, example_sentence = row
 
-        else:
-            word_id, word, hint, example_sentence = row
-
-        # difficulty scaling
-        word_len = len(word)
-
-        if word_len <= 5:
-            blanks = 1
-        elif word_len <= 8:
-            blanks = 2
-        else:
-            blanks = 3
-
-        masked_word = mask_word(word, blanks)
+        masked_word = mask_word(word, 2)
 
         return {
             "word_id": word_id,
@@ -160,13 +155,11 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
         cur.execute(
             """
             SELECT
-                w.word,
-                COALESCE(lw.hint, '') AS hint,
-                COALESCE(lw.example_sentence, '') AS example_sentence
-            FROM spelling_words w
-            LEFT JOIN spelling_lesson_words lw
-                ON w.word_id = lw.word_id
-            WHERE w.word_id = %s
+                word,
+                COALESCE(hint, '') AS hint,
+                COALESCE(example_sentence, '') AS example_sentence
+            FROM spelling_words
+            WHERE word_id = %s
             LIMIT 1
             """,
             (word_id,),
@@ -200,7 +193,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
         conn.commit()
 
         return {
-            "correct": bool(correct),
+            "correct": correct,
             "correct_word": correct_word,
             "hint": hint,
             "example_sentence": example_sentence,
