@@ -108,16 +108,21 @@ def get_spelling_question(lesson_id: int, user_id: int):
                     w.word,
                     COALESCE(w.hint,'') AS hint,
                     COALESCE(w.example_sentence,'') AS example_sentence
-                FROM spelling_attempts sa
+                FROM (
+                    SELECT
+                        sa.word_id,
+                        MAX(sa.created_at) AS last_practiced
+                    FROM spelling_attempts sa
+                    JOIN spelling_lesson_words lw
+                    ON lw.word_id = sa.word_id
+                    WHERE sa.user_id = %s
+                    AND lw.lesson_id = %s
+                    GROUP BY sa.word_id
+                    ORDER BY last_practiced ASC
+                    LIMIT 1
+                ) recent
                 JOIN spelling_words w
-                ON sa.word_id = w.word_id
-                JOIN spelling_lesson_words lw
-                ON lw.word_id = w.word_id
-                WHERE sa.user_id = %s
-                AND lw.lesson_id = %s
-                GROUP BY w.word_id
-                ORDER BY MAX(sa.created_at) ASC
-                LIMIT 1
+                ON recent.word_id = w.word_id
                 """,
                 (user_id, lesson_id),
             )
