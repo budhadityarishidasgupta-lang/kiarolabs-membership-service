@@ -197,6 +197,15 @@ def spelling_answer(req: SpellingAnswerRequest, user=Depends(get_current_user)):
     )
 
 
+@router.post("/spelling/submit")
+def spelling_submit(req: SpellingAnswerRequest, user=Depends(get_current_user)):
+    return submit_spelling_answer(
+        user_id=user["id"],
+        word_id=req.word_id,
+        answer=req.answer
+    )
+
+
 # -----------------------------
 # WordSprint (Synonym) Endpoints
 # -----------------------------
