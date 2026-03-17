@@ -173,9 +173,9 @@ def register(req: RegisterRequest):
             """,
             (req.name, email, "student"),
         )
-        print("USER PROVISIONING: users row created for", email)
+        print("USER PROVISIONING created users row for", email)
     else:
-        print("USER PROVISIONING: already exists for", email)
+        print("USER PROVISIONING users row already exists for", email)
 
     conn.commit()
     cur.close()
