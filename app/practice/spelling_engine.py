@@ -180,6 +180,21 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
         # normalize spelling comparison
         correct = answer.strip().lower() == correct_word.strip().lower()
 
+        # validate platform user exists
+        cur.execute(
+            """
+            SELECT user_id
+            FROM users
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+
+        user_row = cur.fetchone()
+
+        if not user_row:
+            raise Exception("Invalid user_id")
+
         # record attempt
         cur.execute(
             """
@@ -202,13 +217,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
     except Exception as e:
 
         print("SPELLING SUBMIT ERROR:", str(e))
-
-        return {
-            "correct": False,
-            "correct_word": "",
-            "hint": "",
-            "example_sentence": "",
-        }
+        raise
 
     finally:
 
