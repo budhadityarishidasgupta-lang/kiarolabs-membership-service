@@ -17,24 +17,25 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
 
         email = payload.get("sub")
+        user_id = payload.get("user_id")
         account_type = payload.get("account_type")
+
+        print("AUTH PHASE2 user_id_from_token=", user_id)
 
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token")
 
+        if user_id:
+            return {
+                "id": user_id,
+                "user_id": user_id,
+                "email": email,
+                "sub": email,
+                "account_type": account_type,
+            }
+
         conn = get_connection()
         cur = conn.cursor()
-
-        cur.execute(
-            """
-            SELECT id
-            FROM kiaro_membership.members
-            WHERE email = %s
-            """,
-            (email,),
-        )
-
-        row = cur.fetchone()
 
         cur.execute(
             """
@@ -46,23 +47,19 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         )
 
         user_row = cur.fetchone()
-
-        member_id = row[0] if row else None
         platform_user_id = user_row[0] if user_row else None
 
         print(f"AUTH DEBUG email={email}")
-        print(f"AUTH DEBUG member_id={member_id}")
         print(f"AUTH DEBUG user_id={platform_user_id}")
 
         cur.close()
         conn.close()
 
-        if not row:
+        if not user_row:
             raise HTTPException(status_code=401, detail="User not found")
 
         return {
-            "id": row[0],
-            "member_id": row[0],
+            "id": user_row[0],
             "user_id": user_row[0] if user_row else None,
             "email": email,
             "sub": email,

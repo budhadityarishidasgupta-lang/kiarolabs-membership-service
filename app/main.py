@@ -55,11 +55,12 @@ class LoginRequest(BaseModel):
 # =========================
 # Helpers
 # =========================
-def create_access_token(email: str, account_type: str):
+def create_access_token(email: str, account_type: str, user_id: str | None = None):
     expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
 
     payload = {
         "sub": email,
+        "user_id": user_id,
         "account_type": account_type,
         "exp": expire
     }
@@ -227,7 +228,23 @@ def login(req: LoginRequest):
     if not verify_password(req.password, password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token, exp = create_access_token(email, account_type or "free")
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)
+        """,
+        (email,),
+    )
+
+    user_row = cur.fetchone()
+    user_id = user_row[0] if user_row else None
+
+    cur.close()
+    conn.close()
+
+    token, exp = create_access_token(email, account_type or "free", user_id=user_id)
 
     return {
         "access_token": token,
