@@ -36,6 +36,17 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
         row = cur.fetchone()
 
+        cur.execute(
+            """
+            SELECT user_id
+            FROM users
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+
+        user_row = cur.fetchone()
+
         cur.close()
         conn.close()
 
@@ -44,6 +55,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
         return {
             "id": row[0],
+            "member_id": row[0],
+            "user_id": user_row[0] if user_row else None,
             "email": email,
             "sub": email,
             "account_type": account_type,
