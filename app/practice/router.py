@@ -179,11 +179,17 @@ def spelling_question(
     """
     Returns the next spelling word for a lesson
     """
+    print(f"SPELLING QUESTION DEBUG user={user}")
+    print(f"SPELLING QUESTION DEBUG lesson_id={lesson_id}")
+
     if not user.get("user_id"):
         raise HTTPException(
             status_code=400,
             detail="User not provisioned in learning system"
         )
+
+    print(f"SPELLING QUESTION DEBUG user={user}")
+    print(f"SPELLING QUESTION DEBUG lesson_id={lesson_id}")
 
     return get_spelling_question(
         lesson_id=lesson_id,

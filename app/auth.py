@@ -47,6 +47,13 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
         user_row = cur.fetchone()
 
+        member_id = row[0] if row else None
+        platform_user_id = user_row[0] if user_row else None
+
+        print(f"AUTH DEBUG email={email}")
+        print(f"AUTH DEBUG member_id={member_id}")
+        print(f"AUTH DEBUG user_id={platform_user_id}")
+
         cur.close()
         conn.close()
 
