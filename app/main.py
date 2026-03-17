@@ -131,6 +131,7 @@ def health_check():
 # =========================
 @app.post("/register")
 def register(req: RegisterRequest):
+    name = req.name
     email = req.email.strip().lower()
 
     conn = get_connection()
@@ -154,29 +155,41 @@ def register(req: RegisterRequest):
         (name, email, password_hash, subscription_status, account_type, auth_provider, created_at, updated_at)
         VALUES (%s, %s, %s, 'inactive', 'free', 'email', NOW(), NOW())
         """,
-        (req.name, email, pw_hash),
+        (name, email, pw_hash),
     )
 
-    cur.execute(
-        """
-        SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)
-        """,
-        (email,),
-    )
-
-    existing_user = cur.fetchone()
-
-    if not existing_user:
+    print(f"USER PROVISIONING: email={email}")
+    try:
         cur.execute(
             """
-            INSERT INTO users (name, email, role, is_active)
-            VALUES (%s, %s, %s, true)
+            SELECT user_id
+            FROM users
+            WHERE LOWER(email) = LOWER(%s)
             """,
-            (req.name, email, "student"),
+            (email,),
         )
-        print("USER PROVISIONING created users row for", email)
-    else:
-        print("USER PROVISIONING users row already exists for", email)
+
+        row = cur.fetchone()
+
+        if not row:
+            cur.execute(
+                """
+                INSERT INTO users (name, email, password_hash, role, is_active)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    name,
+                    email,
+                    "membership_managed_user",
+                    "student",
+                    True,
+                ),
+            )
+            print("USER PROVISIONING: created users row")
+        else:
+            print("USER PROVISIONING: already exists")
+    except Exception as provision_err:
+        print(f"USER PROVISIONING ERROR: {provision_err}")
 
     conn.commit()
     cur.close()
