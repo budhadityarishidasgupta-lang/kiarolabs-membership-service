@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 from pydantic import BaseModel
 
@@ -171,13 +171,29 @@ def get_spelling_courses(user=Depends(get_current_user)):
 # -----------------------------
 
 @router.get("/spelling/question")
-def spelling_question(lesson_id: int, user=Depends(get_current_user)):
+def spelling_question(
+    lesson_id: int,
+    t: int = None,
+    user=Depends(get_current_user)
+):
     """
     Returns the next spelling word for a lesson
     """
+    print(f"SPELLING QUESTION DEBUG user={user}")
+    print(f"SPELLING QUESTION DEBUG lesson_id={lesson_id}")
+
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned in learning system"
+        )
+
+    print(f"SPELLING QUESTION DEBUG user={user}")
+    print(f"SPELLING QUESTION DEBUG lesson_id={lesson_id}")
+
     return get_spelling_question(
-        user_id=user["id"],
-        lesson_id=lesson_id
+        lesson_id=lesson_id,
+        user_id=user["user_id"]
     )
 
 # -----------------------------
@@ -189,9 +205,14 @@ def spelling_answer(req: SpellingAnswerRequest, user=Depends(get_current_user)):
     """
     Saves spelling attempt and validates answer
     """
-    
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned in learning system"
+        )
+
     return submit_spelling_answer(
-        user_id=user["id"],
+        user_id=user["user_id"],
         word_id=req.word_id,
         answer=req.answer
     )
@@ -199,8 +220,14 @@ def spelling_answer(req: SpellingAnswerRequest, user=Depends(get_current_user)):
 
 @router.post("/spelling/submit")
 def spelling_submit(req: SpellingAnswerRequest, user=Depends(get_current_user)):
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned in learning system"
+        )
+
     return submit_spelling_answer(
-        user_id=user["id"],
+        user_id=user["user_id"],
         word_id=req.word_id,
         answer=req.answer
     )
