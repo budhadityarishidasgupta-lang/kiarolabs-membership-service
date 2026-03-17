@@ -182,8 +182,8 @@ def spelling_question(lesson_id: int, user=Depends(get_current_user)):
         )
 
     return get_spelling_question(
-        user_id=user["user_id"],
-        lesson_id=lesson_id
+        lesson_id=lesson_id,
+        user_id=user["user_id"]
     )
 
 # -----------------------------
