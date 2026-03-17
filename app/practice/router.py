@@ -171,7 +171,11 @@ def get_spelling_courses(user=Depends(get_current_user)):
 # -----------------------------
 
 @router.get("/spelling/question")
-def spelling_question(lesson_id: int, user=Depends(get_current_user)):
+def spelling_question(
+    lesson_id: int,
+    t: int = None,
+    user=Depends(get_current_user)
+):
     """
     Returns the next spelling word for a lesson
     """
