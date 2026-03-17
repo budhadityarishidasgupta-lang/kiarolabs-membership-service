@@ -156,6 +156,27 @@ def register(req: RegisterRequest):
         (req.name, email, pw_hash),
     )
 
+    cur.execute(
+        """
+        SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)
+        """,
+        (email,),
+    )
+
+    existing_user = cur.fetchone()
+
+    if not existing_user:
+        cur.execute(
+            """
+            INSERT INTO users (name, email, role, is_active)
+            VALUES (%s, %s, %s, true)
+            """,
+            (req.name, email, "student"),
+        )
+        print("USER PROVISIONING created users row for", email)
+    else:
+        print("USER PROVISIONING users row already exists for", email)
+
     conn.commit()
     cur.close()
     conn.close()
