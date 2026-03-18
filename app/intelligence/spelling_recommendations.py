@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.database import get_connection
 
 
@@ -5,6 +7,15 @@ def generate_spelling_recommendations(user_id):
 
     conn = get_connection()
     cur = conn.cursor()
+
+    # Step 0 — clear old recommendations for this user
+    cur.execute(
+        """
+        DELETE FROM spelling_recommendations
+        WHERE user_id = %s
+        """,
+        (user_id,),
+    )
 
     # Step 1 — fetch stats
     cur.execute(
@@ -24,6 +35,7 @@ def generate_spelling_recommendations(user_id):
     rows = cur.fetchall()
 
     recommendations = []
+    now = datetime.utcnow()
 
     for row in rows:
         word_id, accuracy, attempts, wrong, last_attempt = row
@@ -31,7 +43,13 @@ def generate_spelling_recommendations(user_id):
         if attempts == 0:
             continue
 
-        recency = 1  # simple version (can improve later)
+        # recency factor (days since last attempt)
+        if last_attempt:
+            days_gap = (now - last_attempt).days
+        else:
+            days_gap = 10
+
+        recency = min(days_gap / 10, 1)
 
         score = (
             (1 - accuracy) * 0.5 +
@@ -54,7 +72,7 @@ def generate_spelling_recommendations(user_id):
             INSERT INTO spelling_recommendations (
                 user_id,
                 word_id,
-                score,
+                recommendation_score,
                 reason
             )
             VALUES (%s, %s, %s, %s)
@@ -65,3 +83,12 @@ def generate_spelling_recommendations(user_id):
     conn.commit()
     cur.close()
     conn.close()
+
+    return [
+        {
+            "word_id": w,
+            "score": s,
+            "reason": r,
+        }
+        for (w, s, r) in recommendations[:10]
+    ]

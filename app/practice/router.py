@@ -233,6 +233,12 @@ def spelling_submit(req: SpellingAnswerRequest, user=Depends(get_current_user)):
     )
 
 
+@router.get("/spelling/recommendations")
+def spelling_recommendations(user=Depends(get_current_user)):
+    from app.intelligence.spelling_recommendations import generate_spelling_recommendations
+    return generate_spelling_recommendations(user["user_id"])
+
+
 # -----------------------------
 # WordSprint (Synonym) Endpoints
 # -----------------------------
