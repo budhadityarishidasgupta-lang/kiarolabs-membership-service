@@ -275,9 +275,10 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
             (user_id, word_id, correct, 0, 0, 0, 0),
         )
 
+        # ---- UPDATE STATS TABLE ----
         correct_count = 1 if correct else 0
         wrong_count = 0 if correct else 1
-        # upsert word-level adaptive stats
+
         cur.execute(
             """
             INSERT INTO spelling_word_stats (
@@ -321,7 +322,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
                 correct_count,
                 wrong_count,
                 correct_count,
-                float(correct_count),
+                1.0 if correct else 0.0,
             ),
         )
 
