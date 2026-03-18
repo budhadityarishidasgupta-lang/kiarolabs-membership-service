@@ -53,7 +53,7 @@ def get_spelling_question(lesson_id: int, user_id: int):
         conn = get_connection()
         cur = conn.cursor()
 
-        # Query: unseen words first
+        # STEP 1: unseen words first
         cur.execute(
             """
             SELECT
@@ -64,12 +64,11 @@ def get_spelling_question(lesson_id: int, user_id: int):
             FROM spelling_lesson_words lw
             JOIN spelling_words w
                 ON lw.word_id = w.word_id
-            LEFT JOIN spelling_attempts sa
-                ON sa.word_id = w.word_id
-                AND sa.user_id = %s
+            LEFT JOIN spelling_word_stats s
+                ON s.word_id = w.word_id
+                AND s.user_id = %s
             WHERE lw.lesson_id = %s
-            AND sa.word_id IS NULL
-            ORDER BY w.word_id
+            AND s.word_id IS NULL
             LIMIT 1
             """,
             (user_id, lesson_id),
@@ -77,7 +76,78 @@ def get_spelling_question(lesson_id: int, user_id: int):
 
         row = cur.fetchone()
 
-        # Fallback: random within lesson
+        # STEP 2: weak words (low accuracy)
+        if not row:
+            cur.execute(
+                """
+                SELECT
+                    w.word_id,
+                    w.word,
+                    COALESCE(w.hint, '') AS hint,
+                    COALESCE(w.example_sentence, '') AS example_sentence
+                FROM spelling_lesson_words lw
+                JOIN spelling_words w
+                    ON lw.word_id = w.word_id
+                JOIN spelling_word_stats s
+                    ON s.word_id = w.word_id
+                    AND s.user_id = %s
+                WHERE lw.lesson_id = %s
+                AND s.accuracy < 0.5
+                ORDER BY s.accuracy ASC
+                LIMIT 1
+                """,
+                (user_id, lesson_id),
+            )
+            row = cur.fetchone()
+
+        # STEP 3: recently wrong (never corrected yet)
+        if not row:
+            cur.execute(
+                """
+                SELECT
+                    w.word_id,
+                    w.word,
+                    COALESCE(w.hint, '') AS hint,
+                    COALESCE(w.example_sentence, '') AS example_sentence
+                FROM spelling_lesson_words lw
+                JOIN spelling_words w
+                    ON lw.word_id = w.word_id
+                JOIN spelling_word_stats s
+                    ON s.word_id = w.word_id
+                    AND s.user_id = %s
+                WHERE lw.lesson_id = %s
+                AND s.last_correct_at IS NULL
+                ORDER BY s.last_attempt_at DESC
+                LIMIT 1
+                """,
+                (user_id, lesson_id),
+            )
+            row = cur.fetchone()
+
+        # STEP 4: stale words (oldest attempted first)
+        if not row:
+            cur.execute(
+                """
+                SELECT
+                    w.word_id,
+                    w.word,
+                    COALESCE(w.hint, '') AS hint,
+                    COALESCE(w.example_sentence, '') AS example_sentence
+                FROM spelling_lesson_words lw
+                JOIN spelling_words w
+                    ON lw.word_id = w.word_id
+                JOIN spelling_word_stats s
+                    ON s.word_id = w.word_id
+                    AND s.user_id = %s
+                WHERE lw.lesson_id = %s
+                ORDER BY s.last_attempt_at ASC
+                LIMIT 1
+                """,
+                (user_id, lesson_id),
+            )
+            row = cur.fetchone()
+
+        # STEP 5 fallback: random within lesson
         if not row:
             cur.execute(
                 """
@@ -203,6 +273,56 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (user_id, word_id, correct, 0, 0, 0, 0),
+        )
+
+        correct_count = 1 if correct else 0
+        wrong_count = 0 if correct else 1
+        # upsert word-level adaptive stats
+        cur.execute(
+            """
+            INSERT INTO spelling_word_stats (
+                user_id,
+                word_id,
+                attempts_count,
+                correct_count,
+                wrong_count,
+                last_attempt_at,
+                last_correct_at,
+                accuracy
+            )
+            VALUES (
+                %s,
+                %s,
+                1,
+                %s,
+                %s,
+                NOW(),
+                CASE WHEN %s = 1 THEN NOW() ELSE NULL END,
+                %s
+            )
+            ON CONFLICT (user_id, word_id)
+            DO UPDATE SET
+                attempts_count = spelling_word_stats.attempts_count + 1,
+                correct_count = spelling_word_stats.correct_count + EXCLUDED.correct_count,
+                wrong_count = spelling_word_stats.wrong_count + EXCLUDED.wrong_count,
+                last_attempt_at = NOW(),
+                last_correct_at = CASE
+                    WHEN EXCLUDED.correct_count = 1 THEN NOW()
+                    ELSE spelling_word_stats.last_correct_at
+                END,
+                accuracy = (
+                    (spelling_word_stats.correct_count + EXCLUDED.correct_count)::float /
+                    (spelling_word_stats.attempts_count + 1)
+                )
+            """,
+            (
+                user_id,
+                word_id,
+                correct_count,
+                wrong_count,
+                correct_count,
+                float(correct_count),
+            ),
         )
 
         conn.commit()
