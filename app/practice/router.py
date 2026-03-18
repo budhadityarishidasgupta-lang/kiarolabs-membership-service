@@ -321,3 +321,20 @@ def dashboard(user=Depends(get_current_user)):
     across learning modules.
     """
     return get_dashboard_stats(user["sub"])
+
+
+@router.get("/spelling/test")
+def spelling_test(user=Depends(get_current_user)):
+    """
+    Test agent for spelling engine:
+    - simulates attempts
+    - generates stats
+    - validates recommendations
+    """
+
+    from app.testing.spelling_test_agent import run_spelling_test
+
+    return run_spelling_test(
+        user_id=user["user_id"],
+        lesson_id=866
+    )
