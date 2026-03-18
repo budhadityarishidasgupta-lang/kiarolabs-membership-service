@@ -306,6 +306,27 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
 
         # normalize spelling comparison
         correct = answer.strip().lower() == correct_word.strip().lower()
+        pattern_hint = None
+
+        if not correct:
+            cur.execute(
+                """
+                SELECT pattern
+                FROM spelling_pattern_stats
+                WHERE user_id = %s
+                ORDER BY accuracy ASC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+
+            row = cur.fetchone()
+
+            if row:
+                pattern = row[0]
+
+                if pattern in correct_word.lower():
+                    pattern_hint = f"Focus on pattern '{pattern}'"
 
         # validate platform user exists
         cur.execute(
@@ -427,7 +448,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
         return {
             "correct": correct,
             "correct_word": correct_word,
-            "hint": hint,
+            "hint": pattern_hint or hint,
             "example_sentence": example_sentence,
         }
 
