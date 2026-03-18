@@ -41,6 +41,20 @@ def mask_word(word: str, blanks_count: int = 2):
 
 
 # ---------------------------------------------------------
+# Pattern extraction helper
+# ---------------------------------------------------------
+def extract_patterns(word: str):
+    patterns = ["ph", "gh", "tion", "sion", "ough", "dge", "tch", "ck", "wr", "kn"]
+    found = []
+
+    for p in patterns:
+        if p in word.lower():
+            found.append(p)
+
+    return found
+
+
+# ---------------------------------------------------------
 # Get spelling question
 # ---------------------------------------------------------
 def get_spelling_question(lesson_id: int, user_id: int):
@@ -325,6 +339,45 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
                 1.0 if correct else 0.0,
             ),
         )
+
+        patterns = extract_patterns(correct_word)
+
+        for p in patterns:
+
+            correct_count = 1 if correct else 0
+            wrong_count = 0 if correct else 1
+
+            cur.execute(
+                """
+                INSERT INTO spelling_pattern_stats (
+                    user_id,
+                    pattern,
+                    attempts_count,
+                    correct_count,
+                    wrong_count,
+                    accuracy,
+                    last_attempt_at
+                )
+                VALUES (%s, %s, 1, %s, %s, %s, NOW())
+                ON CONFLICT (user_id, pattern)
+                DO UPDATE SET
+                    attempts_count = spelling_pattern_stats.attempts_count + 1,
+                    correct_count = spelling_pattern_stats.correct_count + EXCLUDED.correct_count,
+                    wrong_count = spelling_pattern_stats.wrong_count + EXCLUDED.wrong_count,
+                    last_attempt_at = NOW(),
+                    accuracy = (
+                        (spelling_pattern_stats.correct_count + EXCLUDED.correct_count)::float /
+                        (spelling_pattern_stats.attempts_count + 1)
+                    )
+                """,
+                (
+                    user_id,
+                    p,
+                    correct_count,
+                    wrong_count,
+                    1.0 if correct else 0.0,
+                ),
+            )
 
         conn.commit()
 
