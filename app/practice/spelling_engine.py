@@ -5,7 +5,7 @@ from app.database import get_connection
 # ---------------------------------------------------------
 # Word masking helper
 # ---------------------------------------------------------
-def mask_word(word: str, blanks_count: int = 2):
+def mask_word(word: str, patterns: list = None, blanks_count: int = 2):
     """
     Replace internal letters with underscores.
     Keeps first and last letters visible.
@@ -17,6 +17,30 @@ def mask_word(word: str, blanks_count: int = 2):
             return word
 
         chars = list(word)
+
+        if patterns:
+            masked = False
+            lower_word = word.lower()
+
+            for pattern in patterns:
+                if not pattern:
+                    continue
+
+                pattern_lower = str(pattern).lower()
+                start = lower_word.find(pattern_lower)
+
+                if start == -1:
+                    continue
+
+                end = start + len(pattern_lower)
+
+                for pos in range(start, min(end, len(chars))):
+                    if chars[pos].isalpha():
+                        chars[pos] = "_"
+                        masked = True
+
+            if masked:
+                return "".join(chars)
 
         candidates = [
             i for i in range(1, len(chars) - 1)
@@ -192,7 +216,26 @@ def get_spelling_question(lesson_id: int, user_id: int):
 
         word_id, word, hint, example_sentence = row
 
-        masked_word = mask_word(word, 2)
+        weak_pattern = None
+        try:
+            cur.execute(
+                """
+                SELECT pattern
+                FROM spelling_pattern_stats
+                WHERE user_id = %s
+                ORDER BY accuracy ASC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            pattern_row = cur.fetchone()
+            if pattern_row:
+                weak_pattern = pattern_row[0]
+        except Exception:
+            weak_pattern = None
+
+        patterns = [weak_pattern] if weak_pattern else None
+        masked_word = mask_word(word, patterns)
 
         return {
             "word_id": word_id,
