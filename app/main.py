@@ -272,7 +272,10 @@ def login(
         algorithm=JWT_ALGO
     )
 
-    return {"access_token": token}
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
 
 
 # =========================
