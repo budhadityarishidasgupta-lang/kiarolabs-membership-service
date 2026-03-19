@@ -20,6 +20,7 @@ from app.practice.spelling_engine import (
     get_spelling_question,
     submit_spelling_answer
 )
+from app.dashboard.spelling_dashboard import get_spelling_dashboard
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 
@@ -237,6 +238,17 @@ def spelling_submit(req: SpellingAnswerRequest, user=Depends(get_current_user)):
 def spelling_recommendations(user=Depends(get_current_user)):
     from app.intelligence.spelling_recommendations import generate_spelling_recommendations
     return generate_spelling_recommendations(user["user_id"])
+
+
+@router.get("/spelling/dashboard")
+def spelling_dashboard(user=Depends(get_current_user)):
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned in learning system"
+        )
+
+    return get_spelling_dashboard(user["user_id"])
 
 
 # -----------------------------
