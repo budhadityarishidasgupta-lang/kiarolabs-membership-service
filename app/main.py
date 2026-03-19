@@ -250,7 +250,17 @@ def login(
 
     user_id, password_hash = row
 
-    if not pwd_context.verify(password, password_hash):
+    # Handle membership-managed users
+    if password_hash == "membership_managed_user":
+        # trust external auth (Lovable already validated)
+        valid = True
+    else:
+        try:
+            valid = pwd_context.verify(password, password_hash)
+        except:
+            valid = False
+
+    if not valid:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = jwt.encode(
