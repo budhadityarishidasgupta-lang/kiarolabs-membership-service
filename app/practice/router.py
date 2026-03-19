@@ -350,3 +350,16 @@ def spelling_test(user=Depends(get_current_user)):
         user_id=user["user_id"],
         lesson_id=866
     )
+
+@router.get("/spelling/dashboard")
+def spelling_dashboard(user=Depends(get_current_user)):
+    """
+    Returns spelling dashboard:
+    - summary stats
+    - weak words
+    - recommendations
+    """
+
+    from app.dashboard.spelling_dashboard import get_spelling_dashboard
+
+    return get_spelling_dashboard(user["user_id"])
