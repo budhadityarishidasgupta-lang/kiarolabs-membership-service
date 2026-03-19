@@ -264,7 +264,10 @@ def login(
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = jwt.encode(
-        {"sub": email},
+        {
+            "sub": email,
+            "user_id": user_id
+        },
         JWT_SECRET,
         algorithm=JWT_ALGO
     )
