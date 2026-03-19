@@ -1,6 +1,6 @@
 import os
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Form
 #from fastapi.security import OAuth2PasswordBearer
 from app.auth import get_current_user
 from pydantic import BaseModel, EmailStr
@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from app.practice.router import router as practice_router
+from typing import Optional
 
 
 # =========================
@@ -208,62 +209,52 @@ def register(req: RegisterRequest):
 # Auth: Login
 # =========================
 @app.post("/login")
-def login(req: LoginRequest):
-    email = req.email.strip().lower()
+def login(
+    email: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+    request: Optional[LoginRequest] = None
+):
+
+    # Normalize input
+    if request:
+        email = request.email
+        password = request.password
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Missing credentials")
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute(
         """
-        SELECT password_hash, account_type
-        FROM kiaro_membership.members
+        SELECT user_id, password_hash
+        FROM users
         WHERE email = %s
         """,
         (email,),
     )
 
     row = cur.fetchone()
+
     cur.close()
     conn.close()
 
     if not row:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    password_hash, account_type = row
+    user_id, password_hash = row
 
-    if not password_hash:
-        raise HTTPException(
-            status_code=401,
-            detail="Password not set. Please register or set password.",
-        )
+    if not pwd_context.verify(password, password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not verify_password(req.password, password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)
-        """,
-        (email,),
+    token = jwt.encode(
+        {"sub": email},
+        JWT_SECRET,
+        algorithm=JWT_ALGO
     )
 
-    user_row = cur.fetchone()
-    user_id = user_row[0] if user_row else None
-
-    cur.close()
-    conn.close()
-
-    token, exp = create_access_token(email, account_type or "free", user_id=user_id)
-
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "expires_at": exp.isoformat(),
-    }
+    return {"access_token": token}
 
 
 # =========================
