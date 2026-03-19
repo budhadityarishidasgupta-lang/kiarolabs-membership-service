@@ -211,6 +211,7 @@ def register(req: RegisterRequest):
 @app.post("/login")
 def login(
     email: Optional[str] = Form(None),
+    username: Optional[str] = Form(None),
     password: Optional[str] = Form(None),
     request: Optional[LoginRequest] = None
 ):
@@ -219,6 +220,10 @@ def login(
     if request:
         email = request.email
         password = request.password
+    else:
+        # Swagger sends username instead of email
+        if not email and username:
+            email = username
 
     if not email or not password:
         raise HTTPException(status_code=400, detail="Missing credentials")
