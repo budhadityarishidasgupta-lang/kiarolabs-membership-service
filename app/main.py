@@ -1,6 +1,6 @@
 import os
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Form
 #from fastapi.security import OAuth2PasswordBearer
 from app.auth import get_current_user
 from pydantic import BaseModel, EmailStr
@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from app.practice.router import router as practice_router
+from typing import Optional
 
 
 # =========================
@@ -208,8 +209,19 @@ def register(req: RegisterRequest):
 # Auth: Login
 # =========================
 @app.post("/login")
-def login(req: LoginRequest):
-    email = req.email.strip().lower()
+def login(
+    request: Optional[LoginRequest] = None,
+    username: Optional[str] = Form(None),
+    password: Optional[str] = Form(None)
+):
+    if request:
+        email = request.email
+        pwd = request.password
+    else:
+        email = username
+        pwd = password
+
+    email = email.strip().lower()
 
     conn = get_connection()
     cur = conn.cursor()
@@ -238,7 +250,7 @@ def login(req: LoginRequest):
             detail="Password not set. Please register or set password.",
         )
 
-    if not verify_password(req.password, password_hash):
+    if not verify_password(pwd, password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     conn = get_connection()
