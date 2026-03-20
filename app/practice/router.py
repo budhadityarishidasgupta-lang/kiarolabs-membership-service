@@ -222,6 +222,34 @@ def words_micro_challenge(
     return build_words_micro_challenge(user["user_id"], word_id)
 
 
+
+
+@router.get("/engagement")
+def get_engagement(user=Depends(get_current_user)):
+    from app.database import get_connection
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT total_xp, current_streak
+        FROM user_engagement
+        WHERE user_id = %s
+    """, (user["user_id"],))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return {"xp": 0, "streak": 0}
+
+    return {
+        "xp": row[0],
+        "streak": row[1]
+    }
+
 @router.post("/words/micro-challenge/submit")
 def submit_words_micro_challenge(
     payload: dict,
@@ -261,11 +289,17 @@ def submit_words_micro_challenge(
 
     xp = int(accuracy * 10)
 
+    from app.services.engagement_service import update_user_engagement
+
+    engagement = update_user_engagement(user["user_id"], xp)
+
     return {
         "correct": correct_count,
         "total": len(answers),
         "accuracy": accuracy,
         "xp": xp,
+        "total_xp": engagement["xp"],
+        "streak": engagement["streak"],
         "message": "Great understanding!" if accuracy == 1 else "Almost there!"
     }
 
@@ -295,11 +329,17 @@ def submit_micro_challenge(
 
     xp = int(accuracy * 10)
 
+    from app.services.engagement_service import update_user_engagement
+
+    engagement = update_user_engagement(user["user_id"], xp)
+
     return {
         "correct": correct_count,
         "total": len(answers),
         "accuracy": accuracy,
         "xp": xp,
+        "total_xp": engagement["xp"],
+        "streak": engagement["streak"],
         "message": "Word mastered!" if accuracy == 1 else "Keep practicing!"
     }
 
