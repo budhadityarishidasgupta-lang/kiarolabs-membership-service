@@ -286,6 +286,15 @@ def submit_words_micro_challenge(
 
     correct_count = sum(1 for a in answers if a == correct_index)
     accuracy = correct_count / len(answers)
+    cur.execute("""
+        SELECT accuracy
+        FROM spelling_word_stats
+        WHERE user_id = %s AND word_id = %s
+    """, (user["user_id"], word_id))
+
+    row_prev = cur.fetchone()
+    previous_accuracy = row_prev[0] if row_prev else 0
+    improvement = accuracy - previous_accuracy
 
     xp = int(accuracy * 10)
 
@@ -297,10 +306,12 @@ def submit_words_micro_challenge(
         "correct": correct_count,
         "total": len(answers),
         "accuracy": accuracy,
+        "previous_accuracy": previous_accuracy,
+        "improvement": improvement,
         "xp": xp,
         "total_xp": engagement["xp"],
         "streak": engagement["streak"],
-        "message": "Great understanding!" if accuracy == 1 else "Almost there!"
+        "message": "Word mastered!" if accuracy == 1 else "Keep practicing!"
     }
 
 @router.post("/spelling/micro-challenge/submit")
@@ -326,6 +337,15 @@ def submit_micro_challenge(
 
     correct_count = sum(1 for a in answers if a.lower() == correct_word.lower())
     accuracy = correct_count / len(answers)
+    cur.execute("""
+        SELECT accuracy
+        FROM spelling_word_stats
+        WHERE user_id = %s AND word_id = %s
+    """, (user["user_id"], word_id))
+
+    row_prev = cur.fetchone()
+    previous_accuracy = row_prev[0] if row_prev else 0
+    improvement = accuracy - previous_accuracy
 
     xp = int(accuracy * 10)
 
@@ -337,6 +357,8 @@ def submit_micro_challenge(
         "correct": correct_count,
         "total": len(answers),
         "accuracy": accuracy,
+        "previous_accuracy": previous_accuracy,
+        "improvement": improvement,
         "xp": xp,
         "total_xp": engagement["xp"],
         "streak": engagement["streak"],
