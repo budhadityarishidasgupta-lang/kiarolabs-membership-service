@@ -174,12 +174,16 @@ def get_spelling_courses(user=Depends(get_current_user)):
 @router.get("/spelling/question")
 def spelling_question(
     lesson_id: int,
-    t: int = None,
+    word_id: Optional[int] = None,
     user=Depends(get_current_user)
 ):
     """
     Returns the next spelling word for a lesson
     """
+    if word_id:
+        from app.practice.spelling_engine import get_word_by_id
+        return get_word_by_id(user["user_id"], word_id)
+
     print(f"SPELLING QUESTION DEBUG user={user}")
     print(f"SPELLING QUESTION DEBUG lesson_id={lesson_id}")
 
@@ -196,6 +200,50 @@ def spelling_question(
         lesson_id=lesson_id,
         user_id=user["user_id"]
     )
+
+
+@router.get("/spelling/micro-challenge")
+def spelling_micro_challenge(
+    word_id: int,
+    user=Depends(get_current_user)
+):
+    from app.practice.spelling_engine import build_micro_challenge
+    return build_micro_challenge(user["user_id"], word_id)
+
+
+@router.post("/spelling/micro-challenge/submit")
+def submit_micro_challenge(
+    payload: dict,
+    user=Depends(get_current_user)
+):
+    from app.database import get_connection
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    word_id = payload["word_id"]
+    answers = payload["answers"]
+
+    cur.execute("SELECT word FROM spelling_words WHERE id = %s", (word_id,))
+    row = cur.fetchone()
+
+    if not row:
+        return {"error": "Word not found"}
+
+    correct_word = row[0]
+
+    correct_count = sum(1 for a in answers if a.lower() == correct_word.lower())
+    accuracy = correct_count / len(answers)
+
+    xp = int(accuracy * 10)
+
+    return {
+        "correct": correct_count,
+        "total": len(answers),
+        "accuracy": accuracy,
+        "xp": xp,
+        "message": "Word mastered!" if accuracy == 1 else "Keep practicing!"
+    }
 
 # -----------------------------
 # SpellingSprint Submit Answer

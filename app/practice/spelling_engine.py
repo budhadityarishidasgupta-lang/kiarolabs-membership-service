@@ -277,6 +277,92 @@ def get_spelling_question(lesson_id: int, user_id: int):
             conn.close()
 
 
+def get_word_by_id(user_id: int, word_id: int):
+    from app.database import get_connection
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT word, hint, example_sentence
+        FROM spelling_words
+        WHERE id = %s
+    """, (word_id,))
+
+    row = cur.fetchone()
+
+    if not row:
+        return {"error": "Word not found"}
+
+    word, hint, example = row
+
+    def mask_word_simple(w):
+        return w[0] + "_"*(len(w)-2) + w[-1] if len(w) > 2 else w
+
+    return {
+        "word_id": word_id,
+        "masked_word": mask_word_simple(word),
+        "hint": hint or "",
+        "example_sentence": example or ""
+    }
+
+
+def build_micro_challenge(user_id: int, word_id: int):
+    from app.database import get_connection
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT word, hint, example_sentence
+        FROM spelling_words
+        WHERE id = %s
+    """, (word_id,))
+
+    row = cur.fetchone()
+
+    if not row:
+        return {"error": "Word not found"}
+
+    word, hint, example = row
+
+    def mask_variation(word, level):
+        if level == 1:
+            return word[0] + "_"*(len(word)-2) + word[-1]
+        elif level == 2:
+            return "_" + word[1:-1] + "_"
+        else:
+            return word[0:2] + "_"*(len(word)-3) + word[-1]
+
+    questions = [
+        {
+            "attempt": 1,
+            "masked_word": mask_variation(word, 1),
+            "hint": hint or "",
+            "example": example or ""
+        },
+        {
+            "attempt": 2,
+            "masked_word": mask_variation(word, 2),
+            "hint": hint or "",
+            "example": example or ""
+        },
+        {
+            "attempt": 3,
+            "masked_word": mask_variation(word, 3),
+            "hint": hint or "",
+            "example": example or ""
+        }
+    ]
+
+    return {
+        "word_id": word_id,
+        "word": word,
+        "questions": questions,
+        "total": 3
+    }
+
+
 # ---------------------------------------------------------
 # Submit spelling answer
 # ---------------------------------------------------------
