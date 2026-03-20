@@ -2,6 +2,15 @@ import random
 from app.database import get_connection
 
 
+def clean_text(value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() == "nan":
+        return ""
+    return text
+
+
 # ---------------------------------------------------------
 # Word masking helper
 # ---------------------------------------------------------
@@ -215,6 +224,8 @@ def get_spelling_question(lesson_id: int, user_id: int):
             }
 
         word_id, word, hint, example_sentence = row
+        clean_hint = clean_text(hint)
+        clean_example = clean_text(example_sentence)
 
         weak_pattern = None
         try:
@@ -241,8 +252,8 @@ def get_spelling_question(lesson_id: int, user_id: int):
             "word_id": word_id,
             "word_audio": word,
             "masked_word": masked_word,
-            "hint": hint,
-            "example_sentence": example_sentence,
+            "hint": clean_hint,
+            "example_sentence": clean_example,
         }
 
     except Exception as e:
@@ -303,9 +314,12 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
             }
 
         correct_word, hint, example_sentence = row
+        clean_correct_word = clean_text(correct_word)
+        clean_hint = clean_text(hint)
+        clean_example = clean_text(example_sentence)
 
         # normalize spelling comparison
-        correct = answer.strip().lower() == correct_word.strip().lower()
+        correct = answer.strip().lower() == clean_correct_word.lower()
         pattern_hint = None
 
         if not correct:
@@ -325,7 +339,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
             if row:
                 pattern = row[0]
 
-                if pattern in correct_word.lower():
+                if pattern in clean_correct_word.lower():
                     pattern_hint = f"Focus on pattern '{pattern}'"
 
         # validate platform user exists
@@ -404,7 +418,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
             ),
         )
 
-        patterns = extract_patterns(correct_word)
+        patterns = extract_patterns(clean_correct_word)
 
         for p in patterns:
 
@@ -447,9 +461,9 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
 
         return {
             "correct": correct,
-            "correct_word": correct_word,
-            "hint": pattern_hint or hint,
-            "example_sentence": example_sentence,
+            "correct_word": clean_correct_word,
+            "hint": clean_text(pattern_hint) or clean_hint,
+            "example_sentence": clean_example,
         }
 
     except Exception as e:
