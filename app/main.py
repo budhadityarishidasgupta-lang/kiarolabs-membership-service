@@ -1,6 +1,6 @@
 import os
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request, HTTPException, Depends, Form
+from fastapi import FastAPI, Request, HTTPException, Depends
 #from fastapi.security import OAuth2PasswordBearer
 from app.auth import get_current_user
 from pydantic import BaseModel, EmailStr
@@ -209,21 +209,26 @@ def register(req: RegisterRequest):
 # Auth: Login
 # =========================
 @app.post("/login")
-def login(
-    email: Optional[str] = Form(None),
-    username: Optional[str] = Form(None),
-    password: Optional[str] = Form(None),
-    request: Optional[LoginRequest] = None
-):
+async def login(request: Request):
+    data = {}
 
-    # Normalize input
-    if request:
-        email = request.email
-        password = request.password
-    else:
-        # Swagger sends username instead of email
-        if not email and username:
-            email = username
+    # Try JSON first
+    try:
+        data = await request.json()
+    except:
+        data = {}
+
+    # Fallback to form-data
+    if not data:
+        form = await request.form()
+        data = dict(form)
+
+    # Normalize fields
+    email = data.get("email") or data.get("username")
+    password = data.get("password")
+
+    # Debug (keep temporarily)
+    print("LOGIN DEBUG:", data)
 
     if not email or not password:
         raise HTTPException(status_code=400, detail="Missing credentials")
