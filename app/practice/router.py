@@ -250,6 +250,49 @@ def get_engagement(user=Depends(get_current_user)):
         "streak": row[1]
     }
 
+
+@router.get("/progress/weekly-improvement")
+def get_weekly_improvement(user=Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    user_id = user["user_id"]
+
+    try:
+        # Current 7 days
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE correct = true) * 1.0 / NULLIF(COUNT(*),0)
+            FROM spelling_attempts
+            WHERE user_id = %s
+            AND created_at >= NOW() - INTERVAL '7 days'
+        """, (user_id,))
+
+        current = cur.fetchone()[0] or 0
+
+        # Previous 7 days
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE correct = true) * 1.0 / NULLIF(COUNT(*),0)
+            FROM spelling_attempts
+            WHERE user_id = %s
+            AND created_at >= NOW() - INTERVAL '14 days'
+            AND created_at < NOW() - INTERVAL '7 days'
+        """, (user_id,))
+
+        previous = cur.fetchone()[0] or 0
+    finally:
+        cur.close()
+        conn.close()
+
+    improvement = current - previous
+
+    return {
+        "current_accuracy": round(current * 100, 1),
+        "previous_accuracy": round(previous * 100, 1),
+        "improvement": round(improvement * 100, 1)
+    }
+
 @router.post("/words/micro-challenge/submit")
 def submit_words_micro_challenge(
     payload: dict,
