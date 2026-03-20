@@ -211,6 +211,64 @@ def spelling_micro_challenge(
     return build_micro_challenge(user["user_id"], word_id)
 
 
+
+
+@router.get("/words/micro-challenge")
+def words_micro_challenge(
+    word_id: int,
+    user=Depends(get_current_user)
+):
+    from app.practice.words_engine import build_words_micro_challenge
+    return build_words_micro_challenge(user["user_id"], word_id)
+
+
+@router.post("/words/micro-challenge/submit")
+def submit_words_micro_challenge(
+    payload: dict,
+    user=Depends(get_current_user)
+):
+    """
+    payload:
+    {
+        word_id: int,
+        answers: [selected_option_index_1, selected_option_index_2]
+    }
+    """
+    from app.database import get_connection
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    word_id = payload["word_id"]
+    answers = payload["answers"]
+
+    # Fetch correct answer index (reuse existing structure)
+    cur.execute("""
+        SELECT correct_option_index
+        FROM words
+        WHERE id = %s
+    """, (word_id,))
+
+    row = cur.fetchone()
+
+    if not row:
+        return {"error": "Word not found"}
+
+    correct_index = row[0]
+
+    correct_count = sum(1 for a in answers if a == correct_index)
+    accuracy = correct_count / len(answers)
+
+    xp = int(accuracy * 10)
+
+    return {
+        "correct": correct_count,
+        "total": len(answers),
+        "accuracy": accuracy,
+        "xp": xp,
+        "message": "Great understanding!" if accuracy == 1 else "Almost there!"
+    }
+
 @router.post("/spelling/micro-challenge/submit")
 def submit_micro_challenge(
     payload: dict,
