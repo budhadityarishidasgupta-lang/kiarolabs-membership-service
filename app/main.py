@@ -28,7 +28,11 @@ app = FastAPI()
 
 @app.on_event("startup")
 def startup_event():
-    init_words_tables()
+    try:
+        init_words_tables()
+        print("✅ words tables initialized")
+    except Exception as e:
+        print("❌ words init failed:", e)
 
 # =========================
 # CORS
