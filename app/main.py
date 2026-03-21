@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, HTTPException, Depends
 from app.auth import get_current_user
 from pydantic import BaseModel, EmailStr
 from app.database import get_connection
+from app.database_init_words import init_words_tables
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
@@ -23,6 +24,11 @@ pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 #oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+def startup_event():
+    init_words_tables()
 
 # =========================
 # CORS
