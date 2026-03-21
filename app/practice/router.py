@@ -20,6 +20,11 @@ from app.practice.spelling_engine import (
     get_spelling_question,
     submit_spelling_answer
 )
+from app.practice.words_engine import (
+    get_words_courses,
+    get_words_question,
+    submit_words_answer,
+)
 from app.dashboard.spelling_dashboard import get_spelling_dashboard
 
 router = APIRouter(prefix="/practice", tags=["practice"])
@@ -35,6 +40,10 @@ class SynonymAnswerRequest(BaseModel):
     response_ms: int
 
 class SpellingAnswerRequest(BaseModel):
+    word_id: int
+    answer: str
+
+class WordsAnswerRequest(BaseModel):
     word_id: int
     answer: str
 
@@ -461,6 +470,45 @@ def spelling_dashboard(user=Depends(get_current_user)):
 
     return get_spelling_dashboard(user["user_id"])
 
+
+
+
+# -----------------------------
+# WordSprint Endpoints
+# -----------------------------
+
+@router.get("/words/courses")
+def words_courses(user=Depends(get_current_user)):
+    return get_words_courses()
+
+
+@router.get("/words/question")
+def words_question(lesson_id: int, user=Depends(get_current_user)):
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned in learning system"
+        )
+
+    return get_words_question(
+        lesson_id=lesson_id,
+        user_id=user["user_id"],
+    )
+
+
+@router.post("/words/submit")
+def words_submit(req: WordsAnswerRequest, user=Depends(get_current_user)):
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned in learning system"
+        )
+
+    return submit_words_answer(
+        user_id=user["user_id"],
+        word_id=req.word_id,
+        answer=req.answer,
+    )
 
 # -----------------------------
 # WordSprint (Synonym) Endpoints
