@@ -1,6 +1,6 @@
 import requests
 
-BASE_URL = "https://your-render-url.onrender.com"
+BASE_URL = "https://kiarolabs-membership-service.onrender.com"
 
 EMAIL = "rishi@test.com"
 PASSWORD = "test123"
