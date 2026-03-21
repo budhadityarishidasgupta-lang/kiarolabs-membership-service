@@ -110,7 +110,7 @@ def get_words_question(lesson_id: int, user_id: int):
                 COALESCE(w.example_sentence, '') AS example_sentence
             FROM words_lesson_words lw
             JOIN words_words w
-                ON lw.word_id = w.word_id
+                ON lw.word_id = w.id
             LEFT JOIN words_word_stats s
                 ON s.word_id = w.word_id
                 AND s.user_id = %s
@@ -134,7 +134,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     COALESCE(w.example_sentence, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
-                    ON lw.word_id = w.word_id
+                    ON lw.word_id = w.id
                 JOIN words_word_stats s
                     ON s.word_id = w.word_id
                     AND s.user_id = %s
@@ -158,7 +158,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     COALESCE(w.example_sentence, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
-                    ON lw.word_id = w.word_id
+                    ON lw.word_id = w.id
                 JOIN words_word_stats s
                     ON s.word_id = w.word_id
                     AND s.user_id = %s
@@ -182,7 +182,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     COALESCE(w.example_sentence, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
-                    ON lw.word_id = w.word_id
+                    ON lw.word_id = w.id
                 JOIN words_word_stats s
                     ON s.word_id = w.word_id
                     AND s.user_id = %s
@@ -205,7 +205,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     COALESCE(w.example_sentence, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
-                    ON lw.word_id = w.word_id
+                    ON lw.word_id = w.id
                 WHERE lw.lesson_id = %s
                 ORDER BY RANDOM()
                 LIMIT 1
