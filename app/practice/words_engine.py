@@ -57,7 +57,7 @@ def get_words_courses():
                 l.sort_order
             FROM words_courses c
             JOIN words_lessons l
-                ON l.course_id = c.course_id
+                ON l.course_id = c.id
             WHERE l.is_active = true
             ORDER BY c.course_id, l.sort_order
             """
