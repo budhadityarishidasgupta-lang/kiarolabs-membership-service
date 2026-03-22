@@ -50,14 +50,14 @@ def get_words_courses():
         cur.execute(
             """
             SELECT
-                c.course_id,
+                c.id AS course_id,
                 c.course_name,
                 l.lesson_id,
                 COALESCE(l.display_name, l.lesson_name) AS lesson_name,
                 l.sort_order
             FROM words_courses c
             JOIN words_lessons l
-                ON l.course_id = c.course_id
+                ON l.course_id = c.id
             WHERE l.is_active = true
             ORDER BY c.course_id, l.sort_order
             """
