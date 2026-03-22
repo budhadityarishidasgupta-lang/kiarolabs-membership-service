@@ -107,7 +107,7 @@ def get_words_question(lesson_id: int, user_id: int):
                 w.id,
                 w.word,
                 COALESCE(w.hint, '') AS hint,
-                COALESCE(w.example_sentence, '') AS example_sentence
+                COALESCE(w.example, '') AS example_sentence
             FROM words_lesson_words lw
             JOIN words_words w
                 ON lw.word_id = w.id
@@ -131,7 +131,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
+                    COALESCE(w.example, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
@@ -155,7 +155,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
+                    COALESCE(w.example, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
@@ -179,7 +179,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
+                    COALESCE(w.example, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
@@ -202,7 +202,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
+                    COALESCE(w.example, '') AS example_sentence
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
