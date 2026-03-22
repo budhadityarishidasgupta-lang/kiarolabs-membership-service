@@ -104,7 +104,7 @@ def get_words_question(lesson_id: int, user_id: int):
         cur.execute(
             """
             SELECT
-                w.word_id,
+                w.id,
                 w.word,
                 COALESCE(w.hint, '') AS hint,
                 COALESCE(w.example_sentence, '') AS example_sentence
@@ -112,7 +112,7 @@ def get_words_question(lesson_id: int, user_id: int):
             JOIN words_words w
                 ON lw.word_id = w.id
             LEFT JOIN words_word_stats s
-                ON s.word_id = w.word_id
+                ON s.word_id = w.id
                 AND s.user_id = %s
             WHERE lw.lesson_id = %s
             AND s.word_id IS NULL
@@ -128,7 +128,7 @@ def get_words_question(lesson_id: int, user_id: int):
             cur.execute(
                 """
                 SELECT
-                    w.word_id,
+                    w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
                     COALESCE(w.example_sentence, '') AS example_sentence
@@ -136,7 +136,7 @@ def get_words_question(lesson_id: int, user_id: int):
                 JOIN words_words w
                     ON lw.word_id = w.id
                 JOIN words_word_stats s
-                    ON s.word_id = w.word_id
+                    ON s.word_id = w.id
                     AND s.user_id = %s
                 WHERE lw.lesson_id = %s
                 AND s.accuracy < 0.5
@@ -152,7 +152,7 @@ def get_words_question(lesson_id: int, user_id: int):
             cur.execute(
                 """
                 SELECT
-                    w.word_id,
+                    w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
                     COALESCE(w.example_sentence, '') AS example_sentence
@@ -160,7 +160,7 @@ def get_words_question(lesson_id: int, user_id: int):
                 JOIN words_words w
                     ON lw.word_id = w.id
                 JOIN words_word_stats s
-                    ON s.word_id = w.word_id
+                    ON s.word_id = w.id
                     AND s.user_id = %s
                 WHERE lw.lesson_id = %s
                 AND s.last_correct_at IS NULL
@@ -176,7 +176,7 @@ def get_words_question(lesson_id: int, user_id: int):
             cur.execute(
                 """
                 SELECT
-                    w.word_id,
+                    w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
                     COALESCE(w.example_sentence, '') AS example_sentence
@@ -184,7 +184,7 @@ def get_words_question(lesson_id: int, user_id: int):
                 JOIN words_words w
                     ON lw.word_id = w.id
                 JOIN words_word_stats s
-                    ON s.word_id = w.word_id
+                    ON s.word_id = w.id
                     AND s.user_id = %s
                 WHERE lw.lesson_id = %s
                 ORDER BY s.last_attempt_at ASC
@@ -199,7 +199,7 @@ def get_words_question(lesson_id: int, user_id: int):
             cur.execute(
                 """
                 SELECT
-                    w.word_id,
+                    w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
                     COALESCE(w.example_sentence, '') AS example_sentence
