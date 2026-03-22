@@ -56,8 +56,53 @@ def init_words_tables():
     """)
 
     # -----------------------------
+    # COURSES
+    # -----------------------------
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS words_courses (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    """)
+
+    # -----------------------------
+    # LESSONS
+    # -----------------------------
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS words_lessons (
+        id SERIAL PRIMARY KEY,
+        course_id INT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    """)
+
+    # -----------------------------
     # SEED DATA (SAFE INSERT)
     # -----------------------------
+
+    # -----------------------------
+    # SEED COURSES
+    # -----------------------------
+
+    cur.execute("""
+    INSERT INTO words_courses (id, name)
+    VALUES (1, 'WordSprint Basics')
+    ON CONFLICT (id) DO NOTHING;
+    """)
+
+    # -----------------------------
+    # SEED LESSONS
+    # -----------------------------
+
+    cur.execute("""
+    INSERT INTO words_lessons (id, course_id, name)
+    VALUES (1, 1, 'Starter Words')
+    ON CONFLICT (id) DO NOTHING;
+    """)
 
     cur.execute("""
     INSERT INTO words_words (id, word, correct_answer, hint, example)
@@ -79,6 +124,22 @@ def init_words_tables():
     SELECT setval(
         pg_get_serial_sequence('words_words', 'id'),
         GREATEST((SELECT COALESCE(MAX(id), 1) FROM words_words), 1),
+        true
+    );
+    """)
+
+    cur.execute("""
+    SELECT setval(
+        pg_get_serial_sequence('words_courses', 'id'),
+        GREATEST((SELECT COALESCE(MAX(id), 1) FROM words_courses), 1),
+        true
+    );
+    """)
+
+    cur.execute("""
+    SELECT setval(
+        pg_get_serial_sequence('words_lessons', 'id'),
+        GREATEST((SELECT COALESCE(MAX(id), 1) FROM words_lessons), 1),
         true
     );
     """)
