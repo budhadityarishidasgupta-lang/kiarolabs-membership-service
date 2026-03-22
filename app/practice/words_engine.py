@@ -50,7 +50,7 @@ def get_words_courses():
         cur.execute(
             """
             SELECT
-                c.course_id,
+                c.id AS course_id,
                 c.course_name,
                 l.lesson_id,
                 COALESCE(l.display_name, l.lesson_name) AS lesson_name,
