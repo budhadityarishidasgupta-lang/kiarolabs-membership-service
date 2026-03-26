@@ -51,15 +51,13 @@ def get_words_courses():
             """
             SELECT
                 c.id AS course_id,
-                c.course_name,
-                l.lesson_id,
-                COALESCE(l.display_name, l.lesson_name) AS lesson_name,
-                l.sort_order
+                c.name AS course_name,
+                l.id AS lesson_id,
+                l.name AS lesson_name
             FROM words_courses c
             JOIN words_lessons l
                 ON l.course_id = c.id
-            WHERE l.is_active = true
-            ORDER BY c.course_id, l.sort_order
+            ORDER BY c.id, l.id;
             """
         )
 
@@ -67,7 +65,7 @@ def get_words_courses():
 
         courses = {}
 
-        for course_id, course_name, lesson_id, lesson_name, lesson_order in rows:
+        for course_id, course_name, lesson_id, lesson_name in rows:
             if course_id not in courses:
                 courses[course_id] = {
                     "course_id": course_id,
@@ -79,7 +77,6 @@ def get_words_courses():
                 {
                     "lesson_id": lesson_id,
                     "lesson_name": lesson_name,
-                    "lesson_order": lesson_order,
                 }
             )
 
@@ -107,7 +104,7 @@ def get_words_question(lesson_id: int, user_id: int):
                 w.id,
                 w.word,
                 COALESCE(w.hint, '') AS hint,
-                COALESCE(w.example, '') AS example_sentence
+                COALESCE(w.example, '') AS example
             FROM words_lesson_words lw
             JOIN words_words w
                 ON lw.word_id = w.id
@@ -131,7 +128,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example, '') AS example_sentence
+                    COALESCE(w.example, '') AS example
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
@@ -155,7 +152,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example, '') AS example_sentence
+                    COALESCE(w.example, '') AS example
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
@@ -179,7 +176,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example, '') AS example_sentence
+                    COALESCE(w.example, '') AS example
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
@@ -202,7 +199,7 @@ def get_words_question(lesson_id: int, user_id: int):
                     w.id,
                     w.word,
                     COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example, '') AS example_sentence
+                    COALESCE(w.example, '') AS example
                 FROM words_lesson_words lw
                 JOIN words_words w
                     ON lw.word_id = w.id
@@ -222,13 +219,13 @@ def get_words_question(lesson_id: int, user_id: int):
                 "example": "",
             }
 
-        word_id, word, hint, example_sentence = row
+        word_id, word, hint, example = row
 
         return {
             "word_id": word_id,
             "masked_word": mask_word(word),
             "hint": clean_text(hint),
-            "example": clean_text(example_sentence),
+            "example": clean_text(example),
         }
 
     finally:
