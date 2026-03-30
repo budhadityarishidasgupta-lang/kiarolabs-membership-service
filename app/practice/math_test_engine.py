@@ -57,21 +57,22 @@ def start_math_test(test_id):
     total_questions = row[0]
 
     cur.execute(
-        """
+        f"""
         SELECT
-            id,
-            stem,
-            option_a,
-            option_b,
-            option_c,
-            option_d,
-            option_e,
-            correct_option
-        FROM math_questions
+            q.id,
+            q.stem,
+            q.option_a,
+            q.option_b,
+            q.option_c,
+            q.option_d,
+            q.option_e,
+            q.correct_option
+        FROM math_questions q
+        JOIN math_lesson_questions lq
+            ON lq.question_id = q.id
         ORDER BY RANDOM()
-        LIMIT %s;
-    """,
-        (total_questions,),
+        LIMIT {total_questions};
+    """
     )
 
     questions = cur.fetchall()
