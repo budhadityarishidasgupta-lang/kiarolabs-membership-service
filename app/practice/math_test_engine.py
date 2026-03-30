@@ -57,39 +57,49 @@ def start_math_test(test_id):
     total_questions = row[0]
 
     cur.execute(
-        """
+        f"""
         SELECT
-            id,
-            stem,
-            option_a,
-            option_b,
-            option_c,
-            option_d,
-            option_e,
-            correct_option
-        FROM math_questions
+            q.id,
+            q.stem,
+            q.option_a,
+            q.option_b,
+            q.option_c,
+            q.option_d,
+            q.option_e,
+            q.correct_option
+        FROM math_questions q
+        JOIN math_lesson_questions lq
+            ON lq.question_id = q.id
         ORDER BY RANDOM()
-        LIMIT %s;
-    """,
-        (total_questions,),
+        LIMIT {total_questions};
+    """
     )
 
-    questions = cur.fetchall()
+    questions = []
+
+    for q in cur.fetchall():
+        options = [q[2], q[3], q[4], q[5], q[6]]
+
+        # remove null options
+        options = [opt for opt in options if opt is not None]
+
+        questions.append(
+            {
+                "question_id": q[0],
+                "stem": q[1],
+                "options": options,
+                "correct_option": q[7],
+            }
+        )
+
+    print(f"DEBUG TEST: returning {len(questions)} cleaned questions")
 
     cur.close()
     conn.close()
 
     return {
         "test_id": test_id,
-        "questions": [
-            {
-                "question_id": q[0],
-                "stem": q[1],
-                "options": [q[2], q[3], q[4], q[5], q[6]],
-                "correct_option": q[7],
-            }
-            for q in questions
-        ],
+        "questions": questions,
     }
 
 
