@@ -75,22 +75,31 @@ def start_math_test(test_id):
     """
     )
 
-    questions = cur.fetchall()
+    questions = []
+
+    for q in cur.fetchall():
+        options = [q[2], q[3], q[4], q[5], q[6]]
+
+        # remove null options
+        options = [opt for opt in options if opt is not None]
+
+        questions.append(
+            {
+                "question_id": q[0],
+                "stem": q[1],
+                "options": options,
+                "correct_option": q[7],
+            }
+        )
+
+    print(f"DEBUG TEST: returning {len(questions)} cleaned questions")
 
     cur.close()
     conn.close()
 
     return {
         "test_id": test_id,
-        "questions": [
-            {
-                "question_id": q[0],
-                "stem": q[1],
-                "options": [q[2], q[3], q[4], q[5], q[6]],
-                "correct_option": q[7],
-            }
-            for q in questions
-        ],
+        "questions": questions,
     }
 
 
