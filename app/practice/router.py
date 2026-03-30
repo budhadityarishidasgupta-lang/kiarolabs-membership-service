@@ -12,6 +12,12 @@ from app.practice.math_engine import (
     submit_math_answer
 )
 
+from app.practice.math_test_engine import (
+    get_math_tests,
+    start_math_test,
+    submit_math_test
+)
+
 from app.practice.synonym_engine import (
     get_synonym_question,
     submit_synonym_answer,
@@ -136,6 +142,21 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
         question_id=payload["question_id"],
         selected_option=payload["selected_option"]
     )
+
+
+@router.get("/math/tests")
+def math_tests():
+    return get_math_tests()
+
+
+@router.get("/math/test/start")
+def math_test_start(test_id: str):
+    return start_math_test(test_id)
+
+
+@router.post("/math/test/submit")
+def math_test_submit(payload: dict):
+    return submit_math_test(payload["answers"])
 
 
 # -----------------------------
