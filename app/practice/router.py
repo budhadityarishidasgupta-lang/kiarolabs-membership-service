@@ -6,7 +6,11 @@ from app.auth import get_current_user
 from app.database import get_connection
 
 # Engines
-from app.practice.math_engine import get_math_question
+from app.practice.math_engine import (
+    get_math_lessons,
+    get_math_question,
+    submit_math_answer
+)
 
 from app.practice.synonym_engine import (
     get_synonym_question,
@@ -114,9 +118,24 @@ def get_courses(user=Depends(get_current_user)):
 # MathSprint Endpoints
 # -----------------------------
 
+@router.get("/math/lessons")
+def math_lessons():
+    return get_math_lessons()
+
+
 @router.get("/math/question")
-def math_question(user=Depends(get_current_user)):
-    return get_math_question(user["id"])
+def math_question(lesson_id: int):
+    return get_math_question(lesson_id)
+
+
+@router.post("/math/submit")
+def math_submit(payload: dict, user=Depends(get_current_user)):
+    return submit_math_answer(
+        student_id=user["user_id"],
+        lesson_id=payload["lesson_id"],
+        question_id=payload["question_id"],
+        selected_option=payload["selected_option"]
+    )
 
 
 # -----------------------------
