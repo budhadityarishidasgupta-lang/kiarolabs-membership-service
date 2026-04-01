@@ -246,9 +246,7 @@ async def login(request: Request):
     cur = conn.cursor()
 
     try:
-        # =========================
-        # 1. Try MEMBERS table first (NEW FLOW)
-        # =========================
+        # 1) Membership-first login
         cur.execute(
             """
             SELECT id, email, password_hash, account_type
@@ -260,32 +258,45 @@ async def login(request: Request):
         member_row = cur.fetchone()
 
         if member_row:
-            member_id, member_email, member_hash, account_type = member_row
+            member_id, member_email, member_password_hash, account_type = member_row
 
-            if member_hash:
+            valid = False
+            if member_password_hash:
                 try:
-                    if pwd_context.verify(password, member_hash):
-                        token = jwt.encode(
-                            {
-                                "sub": member_email,
-                                "user_id": member_id,
-                                "member_id": member_id,
-                                "account_type": account_type or "free"
-                            },
-                            JWT_SECRET,
-                            algorithm=JWT_ALGO
-                        )
+                    valid = pwd_context.verify(password, member_password_hash)
+                except Exception:
+                    valid = False
 
-                        return {
-                            "access_token": token,
-                            "token_type": "bearer"
-                        }
-                except Exception as e:
-                    print("MEMBER LOGIN ERROR:", e)
+            if valid:
+                # Try to preserve legacy user_id if a users-row exists
+                cur.execute(
+                    """
+                    SELECT user_id
+                    FROM users
+                    WHERE LOWER(email) = LOWER(%s)
+                    """,
+                    (email,),
+                )
+                legacy_row = cur.fetchone()
+                legacy_user_id = legacy_row[0] if legacy_row else None
 
-        # =========================
-        # 2. FALLBACK → users table (OLD FLOW)
-        # =========================
+                token = jwt.encode(
+                    {
+                        "sub": member_email,
+                        "user_id": legacy_user_id if legacy_user_id is not None else member_id,
+                        "member_id": member_id,
+                        "account_type": account_type or "free",
+                    },
+                    JWT_SECRET,
+                    algorithm=JWT_ALGO
+                )
+
+                return {
+                    "access_token": token,
+                    "token_type": "bearer"
+                }
+
+        # 2) Fallback to legacy users login
         cur.execute(
             """
             SELECT user_id, email, password_hash
@@ -301,19 +312,19 @@ async def login(request: Request):
 
         user_id, user_email, password_hash = row
 
-        # legacy logic
         if password_hash == "membership_managed_user":
+            # This sentinel should not be used for direct password login
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         try:
             valid = pwd_context.verify(password, password_hash)
-        except:
+        except Exception:
             valid = False
 
         if not valid:
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        # enrich token with membership if exists
+        # Try to enrich token with member/account info if available
         cur.execute(
             """
             SELECT id, account_type
@@ -331,7 +342,7 @@ async def login(request: Request):
                 "sub": user_email,
                 "user_id": user_id,
                 "member_id": member_id,
-                "account_type": account_type
+                "account_type": account_type,
             },
             JWT_SECRET,
             algorithm=JWT_ALGO
