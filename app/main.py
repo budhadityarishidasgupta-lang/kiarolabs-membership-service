@@ -20,7 +20,10 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 2
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["bcrypt", "pbkdf2_sha256"],
+    deprecated="auto"
+)
 #oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 app = FastAPI()
@@ -222,23 +225,19 @@ def register(req: RegisterRequest):
 async def login(request: Request):
     data = {}
 
-    # Try JSON first
     try:
         data = await request.json()
-    except:
+    except Exception:
         data = {}
 
-    # Fallback to form-data
     if not data:
         form = await request.form()
         data = dict(form)
 
-    # Normalize fields
-    email = data.get("email") or data.get("username")
+    email = (data.get("email") or data.get("username") or "").strip().lower()
     password = data.get("password")
 
-    # Debug (keep temporarily)
-    print("LOGIN DEBUG:", data)
+    print("LOGIN DEBUG:", {"email": email, "has_password": bool(password)})
 
     if not email or not password:
         raise HTTPException(status_code=400, detail="Missing credentials")
@@ -246,51 +245,117 @@ async def login(request: Request):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute(
-        """
-        SELECT user_id, password_hash
-        FROM users
-        WHERE email = %s
-        """,
-        (email,),
-    )
+    try:
+        # 1) Membership-first login
+        cur.execute(
+            """
+            SELECT id, email, password_hash, account_type
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+        member_row = cur.fetchone()
 
-    row = cur.fetchone()
+        if member_row:
+            member_id, member_email, member_password_hash, account_type = member_row
 
-    cur.close()
-    conn.close()
+            valid = False
+            if member_password_hash:
+                try:
+                    valid = pwd_context.verify(password, member_password_hash)
+                except Exception:
+                    valid = False
 
-    if not row:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+            if valid:
+                # Try to preserve legacy user_id if a users-row exists
+                cur.execute(
+                    """
+                    SELECT user_id
+                    FROM users
+                    WHERE LOWER(email) = LOWER(%s)
+                    """,
+                    (email,),
+                )
+                legacy_row = cur.fetchone()
+                legacy_user_id = legacy_row[0] if legacy_row else None
 
-    user_id, password_hash = row
+                token = jwt.encode(
+                    {
+                        "sub": member_email,
+                        "user_id": legacy_user_id if legacy_user_id is not None else member_id,
+                        "member_id": member_id,
+                        "account_type": account_type or "free",
+                    },
+                    JWT_SECRET,
+                    algorithm=JWT_ALGO
+                )
 
-    # Handle membership-managed users
-    if password_hash == "membership_managed_user":
-        # trust external auth (Lovable already validated)
-        valid = True
-    else:
+                return {
+                    "access_token": token,
+                    "token_type": "bearer"
+                }
+
+        # 2) Fallback to legacy users login
+        cur.execute(
+            """
+            SELECT user_id, email, password_hash
+            FROM users
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        user_id, user_email, password_hash = row
+
+        if password_hash == "membership_managed_user":
+            # This sentinel should not be used for direct password login
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
         try:
             valid = pwd_context.verify(password, password_hash)
-        except:
+        except Exception:
             valid = False
 
-    if not valid:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        if not valid:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = jwt.encode(
-        {
-            "sub": email,
-            "user_id": user_id
-        },
-        JWT_SECRET,
-        algorithm=JWT_ALGO
-    )
+        # Try to enrich token with member/account info if available
+        cur.execute(
+            """
+            SELECT id, account_type
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+        member_info = cur.fetchone()
+        member_id = member_info[0] if member_info else None
+        account_type = member_info[1] if member_info else "free"
 
-    return {
-        "access_token": token,
-        "token_type": "bearer"
-    }
+        token = jwt.encode(
+            {
+                "sub": user_email,
+                "user_id": user_id,
+                "member_id": member_id,
+                "account_type": account_type,
+            },
+            JWT_SECRET,
+            algorithm=JWT_ALGO
+        )
+
+        return {
+            "access_token": token,
+            "token_type": "bearer"
+        }
+
+    finally:
+        cur.close()
+        conn.close()
 
 
 # =========================
