@@ -368,6 +368,16 @@ def me(user=Depends(get_current_user)):
         "account_type": user.get("account_type"),
     }
 
+@app.get("/dashboard")
+def dashboard(user=Depends(get_current_user)):
+    return {
+        "email": user["email"],
+        "member_id": user.get("member_id"),
+        "user_id": user.get("user_id"),
+        "account_type": user.get("account_type"),
+        "message": "Dashboard loaded successfully"
+    }
+
 
 # =========================
 # Gumroad Webhook
