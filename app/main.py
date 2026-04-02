@@ -375,16 +375,20 @@ def dashboard(user=Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
 
+    # -------------------------
+    # SAFE USER RESOLUTION
+    # -------------------------
     user_id = user.get("user_id")
+    member_id = user.get("member_id")
     email = user.get("sub")
 
-    # Validate that user_id belongs to users table (important)
+    # Validate user_id belongs to users table
     if user_id:
         cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
         if not cur.fetchone():
             user_id = None
 
-    # Fallback: resolve user_id via email
+    # Fallback via email
     if not user_id:
         cur.execute(
             "SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)",
@@ -398,30 +402,40 @@ def dashboard(user=Depends(get_current_user)):
         user_id = row[0]
 
     # -------------------------
-    # USER TYPE (LEGACY vs NEW)
+    # LEGACY USER CHECK
     # -------------------------
-    cur.execute("""
-        SELECT created_at
-        FROM kiaro_membership.members
-        WHERE id = %s
-    """, (user.get("member_id"),))
+    created_at = None
+    is_legacy = False
 
-    row = cur.fetchone()
-    created_at = row[0] if row else None
+    if member_id:
+        cur.execute("""
+            SELECT created_at
+            FROM kiaro_membership.members
+            WHERE id = %s
+        """, (member_id,))
 
-    cutoff_date = datetime(2026, 4, 3)
-    is_legacy = created_at and created_at < cutoff_date
+        row = cur.fetchone()
+
+        if row and row[0]:
+            created_at = row[0]
+            from datetime import datetime
+            cutoff_date = datetime(2026, 4, 3)
+            is_legacy = created_at < cutoff_date
 
     # -------------------------
     # FETCH ENTITLEMENTS
     # -------------------------
-    cur.execute("""
-        SELECT app_code
-        FROM kiaro_membership.member_apps
-        WHERE member_id = %s
-    """, (user.get("member_id"),))
+    apps = []
 
-    apps = [row[0] for row in cur.fetchall()]
+    if member_id:
+        cur.execute("""
+            SELECT app_code
+            FROM kiaro_membership.member_apps
+            WHERE member_id = %s
+        """, (member_id,))
+
+        rows = cur.fetchall()
+        apps = [r[0] for r in rows] if rows else []
 
     # -------------------------
     # SPELLING STATS
@@ -452,10 +466,11 @@ def dashboard(user=Depends(get_current_user)):
     cur.close()
     conn.close()
 
+    # -------------------------
+    # MODULE ACCESS LOGIC
+    # -------------------------
     modules = {
-        # -------------------------
-        # LEARNING MODULES
-        # -------------------------
+        # Learning modules (legacy unlocked)
         "spelling": {
             "attempts": s_total,
             "accuracy": round(s_acc, 2),
@@ -470,9 +485,7 @@ def dashboard(user=Depends(get_current_user)):
             "unlocked": True if is_legacy else ("math" in apps)
         },
 
-        # -------------------------
-        # MONETISED PRODUCTS
-        # -------------------------
+        # Monetised products (NEVER legacy unlocked)
         "practice_papers": {
             "unlocked": "practice" in apps
         },
@@ -480,9 +493,7 @@ def dashboard(user=Depends(get_current_user)):
             "unlocked": "mock" in apps
         },
 
-        # -------------------------
-        # FUTURE MODULES
-        # -------------------------
+        # Future modules
         "nvr": {
             "unlocked": "nvr" in apps
         },
@@ -491,18 +502,20 @@ def dashboard(user=Depends(get_current_user)):
         }
     }
 
-    module_scores = {
+    # -------------------------
+    # INSIGHTS (SAFE)
+    # -------------------------
+    metrics = {
         "spelling": s_acc,
         "words": w_acc
     }
 
-    # Handle empty data correctly
     if s_total == 0 and w_total == 0:
         strongest = None
         weakest = None
     else:
-        strongest = max(module_scores, key=module_scores.get)
-        weakest = min(module_scores, key=module_scores.get)
+        strongest = max(metrics, key=metrics.get)
+        weakest = min(metrics, key=metrics.get)
 
     return {
         "modules": modules,
