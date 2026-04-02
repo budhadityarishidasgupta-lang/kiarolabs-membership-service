@@ -370,12 +370,71 @@ def me(user=Depends(get_current_user)):
 
 @app.get("/dashboard")
 def dashboard(user=Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    email = user["email"]
+
+    # Get user_id from users table
+    cur.execute("""
+        SELECT user_id
+        FROM users
+        WHERE LOWER(email) = LOWER(%s)
+    """, (email,))
+    row = cur.fetchone()
+
+    if not row:
+        return {"error": "user not found"}
+
+    user_id = row[0]
+
+    # -------------------------
+    # SPELLING STATS
+    # -------------------------
+    cur.execute("""
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
+        FROM spelling_attempts
+        WHERE user_id = %s
+    """, (user_id,))
+    spelling = cur.fetchone()
+
+    spelling_total = spelling[0] or 0
+    spelling_correct = spelling[1] or 0
+    spelling_accuracy = (spelling_correct / spelling_total * 100) if spelling_total > 0 else 0
+
+    # -------------------------
+    # WORD STATS
+    # -------------------------
+    cur.execute("""
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
+        FROM words_attempts
+        WHERE user_id = %s
+    """, (user_id,))
+    words = cur.fetchone()
+
+    words_total = words[0] or 0
+    words_correct = words[1] or 0
+    words_accuracy = (words_correct / words_total * 100) if words_total > 0 else 0
+
+    cur.close()
+    conn.close()
+
     return {
-        "email": user["email"],
-        "member_id": user.get("member_id"),
-        "user_id": user.get("user_id"),
-        "account_type": user.get("account_type"),
-        "message": "Dashboard loaded successfully"
+        "email": email,
+        "modules": {
+            "spelling": {
+                "attempts": spelling_total,
+                "accuracy": round(spelling_accuracy, 2)
+            },
+            "words": {
+                "attempts": words_total,
+                "accuracy": round(words_accuracy, 2)
+            }
+        }
     }
 
 
