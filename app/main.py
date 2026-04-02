@@ -372,22 +372,21 @@ def me(user=Depends(get_current_user)):
 def dashboard(user=Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
-    
-    # Step 1 — get user_id safely
-    user_id = user.get("user_id")
 
-    # Fallback safety (VERY IMPORTANT)
-    if not user_id:
-        email = user.get("sub")
-        cur.execute("""
-            SELECT user_id
-            FROM users
-            WHERE LOWER(email) = LOWER(%s)
-        """, (email,))
-        row = cur.fetchone()
-        if not row:
-            return {"error": "user not found"}
-        user_id = row[0]
+    email = user["email"]
+
+    # Get user_id
+    cur.execute("""
+        SELECT user_id
+        FROM users
+        WHERE LOWER(email) = LOWER(%s)
+    """, (email,))
+    row = cur.fetchone()
+
+    if not row:
+        return {"error": "user not found"}
+
+    user_id = row[0]
 
     # -------------------------
     # SPELLING
@@ -420,6 +419,7 @@ def dashboard(user=Depends(get_current_user)):
     cur.close()
     conn.close()
 
+    # Determine strongest / weakest
     modules = {
         "spelling": s_acc,
         "words": w_acc
