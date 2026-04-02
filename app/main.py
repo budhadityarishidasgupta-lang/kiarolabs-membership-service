@@ -286,6 +286,7 @@ async def login(request: Request):
                         "user_id": legacy_user_id if legacy_user_id is not None else member_id,
                         "member_id": member_id,
                         "account_type": account_type or "free",
+                        "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
                     },
                     JWT_SECRET,
                     algorithm=JWT_ALGO
@@ -343,6 +344,7 @@ async def login(request: Request):
                 "user_id": user_id,
                 "member_id": member_id,
                 "account_type": account_type,
+                "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
             },
             JWT_SECRET,
             algorithm=JWT_ALGO
@@ -373,23 +375,30 @@ def dashboard(user=Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
 
-    email = user["email"]
+    user_id = user.get("user_id")
+    email = user.get("sub")
 
-    # Get user_id
-    cur.execute("""
-        SELECT user_id
-        FROM users
-        WHERE LOWER(email) = LOWER(%s)
-    """, (email,))
-    row = cur.fetchone()
+    # Validate that user_id belongs to users table (important)
+    if user_id:
+        cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+        if not cur.fetchone():
+            user_id = None
 
-    if not row:
-        return {"error": "user not found"}
-
-    user_id = row[0]
+    # Fallback: resolve user_id via email
+    if not user_id:
+        cur.execute(
+            "SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)",
+            (email,)
+        )
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            return {"error": "user not found"}
+        user_id = row[0]
 
     # -------------------------
-    # SPELLING
+    # SPELLING STATS
     # -------------------------
     cur.execute("""
         SELECT COUNT(*), SUM(CASE WHEN correct THEN 1 ELSE 0 END)
@@ -397,13 +406,12 @@ def dashboard(user=Depends(get_current_user)):
         WHERE user_id = %s
     """, (user_id,))
     s_total, s_correct = cur.fetchone()
-
     s_total = s_total or 0
     s_correct = s_correct or 0
     s_acc = (s_correct / s_total * 100) if s_total > 0 else 0
 
     # -------------------------
-    # WORDS
+    # WORD STATS
     # -------------------------
     cur.execute("""
         SELECT COUNT(*), SUM(CASE WHEN correct THEN 1 ELSE 0 END)
@@ -411,7 +419,6 @@ def dashboard(user=Depends(get_current_user)):
         WHERE user_id = %s
     """, (user_id,))
     w_total, w_correct = cur.fetchone()
-
     w_total = w_total or 0
     w_correct = w_correct or 0
     w_acc = (w_correct / w_total * 100) if w_total > 0 else 0
@@ -419,14 +426,18 @@ def dashboard(user=Depends(get_current_user)):
     cur.close()
     conn.close()
 
-    # Determine strongest / weakest
     modules = {
         "spelling": s_acc,
         "words": w_acc
     }
 
-    strongest = max(modules, key=modules.get)
-    weakest = min(modules, key=modules.get)
+    # Handle empty data correctly
+    if s_total == 0 and w_total == 0:
+        strongest = None
+        weakest = None
+    else:
+        strongest = max(modules, key=modules.get)
+        weakest = min(modules, key=modules.get)
 
     return {
         "modules": {
