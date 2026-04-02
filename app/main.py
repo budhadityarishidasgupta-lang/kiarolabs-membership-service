@@ -398,6 +398,32 @@ def dashboard(user=Depends(get_current_user)):
         user_id = row[0]
 
     # -------------------------
+    # USER TYPE (LEGACY vs NEW)
+    # -------------------------
+    cur.execute("""
+        SELECT created_at
+        FROM kiaro_membership.members
+        WHERE id = %s
+    """, (user.get("member_id"),))
+
+    row = cur.fetchone()
+    created_at = row[0] if row else None
+
+    cutoff_date = datetime(2026, 4, 3)
+    is_legacy = created_at and created_at < cutoff_date
+
+    # -------------------------
+    # FETCH ENTITLEMENTS
+    # -------------------------
+    cur.execute("""
+        SELECT app_code
+        FROM kiaro_membership.member_apps
+        WHERE member_id = %s
+    """, (user.get("member_id"),))
+
+    apps = [row[0] for row in cur.fetchall()]
+
+    # -------------------------
     # SPELLING STATS
     # -------------------------
     cur.execute("""
@@ -427,6 +453,28 @@ def dashboard(user=Depends(get_current_user)):
     conn.close()
 
     modules = {
+        "spelling": {
+            "attempts": s_total,
+            "accuracy": round(s_acc, 2),
+            "unlocked": True if is_legacy else ("spelling" in apps or "general" in apps)
+        },
+        "words": {
+            "attempts": w_total,
+            "accuracy": round(w_acc, 2),
+            "unlocked": True if is_legacy else ("general" in apps)
+        },
+        "math": {
+            "unlocked": ("math" in apps) if not is_legacy else False
+        },
+        "nvr": {
+            "unlocked": "nvr" in apps
+        },
+        "comprehension": {
+            "unlocked": "comprehension" in apps
+        }
+    }
+
+    module_scores = {
         "spelling": s_acc,
         "words": w_acc
     }
@@ -436,20 +484,11 @@ def dashboard(user=Depends(get_current_user)):
         strongest = None
         weakest = None
     else:
-        strongest = max(modules, key=modules.get)
-        weakest = min(modules, key=modules.get)
+        strongest = max(module_scores, key=module_scores.get)
+        weakest = min(module_scores, key=module_scores.get)
 
     return {
-        "modules": {
-            "spelling": {
-                "attempts": s_total,
-                "accuracy": round(s_acc, 2)
-            },
-            "words": {
-                "attempts": w_total,
-                "accuracy": round(w_acc, 2)
-            }
-        },
+        "modules": modules,
         "insights": {
             "strongest": strongest,
             "weakest": weakest
