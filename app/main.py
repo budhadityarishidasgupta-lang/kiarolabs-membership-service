@@ -372,68 +372,76 @@ def me(user=Depends(get_current_user)):
 def dashboard(user=Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
+    
+    # Step 1 — get user_id safely
+    user_id = user.get("user_id")
 
-    email = user["email"]
-
-    # Get user_id from users table
-    cur.execute("""
-        SELECT user_id
-        FROM users
-        WHERE LOWER(email) = LOWER(%s)
-    """, (email,))
-    row = cur.fetchone()
-
-    if not row:
-        return {"error": "user not found"}
-
-    user_id = row[0]
+    # Fallback safety (VERY IMPORTANT)
+    if not user_id:
+        email = user.get("sub")
+        cur.execute("""
+            SELECT user_id
+            FROM users
+            WHERE LOWER(email) = LOWER(%s)
+        """, (email,))
+        row = cur.fetchone()
+        if not row:
+            return {"error": "user not found"}
+        user_id = row[0]
 
     # -------------------------
-    # SPELLING STATS
+    # SPELLING
     # -------------------------
     cur.execute("""
-        SELECT 
-            COUNT(*) as total,
-            SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
+        SELECT COUNT(*), SUM(CASE WHEN correct THEN 1 ELSE 0 END)
         FROM spelling_attempts
         WHERE user_id = %s
     """, (user_id,))
-    spelling = cur.fetchone()
+    s_total, s_correct = cur.fetchone()
 
-    spelling_total = spelling[0] or 0
-    spelling_correct = spelling[1] or 0
-    spelling_accuracy = (spelling_correct / spelling_total * 100) if spelling_total > 0 else 0
+    s_total = s_total or 0
+    s_correct = s_correct or 0
+    s_acc = (s_correct / s_total * 100) if s_total > 0 else 0
 
     # -------------------------
-    # WORD STATS
+    # WORDS
     # -------------------------
     cur.execute("""
-        SELECT 
-            COUNT(*) as total,
-            SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
+        SELECT COUNT(*), SUM(CASE WHEN correct THEN 1 ELSE 0 END)
         FROM words_attempts
         WHERE user_id = %s
     """, (user_id,))
-    words = cur.fetchone()
+    w_total, w_correct = cur.fetchone()
 
-    words_total = words[0] or 0
-    words_correct = words[1] or 0
-    words_accuracy = (words_correct / words_total * 100) if words_total > 0 else 0
+    w_total = w_total or 0
+    w_correct = w_correct or 0
+    w_acc = (w_correct / w_total * 100) if w_total > 0 else 0
 
     cur.close()
     conn.close()
 
+    modules = {
+        "spelling": s_acc,
+        "words": w_acc
+    }
+
+    strongest = max(modules, key=modules.get)
+    weakest = min(modules, key=modules.get)
+
     return {
-        "email": email,
         "modules": {
             "spelling": {
-                "attempts": spelling_total,
-                "accuracy": round(spelling_accuracy, 2)
+                "attempts": s_total,
+                "accuracy": round(s_acc, 2)
             },
             "words": {
-                "attempts": words_total,
-                "accuracy": round(words_accuracy, 2)
+                "attempts": w_total,
+                "accuracy": round(w_acc, 2)
             }
+        },
+        "insights": {
+            "strongest": strongest,
+            "weakest": weakest
         }
     }
 
