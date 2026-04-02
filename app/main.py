@@ -453,6 +453,9 @@ def dashboard(user=Depends(get_current_user)):
     conn.close()
 
     modules = {
+        # -------------------------
+        # LEARNING MODULES
+        # -------------------------
         "spelling": {
             "attempts": s_total,
             "accuracy": round(s_acc, 2),
@@ -464,8 +467,22 @@ def dashboard(user=Depends(get_current_user)):
             "unlocked": True if is_legacy else ("general" in apps)
         },
         "math": {
-            "unlocked": ("math" in apps) if not is_legacy else False
+            "unlocked": True if is_legacy else ("math" in apps)
         },
+
+        # -------------------------
+        # MONETISED PRODUCTS
+        # -------------------------
+        "practice_papers": {
+            "unlocked": "practice" in apps
+        },
+        "mock_exams": {
+            "unlocked": "mock" in apps
+        },
+
+        # -------------------------
+        # FUTURE MODULES
+        # -------------------------
         "nvr": {
             "unlocked": "nvr" in apps
         },
