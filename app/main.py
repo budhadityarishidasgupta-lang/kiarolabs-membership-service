@@ -531,87 +531,68 @@ def dashboard(user=Depends(get_current_user)):
 # =========================
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
-    data = await request.form()
+    data = await request.json()
 
-    email = (data.get("email") or "").strip().lower()
-    name = data.get("full_name")
-    subscription_id = data.get("subscription_id")
-    cancelled_at_payload = data.get("subscription_cancelled_at")
+    # Extract email
+    email = data.get("email")
+
+    # Extract product name
+    product_name = data.get("product_name", "").lower()
 
     if not email:
-        return {"error": "missing email"}
-
-    now = datetime.utcnow()
-
-    subscription_status = "active"
-    cancelled_at = None
-
-    if cancelled_at_payload:
-        subscription_status = "cancelled"
-        cancelled_at = now
+        return {"status": "no email"}
 
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute(
-        "SELECT subscription_end FROM kiaro_membership.members WHERE email = %s",
-        (email,),
-    )
-    existing = cur.fetchone()
-
-    if subscription_status == "active" and existing and existing[0] and existing[0] > now:
-        end_date = existing[0] + timedelta(days=30)
-    else:
-        end_date = now + timedelta(days=30)
-
-    account_type = "paid" if subscription_status in ("active", "cancelled") else "free"
-
+    # Get member_id
     cur.execute(
         """
-        INSERT INTO kiaro_membership.members
-        (name, email, password_hash, subscription_status,
-         subscription_start, subscription_end,
-         gumroad_subscription_id,
-         subscription_event,
-         cancelled_at,
-         account_type,
-         auth_provider,
-         updated_at)
-        VALUES (%s, %s, NULL, %s,
-                %s, %s, %s,
-                %s, %s, %s,
-                COALESCE((SELECT auth_provider FROM kiaro_membership.members WHERE email=%s), 'gumroad'),
-                NOW())
-        ON CONFLICT (email) DO UPDATE
-        SET name = COALESCE(EXCLUDED.name, kiaro_membership.members.name),
-            subscription_status = EXCLUDED.subscription_status,
-            subscription_start = EXCLUDED.subscription_start,
-            subscription_end = EXCLUDED.subscription_end,
-            gumroad_subscription_id = EXCLUDED.gumroad_subscription_id,
-            subscription_event = EXCLUDED.subscription_event,
-            cancelled_at = EXCLUDED.cancelled_at,
-            account_type = EXCLUDED.account_type,
-            updated_at = NOW()
+        SELECT id FROM kiaro_membership.members
+        WHERE LOWER(email) = LOWER(%s)
         """,
-        (
-            name,
-            email,
-            subscription_status,
-            now,
-            end_date,
-            subscription_id,
-            "gumroad_webhook",
-            cancelled_at,
-            account_type,
-            email,
-        ),
+        (email,),
+    )
+
+    row = cur.fetchone()
+
+    if not row:
+        cur.close()
+        conn.close()
+        return {"status": "user not found"}
+
+    member_id = row[0]
+
+    # Map product → app_code
+    if "math" in product_name:
+        app_code = "math_full"
+    elif "mock" in product_name:
+        app_code = "mock"
+    elif "practice" in product_name:
+        app_code = "practice"
+    else:
+        app_code = None
+
+    if not app_code:
+        cur.close()
+        conn.close()
+        return {"status": "unknown product"}
+
+    # Insert entitlement (idempotent)
+    cur.execute(
+        """
+        INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+        VALUES (%s, %s)
+        ON CONFLICT DO NOTHING
+        """,
+        (member_id, app_code),
     )
 
     conn.commit()
     cur.close()
     conn.close()
 
-    return {"status": "webhook processed"}
+    return {"status": "success"}
 
 
 # =========================
