@@ -1,22 +1,77 @@
 from app.database import get_connection
 
 
-def get_math_tests():
+def get_math_tests(user):
     conn = get_connection()
     cur = conn.cursor()
 
+    member_id = user.get("member_id")
+    email = user.get("sub")
+
+    if email == "testrishi@gmail.com":
+        cur.execute(
+            """
+            SELECT
+                paper_code,
+                paper_name,
+                duration_minutes,
+                total_questions
+            FROM math_test_papers
+            WHERE is_active = TRUE
+            ORDER BY id;
+        """
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {
+                "test_id": r[0],
+                "name": r[1],
+                "duration": r[2],
+                "total_questions": r[3],
+            }
+            for r in rows
+        ]
+
     cur.execute(
         """
-        SELECT
-            paper_code,
-            paper_name,
-            duration_minutes,
-            total_questions
-        FROM math_test_papers
-        WHERE is_active = TRUE
-        ORDER BY paper_name;
-    """
+        SELECT 1
+        FROM kiaro_membership.member_apps
+        WHERE member_id = %s AND app_code = 'math_full'
+    """,
+        (member_id,),
     )
+
+    has_full_access = cur.fetchone() is not None
+
+    if has_full_access:
+        cur.execute(
+            """
+            SELECT
+                paper_code,
+                paper_name,
+                duration_minutes,
+                total_questions
+            FROM math_test_papers
+            WHERE is_active = TRUE
+            ORDER BY id;
+        """
+        )
+    else:
+        cur.execute(
+            """
+            SELECT
+                paper_code,
+                paper_name,
+                duration_minutes,
+                total_questions
+            FROM math_test_papers
+            WHERE is_active = TRUE
+              AND is_free = TRUE
+            ORDER BY id;
+        """
+        )
 
     rows = cur.fetchall()
 

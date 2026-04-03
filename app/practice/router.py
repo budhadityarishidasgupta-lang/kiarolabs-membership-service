@@ -145,8 +145,8 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
 
 
 @router.get("/math/tests")
-def math_tests():
-    return get_math_tests()
+def math_tests(user=Depends(get_current_user)):
+    return get_math_tests(user)
 
 
 @router.get("/math/test/start")
