@@ -53,7 +53,7 @@ def get_passage_by_id(passage_id):
     """, (passage_id,))
 
     row = cur.fetchone()
-    result = row_to_dict(cur, row)
+    result = row_to_dict(cur, row)  # ✅ convert BEFORE closing
 
     cur.close()
     conn.close()
@@ -72,7 +72,7 @@ def get_passage_by_title(title):
     """, (title,))
 
     row = cur.fetchone()
-    result = row_to_dict(cur, row)
+    result = row_to_dict(cur, row)  # ✅ convert BEFORE closing
 
     cur.close()
     conn.close()
@@ -129,17 +129,18 @@ def get_question_by_id(question_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT *
+        SELECT question_id, passage_id, question_text, option_a, option_b, option_c, option_d, correct_answer
         FROM comprehension_questions
         WHERE question_id = %s;
     """, (question_id,))
 
     row = cur.fetchone()
+    result = row_to_dict(cur, row)  # ✅ FIXED: convert BEFORE closing
 
     cur.close()
     conn.close()
 
-    return row_to_dict(cur, row) if row else None
+    return result
 
 
 def insert_question(passage_id, question_text, a, b, c, d, correct, qtype, order):
