@@ -36,6 +36,11 @@ from app.practice.words_engine import (
     submit_words_answer,
 )
 from app.dashboard.spelling_dashboard import get_spelling_dashboard
+from app.comprehension.service import (
+    list_passages,
+    start_passage,
+    submit_answer,
+)
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 
@@ -511,8 +516,6 @@ def spelling_dashboard(user=Depends(get_current_user)):
     return get_spelling_dashboard(user["user_id"])
 
 
-
-
 # -----------------------------
 # WordSprint Endpoints
 # -----------------------------
@@ -662,3 +665,38 @@ def spelling_dashboard(user=Depends(get_current_user)):
     from app.dashboard.spelling_dashboard import get_spelling_dashboard
 
     return get_spelling_dashboard(user["user_id"])
+
+
+# -----------------------------
+# ComprehensionSprint Endpoints
+# -----------------------------
+
+@router.get("/comprehension/passages")
+def get_comprehension_passages(user=Depends(get_current_user)):
+    return list_passages()
+
+
+@router.get("/comprehension/start")
+def start_comprehension(passage_id: int, user=Depends(get_current_user)):
+    result = start_passage(passage_id)
+
+    if not result:
+        raise HTTPException(status_code=404, detail="Passage not found")
+
+    return result
+
+
+@router.post("/comprehension/answer")
+def submit_comprehension_answer(payload: dict, user=Depends(get_current_user)):
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned in learning system"
+        )
+
+    return submit_answer(
+        user_id=user["user_id"],
+        passage_id=payload["passage_id"],
+        question_id=payload["question_id"],
+        selected_answer=payload["selected_answer"]
+    )
