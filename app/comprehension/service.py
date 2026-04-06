@@ -41,20 +41,15 @@ def start_passage(passage_id):
 
 def submit_answer(user_id, passage_id, question_id, selected_answer):
     question = get_question_by_id(question_id)
-    correct = False
 
-    if question and question.get("passage_id") == passage_id:
-        correct = (question["correct_answer"] == selected_answer)
-=======
-    questions = get_questions_for_passage(passage_id)
+    if not question:
+        return {"correct": False}
 
-    correct = False
+    # safety check: ensure question belongs to passage
+    if question.get("passage_id") != passage_id:
+        return {"correct": False}
 
-    for q in questions:
-        if q["question_id"] == question_id:
-            correct = (q["correct_answer"] == selected_answer)
-            break
->>>>>>> 6775c3a (feat: add comprehension module (DB + repo + service + router) and fix psycopg2 row mapping)
+    correct = (question["correct_answer"] == selected_answer)
 
     insert_attempt(
         user_id=user_id,
@@ -66,6 +61,4 @@ def submit_answer(user_id, passage_id, question_id, selected_answer):
 
     return {
         "correct": correct
-    }
-=======
     }
