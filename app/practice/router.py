@@ -657,7 +657,7 @@ def spelling_test(user=Depends(get_current_user)):
     )
 
 @router.get("/spelling/dashboard")
-def spelling_dashboard(user=Depends(get_current_user)):
+def spelling_dashboard_v2(user=Depends(get_current_user)):
     """
     Returns spelling dashboard:
     - summary stats
