@@ -45,6 +45,16 @@ def submit_answer(user_id, passage_id, question_id, selected_answer):
 
     if question and question.get("passage_id") == passage_id:
         correct = (question["correct_answer"] == selected_answer)
+=======
+    questions = get_questions_for_passage(passage_id)
+
+    correct = False
+
+    for q in questions:
+        if q["question_id"] == question_id:
+            correct = (q["correct_answer"] == selected_answer)
+            break
+>>>>>>> 6775c3a (feat: add comprehension module (DB + repo + service + router) and fix psycopg2 row mapping)
 
     insert_attempt(
         user_id=user_id,
@@ -56,4 +66,6 @@ def submit_answer(user_id, passage_id, question_id, selected_answer):
 
     return {
         "correct": correct
+    }
+=======
     }

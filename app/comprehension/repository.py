@@ -4,14 +4,18 @@ from app.database import get_connection
 
 
 # =========================
-# Helper: Row → Dict
+# Helper: Convert rows to dict
 # =========================
-def row_to_dict(row):
-    if hasattr(row, "_mapping"):
-        return dict(row._mapping)
-    if isinstance(row, dict):
-        return row
-    return {}
+def rows_to_dicts(cur, rows):
+    columns = [desc[0] for desc in cur.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def row_to_dict(cur, row):
+    if not row:
+        return None
+    columns = [desc[0] for desc in cur.description]
+    return dict(zip(columns, row))
 
 
 # =========================
@@ -30,11 +34,12 @@ def get_active_passages():
     """)
 
     rows = cur.fetchall()
+    result = rows_to_dicts(cur, rows)
 
     cur.close()
     conn.close()
 
-    return [row_to_dict(r) for r in rows]
+    return result
 
 
 def get_passage_by_id(passage_id):
@@ -42,17 +47,18 @@ def get_passage_by_id(passage_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT *
+        SELECT passage_id, title, passage_text, difficulty, word_count
         FROM comprehension_passages
         WHERE passage_id = %s;
     """, (passage_id,))
 
     row = cur.fetchone()
+    result = row_to_dict(cur, row)
 
     cur.close()
     conn.close()
 
-    return row_to_dict(row) if row else None
+    return result
 
 
 def get_passage_by_title(title):
@@ -60,17 +66,18 @@ def get_passage_by_title(title):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT *
+        SELECT passage_id, title, passage_text, difficulty, word_count
         FROM comprehension_passages
         WHERE title = %s;
     """, (title,))
 
     row = cur.fetchone()
+    result = row_to_dict(cur, row)
 
     cur.close()
     conn.close()
 
-    return row_to_dict(row) if row else None
+    return result
 
 
 def insert_passage(title, passage_text, difficulty=None, word_count=None):
@@ -102,18 +109,19 @@ def get_questions_for_passage(passage_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT *
+        SELECT question_id, question_text, option_a, option_b, option_c, option_d, correct_answer
         FROM comprehension_questions
         WHERE passage_id = %s
         ORDER BY sort_order ASC;
     """, (passage_id,))
 
     rows = cur.fetchall()
+    result = rows_to_dicts(cur, rows)
 
     cur.close()
     conn.close()
 
-    return [row_to_dict(r) for r in rows]
+    return result
 
 
 def get_question_by_id(question_id):

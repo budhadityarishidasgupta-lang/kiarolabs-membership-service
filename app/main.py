@@ -11,6 +11,7 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from app.practice.router import router as practice_router
 from typing import Optional
+from app.comprehension.router import router as comprehension_router
 
 
 # =========================
@@ -636,3 +637,4 @@ def validate_user(email: str):
 # Practice Engine Routes
 # =========================
 app.include_router(practice_router, prefix="")
+app.include_router(comprehension_router)
