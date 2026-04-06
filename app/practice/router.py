@@ -1,4 +1,5 @@
 print("🚀 COMPREHENSION ROUTER LOADED")
+print("🚀 ROUTER FILE IS LOADING")
 
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
