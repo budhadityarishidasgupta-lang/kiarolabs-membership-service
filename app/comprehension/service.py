@@ -3,6 +3,7 @@
 from app.comprehension.repository import (
     get_active_passages,
     get_passage_by_id,
+    get_question_by_id,
     get_questions_for_passage,
     insert_attempt
 )
@@ -39,15 +40,11 @@ def start_passage(passage_id):
 # =========================
 
 def submit_answer(user_id, passage_id, question_id, selected_answer):
-    questions = get_questions_for_passage(passage_id)
-
-    # find correct answer
+    question = get_question_by_id(question_id)
     correct = False
 
-    for q in questions:
-        if q["question_id"] == question_id:
-            correct = (q["correct_answer"] == selected_answer)
-            break
+    if question and question.get("passage_id") == passage_id:
+        correct = (question["correct_answer"] == selected_answer)
 
     insert_attempt(
         user_id=user_id,
