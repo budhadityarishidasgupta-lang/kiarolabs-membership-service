@@ -139,7 +139,7 @@ def get_question_by_id(question_id):
     cur.close()
     conn.close()
 
-    return row_to_dict(row) if row else None
+    return row_to_dict(cur, row) if row else None
 
 
 def insert_question(passage_id, question_text, a, b, c, d, correct, qtype, order):
