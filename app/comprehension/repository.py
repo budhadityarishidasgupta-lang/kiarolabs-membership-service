@@ -116,6 +116,24 @@ def get_questions_for_passage(passage_id):
     return [row_to_dict(r) for r in rows]
 
 
+def get_question_by_id(question_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT *
+        FROM comprehension_questions
+        WHERE question_id = %s;
+    """, (question_id,))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    return row_to_dict(row) if row else None
+
+
 def insert_question(passage_id, question_text, a, b, c, d, correct, qtype, order):
     conn = get_connection()
     cur = conn.cursor()
