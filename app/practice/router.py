@@ -1,9 +1,12 @@
 print("🚀 COMPREHENSION ROUTER LOADED")
 print("🚀 ROUTER FILE IS LOADING")
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
+import csv
+import io
+import traceback
 
 from app.auth import get_current_user
 from app.database import get_connection
@@ -44,8 +47,17 @@ from app.comprehension.service import (
     start_passage,
     submit_answer,
 )
+from app.comprehension.repository import (
+    insert_passage,
+    insert_question
+)
 
 router = APIRouter(prefix="/practice", tags=["practice"])
+
+
+def is_admin(user):
+    # 🔒 Phase 1: hardcoded admin (safe, reversible)
+    return user.get("sub") == "rishi@test.com"
 
 
 # -----------------------------
@@ -703,3 +715,82 @@ def submit_comprehension_answer(payload: dict, user=Depends(get_current_user)):
         question_id=payload["question_id"],
         selected_answer=payload["selected_answer"]
     )
+
+
+@router.post("/comprehension/upload")
+def upload_comprehension_csv(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user)
+):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        # 🔥 Read file safely
+        content = file.file.read().decode("utf-8-sig")  # handles Excel BOM
+        reader = csv.DictReader(io.StringIO(content))
+
+        # 🔥 Normalize headers (CRITICAL FIX)
+        reader.fieldnames = [h.strip() for h in reader.fieldnames]
+
+        required_headers = [
+            "new_passage", "title", "passage_text", "difficulty",
+            "question_text", "option_a", "option_b",
+            "option_c", "option_d", "correct_answer",
+            "question_type", "sort_order"
+        ]
+
+        for h in required_headers:
+            if h not in reader.fieldnames:
+                raise Exception(f"Missing required column: {h}")
+
+        current_passage_id = None
+
+        for i, row in enumerate(reader):
+            print(f"ROW {i}: {row}")
+
+            # 🔥 Clean all values
+            row = {k.strip(): (v or "").strip() for k, v in row.items()}
+
+            # 🔥 Create passage
+            if row["new_passage"] == "1":
+                current_passage_id = insert_passage(
+                    title=row["title"],
+                    passage_text=row["passage_text"],
+                    difficulty=row["difficulty"]
+                )
+
+                if not current_passage_id:
+                    raise Exception(f"Failed to create passage at row {i}")
+
+            # 🔴 Critical validation
+            if not current_passage_id:
+                raise Exception(f"No passage created before row {i}")
+
+            # 🔴 Validate question fields
+            if not row["question_text"]:
+                raise Exception(f"Missing question_text at row {i}")
+
+            # 🔥 Insert question
+            insert_question(
+                passage_id=current_passage_id,
+                question_text=row["question_text"],
+                a=row["option_a"],
+                b=row["option_b"],
+                c=row["option_c"],
+                d=row["option_d"],
+                correct=row["correct_answer"].upper(),
+                qtype=row.get("question_type", "comprehension"),
+                order=int(row.get("sort_order") or 1)
+            )
+
+        return {"status": "success"}
+
+    except Exception as e:
+        error = traceback.format_exc()
+        print("UPLOAD ERROR:", error)
+
+        return {
+            "error": str(e),
+            "trace": error
+        }
