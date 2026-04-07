@@ -1,9 +1,11 @@
 print("🚀 COMPREHENSION ROUTER LOADED")
 print("🚀 ROUTER FILE IS LOADING")
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
+import csv
+import io
 
 from app.auth import get_current_user
 from app.database import get_connection
@@ -44,8 +46,17 @@ from app.comprehension.service import (
     start_passage,
     submit_answer,
 )
+from app.comprehension.repository import (
+    insert_passage,
+    insert_question
+)
 
 router = APIRouter(prefix="/practice", tags=["practice"])
+
+
+def is_admin(user):
+    # 🔒 Phase 1: hardcoded admin (safe, reversible)
+    return user.get("sub") == "rishi@test.com"
 
 
 # -----------------------------
@@ -703,3 +714,74 @@ def submit_comprehension_answer(payload: dict, user=Depends(get_current_user)):
         question_id=payload["question_id"],
         selected_answer=payload["selected_answer"]
     )
+
+
+@router.post("/comprehension/upload")
+def upload_comprehension_csv(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user)
+):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        # ✅ FIX 1 — Handle BOM properly
+        content = file.file.read().decode("utf-8-sig")
+
+        reader = csv.DictReader(io.StringIO(content))
+
+        current_passage_id = None
+
+        for idx, row in enumerate(reader, start=1):
+            # ✅ FIX 2 — Clean headers + values
+            row = {
+                (k.strip() if k else k): (v.strip() if isinstance(v, str) else v)
+                for k, v in row.items()
+            }
+
+            # ✅ FIX 3 — Validate required fields
+            if not row.get("question_text"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Row {idx}: missing question_text"
+                )
+
+            # ✅ FIX 4 — Create passage
+            if row.get("new_passage") == "1":
+                current_passage_id = insert_passage(
+                    title=row.get("title"),
+                    passage_text=row.get("passage_text"),
+                    difficulty=row.get("difficulty")
+                )
+
+            # ✅ FIX 5 — Guardrail (THIS WAS YOUR 500 ERROR)
+            if not current_passage_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Row {idx}: question before passage"
+                )
+
+            # ✅ FIX 6 — Safe insert
+            insert_question(
+                passage_id=current_passage_id,
+                question_text=row["question_text"],
+                a=row["option_a"],
+                b=row["option_b"],
+                c=row["option_c"],
+                d=row["option_d"],
+                correct=row["correct_answer"],
+                qtype=row.get("question_type", "comprehension"),
+                order=int(row.get("sort_order") or 0)
+            )
+
+        return {"status": "success"}
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        import traceback
+        print("❌ COMPREHENSION CSV ERROR:", str(e))
+        print(traceback.format_exc())
+
+        raise HTTPException(status_code=500, detail=str(e))
