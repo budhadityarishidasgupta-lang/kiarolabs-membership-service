@@ -1,9 +1,11 @@
 print("🚀 COMPREHENSION ROUTER LOADED")
 print("🚀 ROUTER FILE IS LOADING")
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
+import csv
+import io
 
 from app.auth import get_current_user
 from app.database import get_connection
@@ -44,8 +46,17 @@ from app.comprehension.service import (
     start_passage,
     submit_answer,
 )
+from app.comprehension.repository import (
+    insert_passage,
+    insert_question
+)
 
 router = APIRouter(prefix="/practice", tags=["practice"])
+
+
+def is_admin(user):
+    # 🔒 Phase 1: hardcoded admin (safe, reversible)
+    return user.get("email") == "rishi@test.com"
 
 
 # -----------------------------
@@ -703,3 +714,42 @@ def submit_comprehension_answer(payload: dict, user=Depends(get_current_user)):
         question_id=payload["question_id"],
         selected_answer=payload["selected_answer"]
     )
+
+
+@router.post("/comprehension/upload")
+def upload_comprehension_csv(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user)
+):
+    # 🔒 Admin check
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    content = file.file.read().decode("utf-8")
+    reader = csv.DictReader(io.StringIO(content))
+
+    current_passage_id = None
+
+    for row in reader:
+        # Create new passage
+        if row.get("new_passage") == "1":
+            current_passage_id = insert_passage(
+                title=row["title"],
+                passage_text=row["passage_text"],
+                difficulty=row.get("difficulty")
+            )
+
+        # Insert question
+        insert_question(
+            passage_id=current_passage_id,
+            question_text=row["question_text"],
+            a=row["option_a"],
+            b=row["option_b"],
+            c=row["option_c"],
+            d=row["option_d"],
+            correct=row["correct_answer"],
+            qtype=row.get("question_type", "comprehension"),
+            order=int(row["sort_order"])
+        )
+
+    return {"status": "success"}
