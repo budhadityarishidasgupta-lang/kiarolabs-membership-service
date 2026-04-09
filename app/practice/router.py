@@ -716,7 +716,7 @@ def passage_summary(passage_id: int, user=Depends(get_current_user)):
     try:
         cur.execute("""
             SELECT
-                COUNT(*) as total,
+                COUNT(*) as attempted,
                 SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
             FROM comprehension_attempts
             WHERE user_id = %s AND passage_id = %s
@@ -724,17 +724,25 @@ def passage_summary(passage_id: int, user=Depends(get_current_user)):
 
         row = cur.fetchone()
 
-        total = row[0] or 0
+        attempted = row[0] or 0
         correct = row[1] or 0
 
-        accuracy = round((correct / total) * 100, 1) if total > 0 else 0
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM comprehension_questions
+            WHERE passage_id = %s
+        """, (passage_id,))
+        question_row = cur.fetchone()
+        total_questions = question_row[0] or 0
+
+        accuracy = round((correct / attempted) * 100, 1) if attempted > 0 else 0
 
         return {
             "passage_id": passage_id,
-            "attempted": total,
+            "attempted": attempted,
             "correct": correct,
             "accuracy": accuracy,
-            "completed": total >= 10
+            "completed": total_questions > 0 and attempted >= total_questions
         }
 
     finally:
