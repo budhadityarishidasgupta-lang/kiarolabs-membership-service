@@ -692,12 +692,54 @@ def get_comprehension_passages(user=Depends(get_current_user)):
 
 @router.get("/comprehension/start")
 def start_comprehension(passage_id: int, user=Depends(get_current_user)):
-    result = start_passage(passage_id)
+    if not user.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="User not provisioned"
+        )
+
+    result = start_passage(passage_id, user["user_id"])
 
     if not result:
         raise HTTPException(status_code=404, detail="Passage not found")
 
     return result
+
+
+@router.get("/comprehension/passage-summary")
+def passage_summary(passage_id: int, user=Depends(get_current_user)):
+    user_id = user["user_id"]
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
+            FROM comprehension_attempts
+            WHERE user_id = %s AND passage_id = %s
+        """, (user_id, passage_id))
+
+        row = cur.fetchone()
+
+        total = row[0] or 0
+        correct = row[1] or 0
+
+        accuracy = round((correct / total) * 100, 1) if total > 0 else 0
+
+        return {
+            "passage_id": passage_id,
+            "attempted": total,
+            "correct": correct,
+            "accuracy": accuracy,
+            "completed": total >= 10
+        }
+
+    finally:
+        cur.close()
+        conn.close()
 
 
 @router.post("/comprehension/answer")
