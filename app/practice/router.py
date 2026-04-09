@@ -724,25 +724,76 @@ def passage_summary(passage_id: int, user=Depends(get_current_user)):
 
         row = cur.fetchone()
 
-        attempted = row[0] or 0
+        total = row[0] or 0
         correct = row[1] or 0
 
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM comprehension_questions
-            WHERE passage_id = %s
-        """, (passage_id,))
-        question_row = cur.fetchone()
-        total_questions = question_row[0] or 0
-
-        accuracy = round((correct / attempted) * 100, 1) if attempted > 0 else 0
+        accuracy = round((correct / total) * 100, 1) if total > 0 else 0
+        mastered = (accuracy >= 80) and (total >= 10)
 
         return {
             "passage_id": passage_id,
-            "attempted": attempted,
+            "attempted": total,
             "correct": correct,
             "accuracy": accuracy,
-            "completed": total_questions > 0 and attempted >= total_questions
+            "completed": total >= 10,
+            "mastered": mastered
+        }
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/comprehension/next-passage")
+def get_next_passage(current_passage_id: int, user=Depends(get_current_user)):
+    user_id = user["user_id"]
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
+            FROM comprehension_attempts
+            WHERE user_id = %s AND passage_id = %s
+        """, (user_id, current_passage_id))
+
+        row = cur.fetchone()
+
+        total = row[0] or 0
+        correct = row[1] or 0
+        accuracy = (correct / total) * 100 if total > 0 else 0
+        mastered = (accuracy >= 80) and (total >= 10)
+
+        if not mastered:
+            return {
+                "next_passage_id": current_passage_id,
+                "unlocked": False,
+                "reason": "Complete passage with 80% accuracy"
+            }
+
+        cur.execute("""
+            SELECT passage_id
+            FROM comprehension_passages
+            WHERE passage_id > %s AND is_active = true
+            ORDER BY passage_id ASC
+            LIMIT 1
+        """, (current_passage_id,))
+
+        next_row = cur.fetchone()
+
+        if not next_row:
+            return {
+                "next_passage_id": None,
+                "unlocked": True,
+                "message": "All passages completed"
+            }
+
+        return {
+            "next_passage_id": next_row[0],
+            "unlocked": True
         }
 
     finally:
