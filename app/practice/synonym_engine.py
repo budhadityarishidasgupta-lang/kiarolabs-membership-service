@@ -360,16 +360,65 @@ def get_next_synonym_question(user_email):
 # --------------------------------------------------
 
 def get_dashboard_stats(user_email):
+    def compute_module_meta(module):
+        attempts = module.get("attempts", 0)
+        accuracy = module.get("accuracy", 0)
+        unlocked = module.get("unlocked", False)
+
+        if not unlocked:
+            status = "locked"
+        elif attempts == 0:
+            status = "not_started"
+        elif accuracy >= 80:
+            status = "mastered"
+        elif attempts >= 10:
+            status = "completed"
+        else:
+            status = "in_progress"
+
+        mastered = accuracy >= 80 and attempts >= 10
+
+        if not unlocked:
+            next_action = "locked"
+        elif attempts == 0:
+            next_action = "start"
+        elif mastered:
+            next_action = "advance"
+        elif status == "completed":
+            next_action = "retry"
+        else:
+            next_action = "continue"
+
+        if not unlocked:
+            priority = 999
+        elif not mastered:
+            priority = 100 - accuracy
+        else:
+            priority = 999
+
+        module["status"] = status
+        module["mastered"] = mastered
+        module["next_action"] = next_action
+        module["priority"] = priority
+
+        return module
+
     progress = get_synonym_progress(user_email)
     modules = {
         "spelling": {
             "unlocked": True,
+            "attempts": 0,
+            "accuracy": 0,
         },
         "words": {
             "unlocked": True,
+            "attempts": progress["total_attempts"],
+            "accuracy": round(progress["accuracy"] * 100, 1),
         },
         "maths": {
             "unlocked": True,
+            "attempts": 0,
+            "accuracy": 0,
         },
     }
 
@@ -436,6 +485,9 @@ def get_dashboard_stats(user_email):
             cur.close()
         if conn:
             conn.close()
+
+    for key in modules:
+        modules[key] = compute_module_meta(modules[key])
 
     return {
         "synonyms": progress,
