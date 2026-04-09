@@ -361,11 +361,87 @@ def get_next_synonym_question(user_email):
 
 def get_dashboard_stats(user_email):
     progress = get_synonym_progress(user_email)
+    modules = {
+        "spelling": {
+            "unlocked": True,
+        },
+        "words": {
+            "unlocked": True,
+        },
+        "maths": {
+            "unlocked": True,
+        },
+    }
+
+    # ComprehensionSprint Stats
+    conn = None
+    cur = None
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Get user_id from email
+        cur.execute(
+            """
+            SELECT user_id FROM users WHERE email = %s
+            """,
+            (user_email,),
+        )
+        user_row = cur.fetchone()
+
+        if user_row:
+            user_id = user_row[0]
+
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) as attempts,
+                    SUM(CASE WHEN correct THEN 1 ELSE 0 END) as correct
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+
+            row = cur.fetchone()
+
+            attempts = row[0] or 0
+            correct = row[1] or 0
+
+            accuracy = round((correct / attempts) * 100, 1) if attempts > 0 else 0
+
+            modules["comprehension"] = {
+                "unlocked": True,
+                "attempts": attempts,
+                "accuracy": accuracy
+            }
+
+        else:
+            modules["comprehension"] = {
+                "unlocked": False,
+                "attempts": 0,
+                "accuracy": 0
+            }
+
+    except Exception as e:
+        print("Comprehension dashboard error:", e)
+        modules["comprehension"] = {
+            "unlocked": False,
+            "attempts": 0,
+            "accuracy": 0
+        }
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
     return {
         "synonyms": progress,
         "streak": 0,
-        "xp": progress["total_attempts"] * 10
+        "xp": progress["total_attempts"] * 10,
+        "modules": modules,
     }
 
 
