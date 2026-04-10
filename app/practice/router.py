@@ -6,6 +6,7 @@ from typing import Optional
 from pydantic import BaseModel
 import csv
 import io
+import random
 
 from app.auth import get_current_user
 from app.database import get_connection
@@ -148,8 +149,11 @@ def math_lessons():
 
 
 @router.get("/math/question")
-def math_question(lesson_id: int):
-    return get_math_question(lesson_id)
+def math_question(lesson_id: int, user=Depends(get_current_user)):
+    return get_math_question(
+        lesson_id=lesson_id,
+        user_id=user.get("user_id")
+    )
 
 
 @router.post("/math/submit")
@@ -874,6 +878,103 @@ def start_comprehension(passage_id: int, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Passage not found")
 
     return result
+
+
+@router.get("/comprehension/question")
+def get_comprehension_question(passage_id: int, user=Depends(get_current_user)):
+    user_id = user["user_id"]
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        selected_question_id = None
+
+        cur.execute(
+            """
+            SELECT question_id
+            FROM comprehension_attempts
+            WHERE user_id = %s
+            AND correct = false
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (user_id,),
+        )
+        weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
+
+        if weak_questions:
+            selected_question_id = random.choice(weak_questions)
+
+        if not selected_question_id:
+            cur.execute(
+                """
+                SELECT question_id
+                FROM comprehension_questions
+                WHERE passage_id = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (passage_id,),
+            )
+            fallback_row = cur.fetchone()
+            if fallback_row:
+                selected_question_id = fallback_row[0]
+
+        if not selected_question_id:
+            cur.execute(
+                """
+                SELECT question_id
+                FROM comprehension_questions
+                WHERE passage_id = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (passage_id,),
+            )
+            safety_row = cur.fetchone()
+            if safety_row:
+                selected_question_id = safety_row[0]
+
+        if not selected_question_id:
+            raise HTTPException(status_code=404, detail="Question not found")
+
+        cur.execute(
+            """
+            SELECT question_id, question_text, option_a, option_b, option_c, option_d
+            FROM comprehension_questions
+            WHERE question_id = %s
+              AND passage_id = %s
+            LIMIT 1
+            """,
+            (selected_question_id, passage_id),
+        )
+        question = cur.fetchone()
+
+        if not question:
+            cur.execute(
+                """
+                SELECT question_id, question_text, option_a, option_b, option_c, option_d
+                FROM comprehension_questions
+                WHERE passage_id = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (passage_id,),
+            )
+            question = cur.fetchone()
+
+        if not question:
+            raise HTTPException(status_code=404, detail="Question not found")
+
+        return {
+            "question_id": question[0],
+            "question_text": question[1],
+            "options": [question[2], question[3], question[4], question[5]],
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 @router.get("/comprehension/passage-summary")

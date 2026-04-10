@@ -1,4 +1,5 @@
 from app.database import get_connection
+import random
 
 
 def get_math_lessons():
@@ -35,11 +36,69 @@ def get_math_lessons():
     return lessons
 
 
-def get_math_question(lesson_id):
+def get_math_question(lesson_id, user_id=None):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
+    selected_question_id = None
+
+    if user_id:
+        cur.execute(
+            """
+            SELECT question_id
+            FROM math_attempts
+            WHERE user_id = %s
+            AND correct = false
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (user_id,),
+        )
+        weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
+        if weak_questions:
+            selected_question_id = random.choice(weak_questions)
+
+    if not selected_question_id:
+        cur.execute(
+            """
+            SELECT q.id
+            FROM math_questions q
+            JOIN math_lesson_questions lq
+                ON lq.question_id = q.id
+            WHERE lq.lesson_id = %s
+            ORDER BY RANDOM()
+            LIMIT 1;
+            """,
+            (lesson_id,),
+        )
+        fallback_row = cur.fetchone()
+        if fallback_row:
+            selected_question_id = fallback_row[0]
+
+    if not selected_question_id:
+        cur.execute(
+            """
+            SELECT q.id
+            FROM math_questions q
+            JOIN math_lesson_questions lq
+                ON lq.question_id = q.id
+            WHERE lq.lesson_id = %s
+            ORDER BY RANDOM()
+            LIMIT 1;
+            """,
+            (lesson_id,),
+        )
+        safety_row = cur.fetchone()
+        if safety_row:
+            selected_question_id = safety_row[0]
+
+    if not selected_question_id:
+        cur.close()
+        conn.close()
+        return None
+
+    cur.execute(
+        """
         SELECT
             q.id,
             q.stem,
@@ -55,11 +114,35 @@ def get_math_question(lesson_id):
         JOIN math_lesson_questions lq
             ON lq.question_id = q.id
         WHERE lq.lesson_id = %s
-        ORDER BY RANDOM()
+          AND q.id = %s
         LIMIT 1;
-    """, (lesson_id,))
+        """,
+        (lesson_id, selected_question_id),
+    )
 
     row = cur.fetchone()
+
+    if not row:
+        cur.execute("""
+            SELECT
+                q.id,
+                q.stem,
+                q.option_a,
+                q.option_b,
+                q.option_c,
+                q.option_d,
+                q.option_e,
+                q.correct_option,
+                COALESCE(q.hint, '') AS hint,
+                COALESCE(q.explanation, '') AS explanation
+            FROM math_questions q
+            JOIN math_lesson_questions lq
+                ON lq.question_id = q.id
+            WHERE lq.lesson_id = %s
+            ORDER BY RANDOM()
+            LIMIT 1;
+        """, (lesson_id,))
+        row = cur.fetchone()
 
     cur.close()
     conn.close()
