@@ -808,6 +808,101 @@ def dashboard(user=Depends(get_current_user)):
     """
     return get_dashboard_stats(user["sub"])
 
+@router.get("/resume")
+def get_resume_learning(user=Depends(get_current_user)):
+    user_id = user["user_id"]
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    result = {
+        "spelling": None,
+        "words": None,
+        "maths": None,
+        "comprehension": None
+    }
+
+    try:
+
+        # -----------------------------
+        # SPELLING
+        # -----------------------------
+        cur.execute("""
+            SELECT word_id
+            FROM spelling_attempts
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+
+        if row:
+            result["spelling"] = {
+                "word_id": row[0],
+                "next_action": "continue"
+            }
+
+        # -----------------------------
+        # WORDSPRINT (SYNONYMS)
+        # -----------------------------
+        cur.execute("""
+            SELECT word_id
+            FROM synonym_attempts
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+
+        if row:
+            result["words"] = {
+                "word_id": row[0],
+                "next_action": "continue"
+            }
+
+        # -----------------------------
+        # MATHSPRINT
+        # -----------------------------
+        cur.execute("""
+            SELECT question_id
+            FROM math_attempts
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+
+        if row:
+            result["maths"] = {
+                "question_id": row[0],
+                "next_action": "continue"
+            }
+
+        # -----------------------------
+        # COMPREHENSION
+        # -----------------------------
+        cur.execute("""
+            SELECT passage_id, question_id
+            FROM comprehension_attempts
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+
+        if row:
+            result["comprehension"] = {
+                "passage_id": row[0],
+                "question_id": row[1],
+                "next_action": "continue"
+            }
+
+        return result
+
+    finally:
+        cur.close()
+        conn.close()
+
 
 @router.get("/spelling/test")
 def spelling_test(user=Depends(get_current_user)):
