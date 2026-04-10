@@ -651,8 +651,8 @@ def get_dashboard_stats(user_email):
         },
         "words": {
             "unlocked": True,
-            "attempts": progress["total_attempts"],
-            "accuracy": round(progress["accuracy"] * 100, 1),
+            "attempts": 0,
+            "accuracy": 0,
         },
         "maths": {
             "unlocked": True,
@@ -702,6 +702,38 @@ def get_dashboard_stats(user_email):
             cursor.execute("""
             SELECT
             COUNT(*) as attempts,
+            COALESCE(AVG(CASE WHEN is_correct THEN 1 ELSE 0 END) * 100, 0)
+            FROM synonym_attempts
+            WHERE user_id = %s
+            """, (user_id,))
+
+            row = cursor.fetchone()
+
+            modules["words"] = {
+                "unlocked": True,
+                "attempts": row[0] or 0,
+                "accuracy": round(row[1] or 0, 2)
+            }
+
+            cursor.execute("""
+            SELECT
+            COUNT(*) as attempts,
+            COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
+            FROM math_attempts
+            WHERE user_id = %s
+            """, (user_id,))
+
+            row = cursor.fetchone()
+
+            modules["maths"] = {
+                "unlocked": True,
+                "attempts": row[0] or 0,
+                "accuracy": round(row[1] or 0, 2)
+            }
+
+            cursor.execute("""
+            SELECT
+            COUNT(*) as attempts,
             COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
             FROM comprehension_attempts
             WHERE user_id = %s
@@ -713,7 +745,7 @@ def get_dashboard_stats(user_email):
             comprehension_accuracy = round(row[1] or 0, 2)
 
             modules["comprehension"] = {
-                "unlocked": comprehension_attempts > 0,
+                "unlocked": True,
                 "attempts": comprehension_attempts,
                 "accuracy": comprehension_accuracy
             }
