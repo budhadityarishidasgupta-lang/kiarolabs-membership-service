@@ -28,7 +28,6 @@ from app.practice.synonym_engine import (
     submit_synonym_answer,
     get_synonym_progress,
     get_next_synonym_question,
-    get_dashboard_stats,
     get_practice_session,
 )
 from app.practice.spelling_engine import (
@@ -641,6 +640,145 @@ def session_next(user=Depends(get_current_user)):
 # -----------------------------
 # Dashboard
 # -----------------------------
+
+def get_dashboard_stats(user_email):
+    progress = get_synonym_progress(user_email)
+    modules = {
+        "spelling": {
+            "unlocked": True,
+            "attempts": 0,
+            "accuracy": 0,
+        },
+        "words": {
+            "unlocked": True,
+            "attempts": progress["total_attempts"],
+            "accuracy": round(progress["accuracy"] * 100, 1),
+        },
+        "maths": {
+            "unlocked": True,
+            "attempts": 0,
+            "accuracy": 0,
+        },
+        "comprehension": {
+            "unlocked": False,
+            "attempts": 0,
+            "accuracy": 0,
+        },
+    }
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+        SELECT user_id FROM users WHERE email = %s
+        """, (user_email,))
+        user_row = cursor.fetchone()
+        user_id = user_row[0] if user_row else None
+
+        if user_id:
+            cursor.execute("""
+            SELECT
+            COUNT(*) as attempts,
+            COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
+            FROM spelling_attempts
+            WHERE user_id = %s
+            """, (user_id,))
+
+            row = cursor.fetchone()
+
+            spelling_attempts = row[0] or 0
+            spelling_accuracy = round(row[1] or 0, 2)
+
+            modules["spelling"] = {
+                "unlocked": True,
+                "attempts": spelling_attempts,
+                "accuracy": spelling_accuracy
+            }
+
+            cursor.execute("""
+            SELECT
+            COUNT(*) as attempts,
+            COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
+            FROM comprehension_attempts
+            WHERE user_id = %s
+            """, (user_id,))
+
+            row = cursor.fetchone()
+
+            comprehension_attempts = row[0] or 0
+            comprehension_accuracy = round(row[1] or 0, 2)
+
+            modules["comprehension"] = {
+                "unlocked": comprehension_attempts > 0,
+                "attempts": comprehension_attempts,
+                "accuracy": comprehension_accuracy
+            }
+
+    except Exception as e:
+        print("Dashboard stats error:", e)
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    def compute_module_meta(module):
+        attempts = module.get("attempts", 0)
+        accuracy = module.get("accuracy", 0)
+        unlocked = module.get("unlocked", False)
+
+        if not unlocked:
+            status = "locked"
+        elif attempts == 0:
+            status = "not_started"
+        elif accuracy >= 80:
+            status = "mastered"
+        elif attempts >= 10:
+            status = "completed"
+        else:
+            status = "in_progress"
+
+        mastered = accuracy >= 80 and attempts >= 10
+
+        if not unlocked:
+            next_action = "locked"
+        elif attempts == 0:
+            next_action = "start"
+        elif mastered:
+            next_action = "advance"
+        elif status == "completed":
+            next_action = "retry"
+        else:
+            next_action = "continue"
+
+        if not unlocked:
+            priority = 999
+        elif not mastered:
+            priority = 100 - accuracy
+        else:
+            priority = 999
+
+        module["status"] = status
+        module["mastered"] = mastered
+        module["next_action"] = next_action
+        module["priority"] = priority
+
+        return module
+
+    for key in modules:
+        modules[key] = compute_module_meta(modules[key])
+
+    return {
+        "synonyms": progress,
+        "streak": 0,
+        "xp": progress["total_attempts"] * 10,
+        "modules": modules,
+    }
+
 
 @router.get("/dashboard")
 def dashboard(user=Depends(get_current_user)):
