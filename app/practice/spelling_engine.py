@@ -100,7 +100,72 @@ def get_spelling_question(lesson_id: int, user_id: int):
         conn = get_connection()
         cur = conn.cursor()
 
-        # STEP 1: unseen words first
+        selected_word_id = None
+
+        # STEP 1: weak words first (recent incorrect attempts)
+        cur.execute(
+            """
+            SELECT word_id
+            FROM spelling_attempts
+            WHERE user_id = %s
+            AND correct = false
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (user_id,),
+        )
+
+        weak_words = [r[0] for r in cur.fetchall() if r and r[0]]
+
+        if weak_words:
+            selected_word_id = random.choice(weak_words)
+
+        # STEP 2 fallback: random word inside lesson
+        if not selected_word_id:
+            cur.execute(
+                """
+                SELECT w.word_id
+                FROM spelling_lesson_words lw
+                JOIN spelling_words w
+                    ON lw.word_id = w.word_id
+                WHERE lw.lesson_id = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (lesson_id,),
+            )
+            fallback_row = cur.fetchone()
+            if fallback_row:
+                selected_word_id = fallback_row[0]
+
+        # STEP 3 safety fallback: one more random attempt
+        if not selected_word_id:
+            cur.execute(
+                """
+                SELECT w.word_id
+                FROM spelling_lesson_words lw
+                JOIN spelling_words w
+                    ON lw.word_id = w.word_id
+                WHERE lw.lesson_id = %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (lesson_id,),
+            )
+            safety_row = cur.fetchone()
+            if safety_row:
+                selected_word_id = safety_row[0]
+
+        if not selected_word_id:
+            return {
+                "word_id": None,
+                "word_audio": "",
+                "masked_word": "",
+                "hint": "",
+                "example_sentence": "",
+            }
+
+        # Load selected word details
         cur.execute(
             """
             SELECT
@@ -111,108 +176,14 @@ def get_spelling_question(lesson_id: int, user_id: int):
             FROM spelling_lesson_words lw
             JOIN spelling_words w
                 ON lw.word_id = w.word_id
-            LEFT JOIN spelling_word_stats s
-                ON s.word_id = w.word_id
-                AND s.user_id = %s
             WHERE lw.lesson_id = %s
-            AND s.word_id IS NULL
+            AND w.word_id = %s
             LIMIT 1
             """,
-            (user_id, lesson_id),
+            (lesson_id, selected_word_id),
         )
 
         row = cur.fetchone()
-
-        # STEP 2: weak words (low accuracy)
-        if not row:
-            cur.execute(
-                """
-                SELECT
-                    w.word_id,
-                    w.word,
-                    COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
-                FROM spelling_lesson_words lw
-                JOIN spelling_words w
-                    ON lw.word_id = w.word_id
-                JOIN spelling_word_stats s
-                    ON s.word_id = w.word_id
-                    AND s.user_id = %s
-                WHERE lw.lesson_id = %s
-                AND s.accuracy < 0.5
-                ORDER BY s.accuracy ASC
-                LIMIT 1
-                """,
-                (user_id, lesson_id),
-            )
-            row = cur.fetchone()
-
-        # STEP 3: recently wrong (never corrected yet)
-        if not row:
-            cur.execute(
-                """
-                SELECT
-                    w.word_id,
-                    w.word,
-                    COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
-                FROM spelling_lesson_words lw
-                JOIN spelling_words w
-                    ON lw.word_id = w.word_id
-                JOIN spelling_word_stats s
-                    ON s.word_id = w.word_id
-                    AND s.user_id = %s
-                WHERE lw.lesson_id = %s
-                AND s.last_correct_at IS NULL
-                ORDER BY s.last_attempt_at DESC
-                LIMIT 1
-                """,
-                (user_id, lesson_id),
-            )
-            row = cur.fetchone()
-
-        # STEP 4: stale words (oldest attempted first)
-        if not row:
-            cur.execute(
-                """
-                SELECT
-                    w.word_id,
-                    w.word,
-                    COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
-                FROM spelling_lesson_words lw
-                JOIN spelling_words w
-                    ON lw.word_id = w.word_id
-                JOIN spelling_word_stats s
-                    ON s.word_id = w.word_id
-                    AND s.user_id = %s
-                WHERE lw.lesson_id = %s
-                ORDER BY s.last_attempt_at ASC
-                LIMIT 1
-                """,
-                (user_id, lesson_id),
-            )
-            row = cur.fetchone()
-
-        # STEP 5 fallback: random within lesson
-        if not row:
-            cur.execute(
-                """
-                SELECT
-                    w.word_id,
-                    w.word,
-                    COALESCE(w.hint, '') AS hint,
-                    COALESCE(w.example_sentence, '') AS example_sentence
-                FROM spelling_lesson_words lw
-                JOIN spelling_words w
-                    ON lw.word_id = w.word_id
-                WHERE lw.lesson_id = %s
-                ORDER BY RANDOM()
-                LIMIT 1
-                """,
-                (lesson_id,),
-            )
-            row = cur.fetchone()
 
         if not row:
             return {

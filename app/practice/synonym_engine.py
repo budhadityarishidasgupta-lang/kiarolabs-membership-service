@@ -64,16 +64,67 @@ def get_synonym_question(user_email):
     cur = conn.cursor()
 
     try:
-        cur.execute("""
-            SELECT word_id, headword, synonyms
-            FROM public.words
-            WHERE synonyms IS NOT NULL
-              AND TRIM(synonyms) <> ''
-            ORDER BY RANDOM()
-            LIMIT 1
-        """)
+        row = None
+        selected_word_id = None
+        user_id = _resolve_user_id(cur, user_email)
 
-        row = cur.fetchone()
+        if user_id:
+            cur.execute(
+                """
+                SELECT word_id
+                FROM synonym_attempts
+                WHERE user_id = %s
+                AND is_correct = false
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                (user_id,),
+            )
+
+            weak_words = [r[0] for r in cur.fetchall() if r and r[0]]
+            if weak_words:
+                selected_word_id = random.choice(weak_words)
+
+        if selected_word_id:
+            cur.execute(
+                """
+                SELECT word_id, headword, synonyms
+                FROM public.words
+                WHERE word_id = %s
+                  AND synonyms IS NOT NULL
+                  AND TRIM(synonyms) <> ''
+                LIMIT 1
+                """,
+                (selected_word_id,),
+            )
+            row = cur.fetchone()
+
+        if not row:
+            cur.execute(
+                """
+                SELECT word_id, headword, synonyms
+                FROM public.words
+                WHERE synonyms IS NOT NULL
+                  AND TRIM(synonyms) <> ''
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+
+        if not row:
+            cur.execute(
+                """
+                SELECT word_id, headword, synonyms
+                FROM public.words
+                WHERE synonyms IS NOT NULL
+                  AND TRIM(synonyms) <> ''
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+
         if not row:
             return {"error": "No synonym word found"}
 
