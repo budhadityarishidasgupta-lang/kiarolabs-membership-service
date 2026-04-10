@@ -891,9 +891,36 @@ def get_resume_learning(user=Depends(get_current_user)):
         row = cur.fetchone()
 
         if row:
+            passage_id = row[0]
+
+            cur.execute("""
+                SELECT question_id
+                FROM comprehension_attempts
+                WHERE user_id = %s AND passage_id = %s
+            """, (user_id, passage_id))
+            attempted = {r[0] for r in cur.fetchall()}
+
+            cur.execute("""
+                SELECT question_id
+                FROM comprehension_questions
+                WHERE passage_id = %s
+                ORDER BY sort_order
+            """, (passage_id,))
+            all_questions = [r[0] for r in cur.fetchall()]
+
+            next_question_id = None
+
+            for question_id in all_questions:
+                if question_id not in attempted:
+                    next_question_id = question_id
+                    break
+
+            if not next_question_id and all_questions:
+                next_question_id = all_questions[0]
+
             result["comprehension"] = {
-                "passage_id": row[0],
-                "question_id": row[1],
+                "passage_id": passage_id,
+                "question_id": next_question_id,
                 "next_action": "continue"
             }
 
@@ -1028,7 +1055,22 @@ def start_comprehension(passage_id: int, user=Depends(get_current_user)):
     if not result:
         raise HTTPException(status_code=404, detail="Passage not found")
 
-    return result
+    questions = result["questions"]
+
+    next_question_id = None
+    for question in questions:
+        if not question.get("attempted"):
+            next_question_id = question["question_id"]
+            break
+
+    if next_question_id is None and questions:
+        next_question_id = questions[0]["question_id"]
+
+    return {
+        "passage": result["passage"],
+        "questions": questions,
+        "start_question_id": next_question_id,
+    }
 
 
 @router.get("/comprehension/question")
