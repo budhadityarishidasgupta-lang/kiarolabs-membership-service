@@ -847,6 +847,78 @@ def spelling_dashboard_v2(user=Depends(get_current_user)):
 def get_comprehension_passages(user=Depends(get_current_user)):
     return list_passages()
 
+@router.get("/comprehension/courses")
+def get_comprehension_courses(user=Depends(get_current_user)):
+    """
+    Returns comprehension passages grouped like:
+    - Foundation
+    - Intermediate
+    - Advanced
+
+    Same structure as WordSprint courses → lessons
+    """
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT
+                passage_id,
+                title,
+                difficulty
+            FROM comprehension_passages
+            WHERE is_active = true
+            ORDER BY
+                CASE
+                    WHEN LOWER(difficulty) = 'foundation' THEN 1
+                    WHEN LOWER(difficulty) = 'easy' THEN 1
+                    WHEN LOWER(difficulty) = 'medium' THEN 2
+                    WHEN LOWER(difficulty) = 'intermediate' THEN 2
+                    WHEN LOWER(difficulty) = 'advanced' THEN 3
+                    ELSE 1
+                END,
+                passage_id
+        """)
+
+        rows = cur.fetchall()
+
+    finally:
+        cur.close()
+        conn.close()
+
+    courses = {
+        "Foundation": [],
+        "Intermediate": [],
+        "Advanced": []
+    }
+
+    for passage_id, title, difficulty in rows:
+        level = (difficulty or "").lower()
+
+        if level in ["foundation", "easy"]:
+            bucket = "Foundation"
+        elif level in ["medium", "intermediate"]:
+            bucket = "Intermediate"
+        elif level in ["advanced"]:
+            bucket = "Advanced"
+        else:
+            bucket = "Foundation"
+
+        courses[bucket].append({
+            "lesson_id": passage_id,
+            "lesson_name": title
+        })
+
+    return [
+        {
+            "course_name": key,
+            "lessons": value
+        }
+        for key, value in courses.items()
+        if value
+    ]
+
 
 @router.get("/comprehension/start")
 def start_comprehension(passage_id: int, user=Depends(get_current_user)):
