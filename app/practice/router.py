@@ -582,7 +582,7 @@ def synonym_question(user=Depends(get_current_user)):
 @router.post("/synonym/answer")
 def synonym_answer(req: SynonymAnswerRequest, user=Depends(get_current_user)):
     return submit_synonym_answer(
-        user_id=user["id"],
+        user_id=user["user_id"],
         user_email=user["sub"],
         word_id=req.word_id,
         chosen=req.chosen,
@@ -625,7 +625,7 @@ def session_answer(req: SessionAnswerRequest, user=Depends(get_current_user)):
     Currently routes to synonym engine.
     """
     return submit_synonym_answer(
-        user_id=user["id"],
+        user_id=user["user_id"],
         user_email=user["sub"],
         word_id=req.word_id,
         chosen=req.chosen,
@@ -648,26 +648,10 @@ def session_next(user=Depends(get_current_user)):
 def get_dashboard_stats(user_email):
     progress = get_synonym_progress(user_email)
     modules = {
-        "spelling": {
-            "unlocked": True,
-            "attempts": 0,
-            "accuracy": 0,
-        },
-        "words": {
-            "unlocked": True,
-            "attempts": 0,
-            "accuracy": 0,
-        },
-        "maths": {
-            "unlocked": True,
-            "attempts": 0,
-            "accuracy": 0,
-        },
-        "comprehension": {
-            "unlocked": False,
-            "attempts": 0,
-            "accuracy": 0,
-        },
+        "spelling": {"unlocked": True, "attempts": 0, "accuracy": 0},
+        "words": {"unlocked": True, "attempts": 0, "accuracy": 0},
+        "maths": {"unlocked": True, "attempts": 0, "accuracy": 0},
+        "comprehension": {"unlocked": True, "attempts": 0, "accuracy": 0},
     }
 
     conn = None
