@@ -44,10 +44,8 @@ def startup_event():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://preview--growth-leap-studio.lovable.app",
-        "https://growth-leap-studio.lovable.app",
-        "http://localhost:3000",
-        "http://localhost:5173",
+        "https://kiarolabs.com",
+        "https://www.kiarolabs.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
