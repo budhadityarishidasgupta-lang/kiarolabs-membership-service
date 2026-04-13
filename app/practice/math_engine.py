@@ -63,9 +63,7 @@ def get_math_question(lesson_id, user_id=None):
             """
             SELECT q.id
             FROM math_questions q
-            JOIN math_lesson_questions lq
-                ON lq.question_id = q.id
-            WHERE lq.lesson_id = %s
+            WHERE q.lesson_id = %s
             ORDER BY RANDOM()
             LIMIT 1;
             """,
@@ -80,9 +78,7 @@ def get_math_question(lesson_id, user_id=None):
             """
             SELECT q.id
             FROM math_questions q
-            JOIN math_lesson_questions lq
-                ON lq.question_id = q.id
-            WHERE lq.lesson_id = %s
+            WHERE q.lesson_id = %s
             ORDER BY RANDOM()
             LIMIT 1;
             """,
@@ -95,7 +91,10 @@ def get_math_question(lesson_id, user_id=None):
     if not selected_question_id:
         cur.close()
         conn.close()
-        return None
+        return {
+            "status": "no_questions",
+            "lesson_id": lesson_id
+        }
 
     cur.execute(
         """
