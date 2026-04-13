@@ -21,7 +21,7 @@ def get_math_tests(user):
                 total_questions
             FROM math_test_papers
             WHERE is_active = TRUE
-            ORDER BY id;
+            ORDER BY paper_code;
         """
         )
         rows = cur.fetchall()
@@ -50,7 +50,7 @@ def get_math_tests(user):
         FROM math_test_papers
         WHERE is_active = TRUE
           AND is_free = TRUE
-        ORDER BY id;
+        ORDER BY paper_code;
     """
     )
 
