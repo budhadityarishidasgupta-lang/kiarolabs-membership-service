@@ -824,105 +824,82 @@ def get_resume_learning(user=Depends(get_current_user)):
 
     try:
 
-        # -----------------------------
         # SPELLING
-        # -----------------------------
-        cur.execute("""
-            SELECT word_id
-            FROM spelling_attempts
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (user_id,))
-        row = cur.fetchone()
+        try:
+            cur.execute("""
+                SELECT word_id
+                FROM spelling_attempts
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (user_id,))
+            row = cur.fetchone()
 
-        if row:
-            result["spelling"] = {
-                "word_id": row[0],
-                "next_action": "continue"
-            }
+            if row:
+                result["spelling"] = {
+                    "word_id": row[0],
+                    "next_action": "continue"
+                }
+        except:
+            result["spelling"] = None
 
-        # -----------------------------
-        # WORDSPRINT (SYNONYMS)
-        # -----------------------------
-        cur.execute("""
-            SELECT word_id
-            FROM synonym_attempts
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (user_id,))
-        row = cur.fetchone()
+        # WORDSPRINT
+        try:
+            cur.execute("""
+                SELECT word_id
+                FROM synonym_attempts
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (user_id,))
+            row = cur.fetchone()
 
-        if row:
-            result["words"] = {
-                "word_id": row[0],
-                "next_action": "continue"
-            }
+            if row:
+                result["words"] = {
+                    "word_id": row[0],
+                    "next_action": "continue"
+                }
+        except:
+            result["words"] = None
 
-        # -----------------------------
         # MATHSPRINT
-        # -----------------------------
-        cur.execute("""
-            SELECT question_id
-            FROM math_attempts
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (user_id,))
-        row = cur.fetchone()
+        try:
+            cur.execute("""
+                SELECT question_id
+                FROM math_attempts
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (user_id,))
+            row = cur.fetchone()
 
-        if row:
-            result["maths"] = {
-                "question_id": row[0],
-                "next_action": "continue"
-            }
+            if row:
+                result["maths"] = {
+                    "question_id": row[0],
+                    "next_action": "continue"
+                }
+        except:
+            result["maths"] = None
 
-        # -----------------------------
         # COMPREHENSION
-        # -----------------------------
-        cur.execute("""
-            SELECT passage_id, question_id
-            FROM comprehension_attempts
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (user_id,))
-        row = cur.fetchone()
-
-        if row:
-            passage_id = row[0]
-
+        try:
             cur.execute("""
-                SELECT question_id
+                SELECT passage_id, question_id
                 FROM comprehension_attempts
-                WHERE user_id = %s AND passage_id = %s
-            """, (user_id, passage_id))
-            attempted = {r[0] for r in cur.fetchall()}
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (user_id,))
+            row = cur.fetchone()
 
-            cur.execute("""
-                SELECT question_id
-                FROM comprehension_questions
-                WHERE passage_id = %s
-                ORDER BY sort_order
-            """, (passage_id,))
-            all_questions = [r[0] for r in cur.fetchall()]
-
-            next_question_id = None
-
-            for question_id in all_questions:
-                if question_id not in attempted:
-                    next_question_id = question_id
-                    break
-
-            if not next_question_id and all_questions:
-                next_question_id = all_questions[0]
-
-            result["comprehension"] = {
-                "passage_id": passage_id,
-                "question_id": next_question_id,
-                "next_action": "continue"
-            }
+            if row:
+                result["comprehension"] = {
+                    "passage_id": row[0],
+                    "question_id": row[1],
+                    "next_action": "continue"
+                }
+        except:
+            result["comprehension"] = None
 
         return result
 
