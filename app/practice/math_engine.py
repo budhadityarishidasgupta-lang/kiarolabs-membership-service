@@ -125,17 +125,16 @@ def get_math_question(lesson_id, user_id=None):
             "lesson_id": lesson_id
         }
 
-    # SAFE MAPPING (NO ASSUMPTIONS)
     return {
         "question_id": row[0],
-        "question_text": row[1],
+        "question_text": row[1],  # stem
         "options": {
-            "A": row[2] if len(row) > 2 else None,
-            "B": row[3] if len(row) > 3 else None,
-            "C": row[4] if len(row) > 4 else None,
-            "D": row[5] if len(row) > 5 else None
+            "A": row[2],
+            "B": row[3],
+            "C": row[4],
+            "D": row[5]
         },
-        "correct_answer": row[6] if len(row) > 6 else None
+        "correct_answer": row[6]
     }
 
 
