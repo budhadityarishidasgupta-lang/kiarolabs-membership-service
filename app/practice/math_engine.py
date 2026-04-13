@@ -110,9 +110,7 @@ def get_math_question(lesson_id, user_id=None):
             COALESCE(q.hint, '') AS hint,
             COALESCE(q.explanation, '') AS explanation
         FROM math_questions q
-        JOIN math_lesson_questions lq
-            ON lq.question_id = q.id
-        WHERE lq.lesson_id = %s
+        WHERE q.lesson_id = %s
           AND q.id = %s
         LIMIT 1;
         """,
@@ -135,9 +133,7 @@ def get_math_question(lesson_id, user_id=None):
                 COALESCE(q.hint, '') AS hint,
                 COALESCE(q.explanation, '') AS explanation
             FROM math_questions q
-            JOIN math_lesson_questions lq
-                ON lq.question_id = q.id
-            WHERE lq.lesson_id = %s
+            WHERE q.lesson_id = %s
             ORDER BY RANDOM()
             LIMIT 1;
         """, (lesson_id,))
@@ -147,7 +143,10 @@ def get_math_question(lesson_id, user_id=None):
     conn.close()
 
     if not row:
-        return None
+        return {
+            "status": "no_questions",
+            "lesson_id": lesson_id
+        }
 
     return {
         "question_id": row[0],

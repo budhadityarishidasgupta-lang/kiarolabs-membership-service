@@ -110,9 +110,8 @@ def start_math_test(test_id):
         return {"error": "Test not found"}
 
     total_questions = row[0]
-
     cur.execute(
-        f"""
+        """
         SELECT
             q.id,
             q.stem,
@@ -123,11 +122,10 @@ def start_math_test(test_id):
             q.option_e,
             q.correct_option
         FROM math_questions q
-        JOIN math_lesson_questions lq
-            ON lq.question_id = q.id
         ORDER BY RANDOM()
-        LIMIT {total_questions};
-    """
+        LIMIT %s;
+    """,
+        (total_questions,),
     )
 
     questions = []
