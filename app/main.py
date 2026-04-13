@@ -151,7 +151,7 @@ def register(req: RegisterRequest):
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT id FROM kiaro_membership.members WHERE email = %s",
+        "SELECT email FROM kiaro_membership.members WHERE email = %s",
         (email,),
     )
 
@@ -171,6 +171,7 @@ def register(req: RegisterRequest):
         (name, email, pw_hash),
     )
 
+    print(f"REGISTER DEBUG: email={email}, hash={pw_hash}")
     print(f"USER PROVISIONING: email={email}")
     try:
         cur.execute(
@@ -248,7 +249,7 @@ async def login(request: Request):
         # 1) Membership-first login
         cur.execute(
             """
-            SELECT id, email, password_hash, account_type
+            SELECT email, password_hash, account_type
             FROM kiaro_membership.members
             WHERE LOWER(email) = LOWER(%s)
             """,
@@ -257,7 +258,8 @@ async def login(request: Request):
         member_row = cur.fetchone()
 
         if member_row:
-            member_id, member_email, member_password_hash, account_type = member_row
+            member_email, member_password_hash, account_type = member_row
+            member_id = None  # fallback
 
             valid = False
             if member_password_hash:
@@ -282,7 +284,7 @@ async def login(request: Request):
                 token = jwt.encode(
                     {
                         "sub": member_email,
-                        "user_id": legacy_user_id if legacy_user_id is not None else member_id,
+                        "user_id": legacy_user_id,
                         "member_id": member_id,
                         "account_type": account_type or "free",
                         "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
