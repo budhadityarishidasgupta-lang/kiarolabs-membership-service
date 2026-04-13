@@ -105,39 +105,16 @@ def get_math_question(lesson_id, user_id=None):
             q.option_b,
             q.option_c,
             q.option_d,
-            q.option_e,
-            q.correct_option,
-            COALESCE(q.hint, '') AS hint,
-            COALESCE(q.explanation, '') AS explanation
+            q.correct_option
         FROM math_questions q
         WHERE q.lesson_id = %s
-          AND q.id = %s
+        ORDER BY RANDOM()
         LIMIT 1;
         """,
-        (lesson_id, selected_question_id),
+        (lesson_id,),
     )
 
     row = cur.fetchone()
-
-    if not row:
-        cur.execute("""
-            SELECT
-                q.id,
-                q.stem,
-                q.option_a,
-                q.option_b,
-                q.option_c,
-                q.option_d,
-                q.option_e,
-                q.correct_option,
-                COALESCE(q.hint, '') AS hint,
-                COALESCE(q.explanation, '') AS explanation
-            FROM math_questions q
-            WHERE q.lesson_id = %s
-            ORDER BY RANDOM()
-            LIMIT 1;
-        """, (lesson_id,))
-        row = cur.fetchone()
 
     cur.close()
     conn.close()
@@ -148,19 +125,17 @@ def get_math_question(lesson_id, user_id=None):
             "lesson_id": lesson_id
         }
 
+    # SAFE MAPPING (NO ASSUMPTIONS)
     return {
         "question_id": row[0],
-        "stem": row[1],
-        "options": [
-            row[2],
-            row[3],
-            row[4],
-            row[5],
-            row[6],
-        ],
-        "correct_option": row[7],
-        "hint": row[8],
-        "explanation": row[9],
+        "question_text": row[1],
+        "options": {
+            "A": row[2] if len(row) > 2 else None,
+            "B": row[3] if len(row) > 3 else None,
+            "C": row[4] if len(row) > 4 else None,
+            "D": row[5] if len(row) > 5 else None
+        },
+        "correct_answer": row[6] if len(row) > 6 else None
     }
 
 
