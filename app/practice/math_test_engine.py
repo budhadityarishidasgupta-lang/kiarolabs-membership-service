@@ -5,10 +5,10 @@ def get_math_tests(user):
     conn = get_connection()
     cur = conn.cursor()
 
-    member_id = user.get("member_id")
     email = user.get("sub")
 
-    if email == "testrishi@gmail.com":
+    # 🔓 Admin / UAT bypass
+    if email in ["rishi@test.com", "testrishi@gmail.com"]:
         cur.execute(
             """
             SELECT
@@ -22,8 +22,10 @@ def get_math_tests(user):
         """
         )
         rows = cur.fetchall()
+
         cur.close()
         conn.close()
+
         return [
             {
                 "test_id": r[0],
@@ -34,44 +36,20 @@ def get_math_tests(user):
             for r in rows
         ]
 
+    # 🔒 Default: free tests only
     cur.execute(
         """
-        SELECT 1
-        FROM kiaro_membership.member_apps
-        WHERE member_id = %s AND app_code = 'math_full'
-    """,
-        (member_id,),
+        SELECT
+            paper_code,
+            paper_name,
+            duration_minutes,
+            total_questions
+        FROM math_test_papers
+        WHERE is_active = TRUE
+          AND is_free = TRUE
+        ORDER BY id;
+    """
     )
-
-    has_full_access = cur.fetchone() is not None
-
-    if has_full_access:
-        cur.execute(
-            """
-            SELECT
-                paper_code,
-                paper_name,
-                duration_minutes,
-                total_questions
-            FROM math_test_papers
-            WHERE is_active = TRUE
-            ORDER BY id;
-        """
-        )
-    else:
-        cur.execute(
-            """
-            SELECT
-                paper_code,
-                paper_name,
-                duration_minutes,
-                total_questions
-            FROM math_test_papers
-            WHERE is_active = TRUE
-              AND is_free = TRUE
-            ORDER BY id;
-        """
-        )
 
     rows = cur.fetchall()
 
