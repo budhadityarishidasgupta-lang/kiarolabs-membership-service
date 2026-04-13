@@ -47,12 +47,13 @@ def get_math_question(lesson_id, user_id=None):
             """
             SELECT question_id
             FROM math_attempts
-            WHERE user_id = %s
-            AND correct = false
+            WHERE student_id = %s
+            AND is_correct = false
+            AND lesson_id = %s
             ORDER BY created_at DESC
             LIMIT 5
             """,
-            (user_id,),
+            (user_id, lesson_id),
         )
         weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
         if weak_questions:
@@ -61,13 +62,11 @@ def get_math_question(lesson_id, user_id=None):
     if not selected_question_id:
         cur.execute(
             """
-            SELECT q.id
-            FROM math_questions q
-            WHERE q.lesson_id = %s
+            SELECT id
+            FROM math_questions
             ORDER BY RANDOM()
             LIMIT 1;
-            """,
-            (lesson_id,),
+            """
         )
         fallback_row = cur.fetchone()
         if fallback_row:
@@ -76,13 +75,11 @@ def get_math_question(lesson_id, user_id=None):
     if not selected_question_id:
         cur.execute(
             """
-            SELECT q.id
-            FROM math_questions q
-            WHERE q.lesson_id = %s
+            SELECT id
+            FROM math_questions
             ORDER BY RANDOM()
             LIMIT 1;
-            """,
-            (lesson_id,),
+            """
         )
         safety_row = cur.fetchone()
         if safety_row:
@@ -99,19 +96,17 @@ def get_math_question(lesson_id, user_id=None):
     cur.execute(
         """
         SELECT
-            q.id,
-            q.stem,
-            q.option_a,
-            q.option_b,
-            q.option_c,
-            q.option_d,
-            q.correct_option
-        FROM math_questions q
-        WHERE q.lesson_id = %s
+            id,
+            stem,
+            option_a,
+            option_b,
+            option_c,
+            option_d,
+            correct_option
+        FROM math_questions
         ORDER BY RANDOM()
         LIMIT 1;
-        """,
-        (lesson_id,),
+        """
     )
 
     row = cur.fetchone()
