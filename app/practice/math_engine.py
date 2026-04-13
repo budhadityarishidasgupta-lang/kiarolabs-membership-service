@@ -122,14 +122,14 @@ def get_math_question(lesson_id, user_id=None):
 
     return {
         "question_id": row[0],
-        "question_text": row[1],  # stem
-        "options": {
-            "A": row[2],
-            "B": row[3],
-            "C": row[4],
-            "D": row[5]
-        },
-        "correct_answer": row[6]
+        "stem": row[1],
+        "options": [
+            row[2],
+            row[3],
+            row[4],
+            row[5]
+        ],
+        "correct_option": row[6]
     }
 
 
