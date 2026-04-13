@@ -162,16 +162,29 @@ def register(req: RegisterRequest):
 
     pw_hash = hash_password(req.password)
 
-    cur.execute(
-        """
-        INSERT INTO kiaro_membership.members
-        (name, email, password_hash, subscription_status, account_type, auth_provider, created_at, updated_at)
-        VALUES (%s, %s, %s, 'inactive', 'free', 'email', NOW(), NOW())
-        """,
-        (name, email, pw_hash),
-    )
-
     print(f"REGISTER DEBUG: email={email}, hash={pw_hash}")
+    try:
+        cur.execute(
+            """
+            INSERT INTO kiaro_membership.members
+            (name, email, password_hash, subscription_status, account_type, auth_provider, created_at, updated_at)
+            VALUES (%s, %s, %s, 'inactive', 'free', 'email', NOW(), NOW())
+            RETURNING email
+            """,
+            (name, email, pw_hash),
+        )
+
+        inserted = cur.fetchone()
+
+        if not inserted:
+            raise Exception("Insert failed - no row returned")
+    except Exception as e:
+        conn.rollback()
+        print("REGISTER ERROR:", str(e))
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Register failed: {str(e)}")
+
     print(f"USER PROVISIONING: email={email}")
     try:
         cur.execute(
