@@ -525,6 +525,79 @@ def dashboard(user=Depends(get_current_user)):
     }
 
 
+@app.get("/admin/users")
+def get_all_users(user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT
+                u.user_id,
+                u.email,
+                u.role,
+                COALESCE(array_agg(ma.app_name), '{}') as apps
+            FROM users u
+            LEFT JOIN kiaro_membership.member_apps ma
+                ON u.email = ma.email
+            GROUP BY u.user_id, u.email, u.role
+            ORDER BY u.email
+            """
+        )
+
+        rows = cur.fetchall()
+
+        result = []
+        for r in rows:
+            result.append(
+                {
+                    "user_id": r[0],
+                    "email": r[1],
+                    "role": r[2],
+                    "apps": r[3],
+                }
+            )
+
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/admin/set-role")
+def set_user_role(payload: dict, user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    target_email = payload.get("email")
+    new_role = payload.get("role")
+
+    if new_role not in ["admin", "student"]:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            UPDATE users
+            SET role = %s
+            WHERE email = %s
+            """,
+            (new_role, target_email),
+        )
+        conn.commit()
+        return {"status": "success"}
+    finally:
+        cur.close()
+        conn.close()
+
+
 # =========================
 # Gumroad Webhook
 # =========================
