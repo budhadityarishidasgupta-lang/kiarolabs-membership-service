@@ -163,6 +163,7 @@ def register(req: RegisterRequest):
     pw_hash = hash_password(req.password)
 
     print(f"REGISTER DEBUG: email={email}, hash={pw_hash}")
+
     try:
         cur.execute(
             """
@@ -178,47 +179,39 @@ def register(req: RegisterRequest):
 
         if not inserted:
             raise Exception("Insert failed - no row returned")
+
+        conn.commit()  # ✅ CRITICAL FIX
     except Exception as e:
         conn.rollback()
         print("REGISTER ERROR:", str(e))
         cur.close()
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Register failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Members insert failed: {str(e)}")
 
     print(f"USER PROVISIONING: email={email}")
+
     try:
         cur.execute(
             """
-            SELECT user_id
-            FROM users
-            WHERE LOWER(email) = LOWER(%s)
-            """,
-            (email,),
-        )
-
-        row = cur.fetchone()
-
-        if not row:
-            cur.execute(
-                """
-                INSERT INTO users (name, email, password_hash, role, is_active)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (
-                    name,
-                    email,
-                    "membership_managed_user",
-                    "student",
-                    True,
-                ),
+            INSERT INTO users (
+            email,
+            name,
+            password_hash,
+            role,
+            is_active,
+            created_at
             )
-            print("USER PROVISIONING: created users row")
-        else:
-            print("USER PROVISIONING: already exists")
-    except Exception as provision_err:
-        print(f"USER PROVISIONING ERROR: {provision_err}")
+            VALUES (%s, %s, %s, 'student', TRUE, NOW())
+            ON CONFLICT (email) DO NOTHING
+            """,
+            (email, name if name else "Student", pw_hash),
+        )
+        conn.commit()  # separate commit
+    except Exception as e:
+        print("USER PROVISIONING ERROR:", str(e))
+        conn.rollback()  # isolate failure
 
-    conn.commit()
+    print(f"REGISTER SUCCESS: email={email}")
     cur.close()
     conn.close()
 
