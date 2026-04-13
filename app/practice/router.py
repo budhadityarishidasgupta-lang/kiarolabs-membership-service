@@ -168,6 +168,13 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
 
 @router.get("/math/tests")
 def math_tests(user=Depends(get_current_user)):
+    # 🔒 CRITICAL FIX — prevent None user crash
+    if not user or not user.get("sub"):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing user"
+        )
+
     return get_math_tests(user)
 
 
