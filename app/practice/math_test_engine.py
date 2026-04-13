@@ -5,7 +5,10 @@ def get_math_tests(user):
     conn = get_connection()
     cur = conn.cursor()
 
-    email = user.get("sub")
+    email = user.get("sub") if user else None
+
+    if not email:
+        return []
 
     # 🔓 Admin / UAT bypass
     if email in ["rishi@test.com", "testrishi@gmail.com"]:
