@@ -179,6 +179,8 @@ def register(req: RegisterRequest):
 
         if not inserted:
             raise Exception("Insert failed - no row returned")
+
+        conn.commit()  # ✅ CRITICAL FIX
     except Exception as e:
         conn.rollback()
         print("REGISTER ERROR:", str(e))
@@ -188,28 +190,27 @@ def register(req: RegisterRequest):
 
     print(f"USER PROVISIONING: email={email}")
 
-    # USER PROVISIONING (SAFE + NON-BLOCKING)
     try:
         cur.execute(
             """
             INSERT INTO users (
             email,
             name,
+            password_hash,
             role,
             is_active,
             created_at
             )
-            VALUES (%s, %s, 'student', TRUE, NOW())
+            VALUES (%s, %s, %s, 'student', TRUE, NOW())
             ON CONFLICT (email) DO NOTHING
             """,
-            (email, name if name else "Student"),
+            (email, name if name else "Student", pw_hash),
         )
-
+        conn.commit()  # separate commit
     except Exception as e:
         print("USER PROVISIONING ERROR:", str(e))
-        # DO NOT BREAK REGISTRATION
+        conn.rollback()  # isolate failure
 
-    conn.commit()
     print(f"REGISTER SUCCESS: email={email}")
     cur.close()
     conn.close()
