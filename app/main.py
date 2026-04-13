@@ -163,6 +163,7 @@ def register(req: RegisterRequest):
     pw_hash = hash_password(req.password)
 
     print(f"REGISTER DEBUG: email={email}, hash={pw_hash}")
+
     try:
         cur.execute(
             """
@@ -183,42 +184,33 @@ def register(req: RegisterRequest):
         print("REGISTER ERROR:", str(e))
         cur.close()
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Register failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Members insert failed: {str(e)}")
 
     print(f"USER PROVISIONING: email={email}")
+
+    # USER PROVISIONING (SAFE + NON-BLOCKING)
     try:
         cur.execute(
             """
-            SELECT user_id
-            FROM users
-            WHERE LOWER(email) = LOWER(%s)
+            INSERT INTO users (
+            email,
+            name,
+            role,
+            is_active,
+            created_at
+            )
+            VALUES (%s, %s, 'student', TRUE, NOW())
+            ON CONFLICT (email) DO NOTHING
             """,
-            (email,),
+            (email, name if name else "Student"),
         )
 
-        row = cur.fetchone()
-
-        if not row:
-            cur.execute(
-                """
-                INSERT INTO users (name, email, password_hash, role, is_active)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (
-                    name,
-                    email,
-                    "membership_managed_user",
-                    "student",
-                    True,
-                ),
-            )
-            print("USER PROVISIONING: created users row")
-        else:
-            print("USER PROVISIONING: already exists")
-    except Exception as provision_err:
-        print(f"USER PROVISIONING ERROR: {provision_err}")
+    except Exception as e:
+        print("USER PROVISIONING ERROR:", str(e))
+        # DO NOT BREAK REGISTRATION
 
     conn.commit()
+    print(f"REGISTER SUCCESS: email={email}")
     cur.close()
     conn.close()
 
