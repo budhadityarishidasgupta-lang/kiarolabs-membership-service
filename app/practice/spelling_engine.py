@@ -102,23 +102,23 @@ def get_spelling_question(lesson_id: int, user_id: int):
 
         selected_word_id = None
 
-        # STEP 1: weak words first (recent incorrect attempts)
+        # STEP 1: STRICT lesson-based selection (deterministic)
         cur.execute(
             """
-            SELECT word_id
-            FROM spelling_attempts
-            WHERE user_id = %s
-            AND correct = false
-            ORDER BY created_at DESC
-            LIMIT 5
+            SELECT w.word_id
+            FROM spelling_lesson_words lw
+            JOIN spelling_words w
+            ON lw.word_id = w.word_id
+            WHERE lw.lesson_id = %s
+            ORDER BY lw.word_id
+            LIMIT 1
             """,
-            (user_id,),
+            (lesson_id,),
         )
 
-        weak_words = [r[0] for r in cur.fetchall() if r and r[0]]
-
-        if weak_words:
-            selected_word_id = random.choice(weak_words)
+        row = cur.fetchone()
+        if row:
+            selected_word_id = row[0]
 
         # STEP 2 fallback: random word inside lesson
         if not selected_word_id:
@@ -137,24 +137,6 @@ def get_spelling_question(lesson_id: int, user_id: int):
             fallback_row = cur.fetchone()
             if fallback_row:
                 selected_word_id = fallback_row[0]
-
-        # STEP 3 safety fallback: one more random attempt
-        if not selected_word_id:
-            cur.execute(
-                """
-                SELECT w.word_id
-                FROM spelling_lesson_words lw
-                JOIN spelling_words w
-                    ON lw.word_id = w.word_id
-                WHERE lw.lesson_id = %s
-                ORDER BY RANDOM()
-                LIMIT 1
-                """,
-                (lesson_id,),
-            )
-            safety_row = cur.fetchone()
-            if safety_row:
-                selected_word_id = safety_row[0]
 
         if not selected_word_id:
             return {
@@ -217,11 +199,13 @@ def get_spelling_question(lesson_id: int, user_id: int):
             weak_pattern = None
 
         patterns = [weak_pattern] if weak_pattern else None
-        masked_word = mask_word(word, patterns)
+        masked_word = mask_word(word, patterns, blanks_count=3)
 
         return {
             "word_id": word_id,
-            "word_audio": word,
+            # 🔒 DO NOT expose answer
+            "word_audio": "",
+            # ✅ UI must use this
             "masked_word": masked_word,
             "hint": clean_hint,
             "example_sentence": clean_example,
@@ -257,7 +241,7 @@ def get_word_by_id(user_id: int, word_id: int):
     cur.execute("""
         SELECT word, hint, example_sentence
         FROM spelling_words
-        WHERE id = %s
+        WHERE word_id = %s
     """, (word_id,))
 
     row = cur.fetchone()
@@ -287,7 +271,7 @@ def build_micro_challenge(user_id: int, word_id: int):
     cur.execute("""
         SELECT word, hint, example_sentence
         FROM spelling_words
-        WHERE id = %s
+        WHERE word_id = %s
     """, (word_id,))
 
     row = cur.fetchone()
