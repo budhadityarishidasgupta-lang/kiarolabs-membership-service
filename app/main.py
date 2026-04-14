@@ -539,12 +539,16 @@ def get_all_users(user=Depends(get_current_user)):
                 u.user_id,
                 u.email,
                 u.role,
-                COALESCE(array_agg(ma.app_name), '{}') as apps
+                COALESCE(m.account_type, 'free') as account_type,
+                m.created_at,
+                COALESCE(array_agg(ma.app_code), '{}') as apps
             FROM users u
+            LEFT JOIN kiaro_membership.members m
+                ON LOWER(u.email) = LOWER(m.email)
             LEFT JOIN kiaro_membership.member_apps ma
-                ON u.email = ma.email
-            GROUP BY u.user_id, u.email, u.role
-            ORDER BY u.email
+                ON ma.member_id = m.member_id
+            GROUP BY u.user_id, u.email, u.role, m.account_type, m.created_at
+            ORDER BY m.created_at DESC
             """
         )
 
@@ -552,16 +556,119 @@ def get_all_users(user=Depends(get_current_user)):
 
         result = []
         for r in rows:
+            account_type = r[3]
+            apps = r[5] or []
+
+            expected_apps = []
+
+            if account_type != "free":
+                expected_apps = ["math", "mock", "practice"]
+
+            status = "ok" if set(expected_apps).issubset(set(apps)) else "missing_access"
+
             result.append(
                 {
-                    "user_id": r[0],
                     "email": r[1],
                     "role": r[2],
-                    "apps": r[3],
+                    "account_type": account_type,
+                    "created_at": r[4],
+                    "apps": apps,
+                    "status": status,
                 }
             )
 
         return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/admin/fix-user-access")
+def fix_user_access(payload: dict, user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+
+    email = payload.get("email")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT member_id, account_type
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        member_id, account_type = row
+
+        if account_type == "free":
+            return {"status": "no_action_needed"}
+
+        apps = ["math", "mock", "practice"]
+
+        for app_code in apps:
+            cur.execute(
+                """
+                INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (member_id, app_code),
+            )
+
+        conn.commit()
+
+        return {"status": "fixed"}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/admin/user-detail")
+def user_detail(email: str, user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT *
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+        member = cur.fetchone()
+
+        cur.execute(
+            """
+            SELECT *
+            FROM kiaro_membership.member_apps
+            WHERE member_id = (
+                SELECT member_id
+                FROM kiaro_membership.members
+                WHERE LOWER(email) = LOWER(%s)
+            )
+            """,
+            (email,),
+        )
+        apps = cur.fetchall()
+
+        return {
+            "member": member,
+            "apps": apps,
+        }
     finally:
         cur.close()
         conn.close()
