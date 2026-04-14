@@ -556,9 +556,18 @@ def get_all_users(user=Depends(get_current_user)):
 
         result = []
         for r in rows:
+            account_type = r[3]
+            apps = r[5] or []
+
+            expected_apps = []
+
+            if account_type != "free":
+                expected_apps = ["math", "mock", "practice"]
+
+            status = "ok" if set(expected_apps).issubset(set(apps)) else "missing_access"
+
             result.append(
                 {
-                    "user_id": r[0],
                     "email": r[1],
                     "role": r[2] if r[2] else "student",
                     "account_type": r[3],
