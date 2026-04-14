@@ -536,18 +536,18 @@ def get_all_users(user=Depends(get_current_user)):
         cur.execute(
             """
             SELECT
-                u.user_id,
-                u.email,
-                u.role,
-                COALESCE(m.account_type, 'free') as account_type,
+                m.id,
+                m.email,
+                COALESCE(u.role, 'student') as role,
+                m.account_type,
                 m.created_at,
                 COALESCE(array_agg(ma.app_code), '{}') as apps
-            FROM users u
-            LEFT JOIN kiaro_membership.members m
+            FROM kiaro_membership.members m
+            LEFT JOIN users u
                 ON LOWER(u.email) = LOWER(m.email)
             LEFT JOIN kiaro_membership.member_apps ma
-                ON ma.member_id = m.member_id
-            GROUP BY u.user_id, u.email, u.role, m.account_type, m.created_at
+                ON ma.member_id = m.id
+            GROUP BY m.id, m.email, u.role, m.account_type, m.created_at
             ORDER BY m.created_at DESC
             """
         )
@@ -569,11 +569,10 @@ def get_all_users(user=Depends(get_current_user)):
             result.append(
                 {
                     "email": r[1],
-                    "role": r[2],
-                    "account_type": account_type,
-                    "created_at": r[4],
-                    "apps": apps,
-                    "status": status,
+                    "role": r[2] if r[2] else "student",
+                    "account_type": r[3],
+                    "created_at": str(r[4]),
+                    "apps": r[5] if r[5] else [],
                 }
             )
 
