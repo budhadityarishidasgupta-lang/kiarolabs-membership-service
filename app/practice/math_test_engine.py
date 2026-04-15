@@ -43,23 +43,20 @@ def get_math_tests(user):
             for r in rows
         ]
 
-    # Resolve missing member_id from email if needed.
+    # Step 1: resolve member_id from email if needed
     if not member_id:
-        try:
-            cur.execute(
-                """
-                SELECT id
-                FROM kiaro_membership.members
-                WHERE LOWER(email) = LOWER(%s)
-            """,
-                (email,),
-            )
-            row = cur.fetchone()
-            if row:
-                member_id = row[0]
-        except Exception:
-            member_id = None
+        cur.execute(
+            """
+            SELECT id
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+        """,
+            (email,),
+        )
+        member_row = cur.fetchone()
+        member_id = member_row[0] if member_row else None
 
+    # Step 2: get purchased tests
     purchased_tests = set()
     if member_id:
         cur.execute(
@@ -72,7 +69,10 @@ def get_math_tests(user):
         )
         purchased_tests = {row[0] for row in cur.fetchall()}
 
-    # Get all active tests and map access state.
+    print("MOCK TEST MEMBER:", member_id)
+    print("MOCK TEST PURCHASED:", purchased_tests)
+
+    # Step 3: get all active tests
     cur.execute(
         """
         SELECT
@@ -93,6 +93,7 @@ def get_math_tests(user):
 
     final_tests = []
 
+    # Step 4: build final response
     for test in all_tests:
         test_id = test[0]
         access = "full" if test_id in purchased_tests else "locked"
@@ -105,11 +106,6 @@ def get_math_tests(user):
                 "access": access,
             }
         )
-
-    # Optional preview access for the first 3 tests
-    for i in range(min(3, len(final_tests))):
-        if final_tests[i]["access"] != "full":
-            final_tests[i]["access"] = "preview"
 
     return final_tests
 
