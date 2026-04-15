@@ -1,4 +1,5 @@
 import os
+import re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request, HTTPException, Depends
 #from fastapi.security import OAuth2PasswordBearer
@@ -708,68 +709,94 @@ def set_user_role(payload: dict, user=Depends(get_current_user)):
 # =========================
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
-    data = await request.json()
+    try:
+        # Gumroad sends FORM data (NOT JSON)
+        form = await request.form()
 
-    # Extract email
-    email = data.get("email")
+        email = (form.get("email") or "").strip().lower()
+        product_name = (form.get("product_name") or "").strip()
+        match = re.search(r"Maths Mock Exam (\d+)", product_name)
 
-    # Extract product name
-    product_name = data.get("product_name", "").lower()
+        print("GUMROAD WEBHOOK:", email, product_name)
 
-    if not email:
-        return {"status": "no email"}
+        if not email or not product_name:
+            return {"status": "ignored"}
 
-    conn = get_connection()
-    cur = conn.cursor()
+        # Exact product mapping
+        product_map = {
+            "MathsSprint": "math",
+            "SpellingSprint": "spelling",
+            "WordSprint": "words",
+            "ComprehensionSprint": "comprehension",
+        }
 
-    # Get member_id
-    cur.execute(
-        """
-        SELECT id FROM kiaro_membership.members
-        WHERE LOWER(email) = LOWER(%s)
-        """,
-        (email,),
-    )
+        app_code = product_map.get(product_name)
 
-    row = cur.fetchone()
+        if not app_code and not match:
+            print("UNKNOWN PRODUCT:", product_name)
+            return {"status": "unknown_product"}
 
-    if not row:
-        cur.close()
-        conn.close()
-        return {"status": "user not found"}
+        conn = get_connection()
+        cur = conn.cursor()
 
-    member_id = row[0]
+        try:
+            # Get member_id
+            cur.execute(
+                """
+                SELECT id
+                FROM kiaro_membership.members
+                WHERE LOWER(email) = LOWER(%s)
+                """,
+                (email,),
+            )
 
-    # Map product → app_code
-    if "math" in product_name:
-        app_code = "math_full"
-    elif "mock" in product_name:
-        app_code = "mock"
-    elif "practice" in product_name:
-        app_code = "practice"
-    else:
-        app_code = None
+            row = cur.fetchone()
 
-    if not app_code:
-        cur.close()
-        conn.close()
-        return {"status": "unknown product"}
+            if not row:
+                print("USER NOT FOUND:", email)
+                return {"status": "user_not_found"}
 
-    # Insert entitlement (idempotent)
-    cur.execute(
-        """
-        INSERT INTO kiaro_membership.member_apps (member_id, app_code)
-        VALUES (%s, %s)
-        ON CONFLICT DO NOTHING
-        """,
-        (member_id, app_code),
-    )
+            member_id = row[0]
 
-    conn.commit()
-    cur.close()
-    conn.close()
+            if match:
+                test_number = match.group(1)
+                test_id = f"math_paper_{test_number}"
 
-    return {"status": "success"}
+                print("TEST PURCHASE:", email, test_id)
+
+                cur.execute(
+                    """
+                    INSERT INTO math_user_test_access (member_id, test_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (member_id, test_id),
+                )
+
+                conn.commit()
+
+                print(f"TEST ACCESS GRANTED -> {email} -> {test_id}")
+                return {"status": "test_unlocked"}
+
+            # Grant access (idempotent)
+            cur.execute(
+                """
+                INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (member_id, app_code),
+            )
+
+            conn.commit()
+            print(f"ACCESS GRANTED -> {email} -> {app_code}")
+            return {"status": "success"}
+        finally:
+            cur.close()
+            conn.close()
+    except Exception as e:
+        print("WEBHOOK ERROR:", str(e))
+        return {"status": "error"}
 
 
 # =========================
