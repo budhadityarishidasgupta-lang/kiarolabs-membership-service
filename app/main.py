@@ -760,7 +760,7 @@ async def gumroad_webhook(request: Request):
 
             if match:
                 test_number = match.group(1)
-                test_id = f"math_paper_{test_number}"
+                test_id = f"MATH_MOCK_{test_number}"
 
                 print("TEST PURCHASE:", email, test_id)
 
