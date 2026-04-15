@@ -710,37 +710,41 @@ def set_user_role(payload: dict, user=Depends(get_current_user)):
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
     try:
-        # Gumroad sends FORM data (NOT JSON)
         form = await request.form()
 
         email = (form.get("email") or "").strip().lower()
         product_name = (form.get("product_name") or "").strip()
-        match = re.search(r"Maths Mock Exam (\d+)", product_name)
+        event_type = (form.get("event") or "").strip()
 
-        print("GUMROAD WEBHOOK:", email, product_name)
+        print("GUMROAD EVENT:", email, product_name, event_type)
 
         if not email or not product_name:
             return {"status": "ignored"}
 
-        # Exact product mapping
-        product_map = {
-            "MathsSprint": "math",
-            "SpellingSprint": "spelling",
-            "WordSprint": "words",
-            "ComprehensionSprint": "comprehension",
-        }
+        # Extract test number
+        match = re.search(r"Maths Mock Exam (\d+)", product_name)
 
-        app_code = product_map.get(product_name)
-
-        if not app_code and not match:
-            print("UNKNOWN PRODUCT:", product_name)
-            return {"status": "unknown_product"}
+        test_id = None
+        if match:
+            test_number = match.group(1)
+            test_id = f"MATH_MOCK_{test_number}"
 
         conn = get_connection()
         cur = conn.cursor()
 
         try:
-            # Get member_id
+            # Log incoming event (always)
+            cur.execute(
+                """
+                INSERT INTO math_gumroad_events (email, product_name, event_type, test_id)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (email, product_name, event_type, test_id),
+            )
+            event_id = cur.fetchone()[0]
+
+            # Find user
             cur.execute(
                 """
                 SELECT id
@@ -753,17 +757,14 @@ async def gumroad_webhook(request: Request):
             row = cur.fetchone()
 
             if not row:
-                print("USER NOT FOUND:", email)
+                print("❌ USER NOT FOUND:", email)
+                conn.commit()
                 return {"status": "user_not_found"}
 
             member_id = row[0]
 
-            if match:
-                test_number = match.group(1)
-                test_id = f"MATH_MOCK_{test_number}"
-
-                print("TEST PURCHASE:", email, test_id)
-
+            # Handle purchase
+            if event_type in ["sale", "purchase"] and test_id:
                 cur.execute(
                     """
                     INSERT INTO math_user_test_access (member_id, test_id)
@@ -772,30 +773,37 @@ async def gumroad_webhook(request: Request):
                     """,
                     (member_id, test_id),
                 )
+                print(f"✅ ACCESS GRANTED → {email} → {test_id}")
 
-                conn.commit()
+            # Handle refund
+            if event_type in ["refund", "chargeback"] and test_id:
+                cur.execute(
+                    """
+                    DELETE FROM math_user_test_access
+                    WHERE member_id = %s
+                    AND test_id = %s
+                    """,
+                    (member_id, test_id),
+                )
+                print(f"❌ ACCESS REVOKED → {email} → {test_id}")
 
-                print(f"TEST ACCESS GRANTED -> {email} -> {test_id}")
-                return {"status": "test_unlocked"}
-
-            # Grant access (idempotent)
+            # Mark event processed
             cur.execute(
                 """
-                INSERT INTO kiaro_membership.member_apps (member_id, app_code)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
+                UPDATE math_gumroad_events
+                SET processed = TRUE
+                WHERE id = %s
                 """,
-                (member_id, app_code),
+                (event_id,),
             )
 
             conn.commit()
-            print(f"ACCESS GRANTED -> {email} -> {app_code}")
-            return {"status": "success"}
+            return {"status": "ok"}
         finally:
             cur.close()
             conn.close()
     except Exception as e:
-        print("WEBHOOK ERROR:", str(e))
+        print("❌ WEBHOOK ERROR:", str(e))
         return {"status": "error"}
 
 
