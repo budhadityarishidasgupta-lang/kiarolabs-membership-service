@@ -1,4 +1,5 @@
 import os
+import re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request, HTTPException, Depends
 #from fastapi.security import OAuth2PasswordBearer
@@ -714,6 +715,7 @@ async def gumroad_webhook(request: Request):
 
         email = (form.get("email") or "").strip().lower()
         product_name = (form.get("product_name") or "").strip()
+        match = re.search(r"Maths Mock Exam (\d+)", product_name)
 
         print("GUMROAD WEBHOOK:", email, product_name)
 
@@ -730,7 +732,7 @@ async def gumroad_webhook(request: Request):
 
         app_code = product_map.get(product_name)
 
-        if not app_code:
+        if not app_code and not match:
             print("UNKNOWN PRODUCT:", product_name)
             return {"status": "unknown_product"}
 
@@ -755,6 +757,26 @@ async def gumroad_webhook(request: Request):
                 return {"status": "user_not_found"}
 
             member_id = row[0]
+
+            if match:
+                test_number = match.group(1)
+                test_id = f"math_paper_{test_number}"
+
+                print("TEST PURCHASE:", email, test_id)
+
+                cur.execute(
+                    """
+                    INSERT INTO math_user_test_access (member_id, test_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (member_id, test_id),
+                )
+
+                conn.commit()
+
+                print(f"TEST ACCESS GRANTED -> {email} -> {test_id}")
+                return {"status": "test_unlocked"}
 
             # Grant access (idempotent)
             cur.execute(
