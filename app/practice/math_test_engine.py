@@ -6,8 +6,11 @@ def get_math_tests(user):
     cur = conn.cursor()
 
     email = user.get("sub") if user else None
+    member_id = user.get("member_id") if user else None
 
     if not email:
+        cur.close()
+        conn.close()
         return []
 
     # 🔓 Admin / UAT bypass
@@ -35,11 +38,41 @@ def get_math_tests(user):
                 "name": r[1],
                 "duration": r[2],
                 "total_questions": r[3],
+                "access": "full",
             }
             for r in rows
         ]
 
-    # 🔒 Default: free tests only
+    # Resolve missing member_id from email if needed.
+    if not member_id:
+        try:
+            cur.execute(
+                """
+                SELECT id
+                FROM kiaro_membership.members
+                WHERE LOWER(email) = LOWER(%s)
+            """,
+                (email,),
+            )
+            row = cur.fetchone()
+            if row:
+                member_id = row[0]
+        except Exception:
+            member_id = None
+
+    purchased_tests = set()
+    if member_id:
+        cur.execute(
+            """
+            SELECT test_id
+            FROM math_user_test_access
+            WHERE member_id = %s
+        """,
+            (member_id,),
+        )
+        purchased_tests = {row[0] for row in cur.fetchall()}
+
+    # Get all active tests and map access state.
     cur.execute(
         """
         SELECT
@@ -49,25 +82,36 @@ def get_math_tests(user):
             total_questions
         FROM math_test_papers
         WHERE is_active = TRUE
-          AND is_free = TRUE
         ORDER BY paper_code;
     """
     )
 
-    rows = cur.fetchall()
+    all_tests = cur.fetchall()
 
     cur.close()
     conn.close()
 
-    return [
-        {
-            "test_id": r[0],
-            "name": r[1],
-            "duration": r[2],
-            "total_questions": r[3],
-        }
-        for r in rows
-    ]
+    final_tests = []
+
+    for test in all_tests:
+        test_id = test[0]
+        access = "full" if test_id in purchased_tests else "locked"
+        final_tests.append(
+            {
+                "test_id": test_id,
+                "name": test[1],
+                "duration": test[2],
+                "total_questions": test[3],
+                "access": access,
+            }
+        )
+
+    # Optional preview access for the first 3 tests
+    for i in range(min(3, len(final_tests))):
+        if final_tests[i]["access"] != "full":
+            final_tests[i]["access"] = "preview"
+
+    return final_tests
 
 
 def start_math_test(test_id):
