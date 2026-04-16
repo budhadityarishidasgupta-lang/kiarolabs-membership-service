@@ -689,14 +689,52 @@ def set_user_role(payload: dict, user=Depends(get_current_user)):
     cur = conn.cursor()
 
     try:
+        def grant_all_apps_to_member(conn, member_id):
+            query = """
+            INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+            SELECT %s, app_code
+            FROM (VALUES
+                ('comprehension'),
+                ('general'),
+                ('math'),
+                ('mock'),
+                ('nvr'),
+                ('practice'),
+                ('spelling')
+            ) AS apps(app_code)
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM kiaro_membership.member_apps ma
+                WHERE ma.member_id = %s
+                  AND ma.app_code = apps.app_code
+            );
+            """
+            with conn.cursor() as grant_cur:
+                grant_cur.execute(query, (member_id, member_id))
+
         cur.execute(
             """
             UPDATE users
             SET role = %s
-            WHERE email = %s
+            WHERE LOWER(email) = LOWER(%s)
             """,
             (new_role, target_email),
         )
+
+        if new_role == "admin":
+            cur.execute(
+                """
+                SELECT id FROM kiaro_membership.members
+                WHERE LOWER(email) = LOWER(%s)
+                """,
+                (target_email,),
+            )
+            member = cur.fetchone()
+
+            if member:
+                member_id = member[0]
+                grant_all_apps_to_member(conn, member_id)
+
         conn.commit()
         return {"status": "success"}
     finally:
