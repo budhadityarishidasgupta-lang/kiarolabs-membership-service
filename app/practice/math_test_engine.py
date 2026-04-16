@@ -177,6 +177,44 @@ def start_math_test(test_id):
     }
 
 
+def check_mock_access(email: str, test_id: str):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        # Get member id
+        cur.execute(
+            """
+            SELECT id
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+        """,
+            (email,),
+        )
+        row = cur.fetchone()
+
+        if not row:
+            return False
+
+        member_id = row[0]
+
+        # Check access
+        cur.execute(
+            """
+            SELECT 1
+            FROM math_user_test_access
+            WHERE member_id = %s
+            AND test_id = %s
+        """,
+            (member_id, test_id),
+        )
+
+        return cur.fetchone() is not None
+    finally:
+        cur.close()
+        conn.close()
+
+
 def submit_math_test(answers):
     score = 0
     total = len(answers)
