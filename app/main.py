@@ -763,7 +763,38 @@ async def gumroad_webhook(request: Request):
 
             member_id = row[0]
 
-            # Handle purchase
+            # Handle bundle purchases
+            if event_type in ["sale", "purchase"] and product_name == "Maths Mock Pack (6 Tests)":
+                for i in range(1, 7):
+                    bundle_test_id = f"MATH_MOCK_{i}"
+                    cur.execute(
+                        """
+                        INSERT INTO math_user_test_access (member_id, test_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (member_id, bundle_test_id),
+                    )
+                print(f"✅ ACCESS GRANTED → {email} → 6-pack")
+                conn.commit()
+                return {"status": "6_pack_unlocked"}
+
+            if event_type in ["sale", "purchase"] and product_name == "Maths Complete Pack (12 Tests)":
+                for i in range(1, 13):
+                    bundle_test_id = f"MATH_MOCK_{i}"
+                    cur.execute(
+                        """
+                        INSERT INTO math_user_test_access (member_id, test_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (member_id, bundle_test_id),
+                    )
+                print(f"✅ ACCESS GRANTED → {email} → full-pack")
+                conn.commit()
+                return {"status": "full_pack_unlocked"}
+
+            # Handle single-test purchase
             if event_type in ["sale", "purchase"] and test_id:
                 cur.execute(
                     """
