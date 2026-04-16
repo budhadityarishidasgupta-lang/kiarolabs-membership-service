@@ -19,6 +19,7 @@ from app.practice.math_engine import (
 )
 
 from app.practice.math_test_engine import (
+    check_mock_access,
     get_math_tests,
     start_math_test,
     submit_math_test
@@ -179,7 +180,18 @@ def math_tests(user=Depends(get_current_user)):
 
 
 @router.get("/math/test/start")
-def math_test_start(test_id: str):
+def math_test_start(test_id: str, user=Depends(get_current_user)):
+    email = user.get("sub")
+
+    # 🚨 CRITICAL CHECK
+    has_access = check_mock_access(email, test_id)
+
+    if not has_access:
+        raise HTTPException(
+            status_code=403,
+            detail="Mock test not purchased"
+        )
+
     return start_math_test(test_id)
 
 
