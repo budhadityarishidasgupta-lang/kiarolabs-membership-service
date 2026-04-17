@@ -301,12 +301,12 @@ async def login(request: Request):
             if is_active is False:
                 raise HTTPException(status_code=403, detail="User is inactive")
 
-        # 3) Optional member_id if column exists in members table via separate query
+        # 3) Optional member_id from members.id via separate query
         member_id = None
         try:
             cur.execute(
                 """
-                SELECT member_id
+                SELECT id
                 FROM kiaro_membership.members
                 WHERE LOWER(email) = LOWER(%s)
                 """,
@@ -596,7 +596,7 @@ def fix_user_access(payload: dict, user=Depends(get_current_user)):
     try:
         cur.execute(
             """
-            SELECT member_id, account_type
+            SELECT id, account_type
             FROM kiaro_membership.members
             WHERE LOWER(email) = LOWER(%s)
             """,
@@ -656,7 +656,7 @@ def user_detail(email: str, user=Depends(get_current_user)):
             SELECT *
             FROM kiaro_membership.member_apps
             WHERE member_id = (
-                SELECT member_id
+                SELECT id
                 FROM kiaro_membership.members
                 WHERE LOWER(email) = LOWER(%s)
             )
