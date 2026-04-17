@@ -192,17 +192,30 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
 
         _, synonyms = row
 
-        synonym_list = [
-            s.strip() for s in (synonyms or "").split(",") if s.strip()
-        ]
+        if not synonyms:
+            raise HTTPException(
+                status_code=500,
+                detail="No synonyms found for word"
+            )
+
+        if isinstance(synonyms, str):
+            synonym_list = [s.strip().lower() for s in synonyms.split(",") if s.strip()]
+        elif isinstance(synonyms, list):
+            synonym_list = [str(s).strip().lower() for s in synonyms if str(s).strip()]
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid synonyms format"
+            )
+
         if not synonym_list:
             raise HTTPException(
                 status_code=500,
-                detail="Failed to evaluate answer",
+                detail="Failed to evaluate answer"
             )
 
+        correct = chosen.strip().lower() in synonym_list
         correct_answer = synonym_list[0]
-        correct = (chosen == correct_answer)
 
         cur.execute(
             """
