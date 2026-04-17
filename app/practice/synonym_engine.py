@@ -217,13 +217,15 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
         correct = chosen.strip().lower() in synonym_list
         correct_answer = synonym_list[0]
 
+        print("INSERT DEBUG:", user_id, word_id, chosen, correct)
+
         cur.execute(
             """
             INSERT INTO public.words_attempts
-            (user_id, word_id, correct, created_at)
-            VALUES (%s, %s, %s, NOW())
+            (user_id, word_id, answer, correct, created_at)
+            VALUES (%s, %s, %s, %s, NOW())
             """,
-            (user_id, word_id, correct),
+            (user_id, word_id, chosen, correct),
         )
 
         conn.commit()
