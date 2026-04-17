@@ -282,7 +282,7 @@ async def login(request: Request):
         if not valid:
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        # 2) Optional enrichment from users table
+        # 2) Ensure user exists in users table
         cur.execute(
             """
             SELECT user_id, role, is_active
@@ -293,13 +293,22 @@ async def login(request: Request):
         )
         user_row = cur.fetchone()
 
-        legacy_user_id = None
-        role = "student"
+        if not user_row:
+            cur.execute(
+                """
+                INSERT INTO users (email, name, role, is_active, created_at)
+                VALUES (%s, %s, 'student', TRUE, NOW())
+                RETURNING user_id
+                """,
+                (email, email.split("@")[0]),
+            )
+            user_row = cur.fetchone()
+            conn.commit()
 
-        if user_row:
-            legacy_user_id, role, is_active = user_row
-            if is_active is False:
-                raise HTTPException(status_code=403, detail="User is inactive")
+        legacy_user_id, role, is_active = user_row
+
+        if is_active is False:
+            raise HTTPException(status_code=403, detail="User is inactive")
 
         # 3) Optional member_id from members.id via separate query
         member_id = None
