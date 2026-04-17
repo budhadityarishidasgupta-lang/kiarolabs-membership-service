@@ -172,16 +172,27 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
     cur = conn.cursor()
 
     try:
+        # --- PRIMARY SOURCE (JWT) ---
+        print("USER DEBUG BEFORE:", user_id, user_email)
+
+        # --- FALLBACK: users table ---
         if not user_id and user_email:
             cur.execute(
-                "SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)",
+                """
+                SELECT user_id FROM users
+                WHERE LOWER(email) = LOWER(%s)
+                """,
                 (user_email,),
             )
             row = cur.fetchone()
-            if row:
-                user_id = row[0]
 
+            if row and row[0]:
+                user_id = row[0]
+                print("USER FALLBACK SUCCESS:", user_id)
+
+        # --- FINAL CHECK ---
         if not user_id:
+            print("USER RESOLUTION FAILED:", user_email)
             raise HTTPException(
                 status_code=400,
                 detail="User not identified"
