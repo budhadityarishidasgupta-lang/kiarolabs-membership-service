@@ -166,17 +166,33 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
         "response_ms": response_ms,
     }
     print("SUBMIT DEBUG:", payload)
-
-    if word_id is None:
-        raise HTTPException(status_code=400, detail="word_id is required")
-
-    if not (chosen or "").strip():
-        raise HTTPException(status_code=400, detail="chosen is required")
+    print("USER DEBUG:", user_id, user_email)
 
     conn = get_connection()
     cur = conn.cursor()
 
     try:
+        if not user_id and user_email:
+            cur.execute(
+                "SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)",
+                (user_email,),
+            )
+            row = cur.fetchone()
+            if row:
+                user_id = row[0]
+
+        if not user_id:
+            raise HTTPException(
+                status_code=400,
+                detail="User not identified"
+            )
+
+        if word_id is None:
+            raise HTTPException(status_code=400, detail="word_id is required")
+
+        if not (chosen or "").strip():
+            raise HTTPException(status_code=400, detail="chosen is required")
+
         cur.execute(
             """
             SELECT word_id, synonyms
