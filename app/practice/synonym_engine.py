@@ -10,9 +10,9 @@ from fastapi import HTTPException
 def _resolve_user_id(cur, user_email):
     cur.execute(
         """
-        SELECT id
-        FROM kiaro_membership.members
-        WHERE email = %s
+        SELECT user_id
+        FROM public.users
+        WHERE LOWER(email) = LOWER(%s)
         """,
         (user_email,),
     )
