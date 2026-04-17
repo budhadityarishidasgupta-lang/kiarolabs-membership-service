@@ -222,7 +222,7 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
         cur.execute(
             """
             INSERT INTO public.words_attempts
-            (user_id, word_id, answer, correct, created_at)
+                (user_id, word_id, answer, correct, created_at)
             VALUES (%s, %s, %s, %s, NOW())
             """,
             (user_id, word_id, chosen, correct),
