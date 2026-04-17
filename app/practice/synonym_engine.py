@@ -1,5 +1,6 @@
 from app.database import get_connection
 import random
+from fastapi import HTTPException
 
 
 # --------------------------------------------------
@@ -159,13 +160,26 @@ def get_synonym_question(user_email):
 # --------------------------------------------------
 
 def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
+    payload = {
+        "word_id": word_id,
+        "chosen": chosen,
+        "response_ms": response_ms,
+    }
+    print("SUBMIT DEBUG:", payload)
+
+    if word_id is None:
+        raise HTTPException(status_code=400, detail="word_id is required")
+
+    if not (chosen or "").strip():
+        raise HTTPException(status_code=400, detail="chosen is required")
+
     conn = get_connection()
     cur = conn.cursor()
 
     try:
         cur.execute(
             """
-            SELECT headword, synonyms, difficulty
+            SELECT word_id, synonyms
             FROM public.words
             WHERE word_id = %s
             """,
@@ -174,90 +188,30 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
 
         row = cur.fetchone()
         if not row:
-            return {"error": "Word not found"}
+            raise HTTPException(status_code=404, detail="Word not found")
 
-        headword, synonyms, difficulty = row
+        _, synonyms = row
 
         synonym_list = [
             s.strip() for s in (synonyms or "").split(",") if s.strip()
         ]
+        if not synonym_list:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to evaluate answer",
+            )
 
-        normalized = (chosen or "").strip().lower()
-
-        correct = normalized in [s.lower() for s in synonym_list]
         correct_answer = synonym_list[0]
+        correct = (chosen == correct_answer)
 
-        # record attempt
         cur.execute(
             """
-            INSERT INTO public.attempts
-            (user_id, course_id, lesson_id, headword,
-             is_correct, response_ms, chosen,
-             correct_choice, ts, archived_at)
-            VALUES (%s,NULL,NULL,%s,%s,%s,%s,%s,NOW(),NULL)
+            INSERT INTO public.words_attempts
+            (user_id, word_id, correct, created_at)
+            VALUES (%s, %s, %s, NOW())
             """,
-            (user_id, headword, correct, response_ms, chosen, correct_answer),
+            (user_id, word_id, correct),
         )
-
-        # update stats
-        cur.execute(
-            """
-            SELECT total_attempts, correct_attempts, correct_streak
-            FROM public.word_stats
-            WHERE user_id=%s AND headword=%s
-            """,
-            (user_id, headword),
-        )
-
-        stats = cur.fetchone()
-
-        if stats:
-            total, correct_count, streak = stats
-
-            total += 1
-            correct_count += 1 if correct else 0
-            streak = streak + 1 if correct else 0
-
-            cur.execute(
-                """
-                UPDATE public.word_stats
-                SET total_attempts=%s,
-                    correct_attempts=%s,
-                    correct_streak=%s,
-                    last_seen=NOW(),
-                    difficulty=%s
-                WHERE user_id=%s AND headword=%s
-                """,
-                (total, correct_count, streak, difficulty, user_id, headword),
-            )
-
-        else:
-            cur.execute(
-                """
-                INSERT INTO public.word_stats
-                (user_id, headword,
-                 correct_streak,
-                 total_attempts,
-                 correct_attempts,
-                 last_seen,
-                 mastered,
-                 difficulty,
-                 due_date,
-                 xp_points,
-                 streak_count,
-                 mastery_score)
-                VALUES (%s,%s,%s,1,%s,NOW(),FALSE,%s,NULL,0,%s,%s)
-                """,
-                (
-                    user_id,
-                    headword,
-                    1 if correct else 0,
-                    1 if correct else 0,
-                    difficulty,
-                    1 if correct else 0,
-                    1.0 if correct else 0.0,
-                ),
-            )
 
         conn.commit()
 
@@ -265,6 +219,14 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
             "correct": correct,
             "correct_answer": correct_answer
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("SUBMIT ERROR:", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while submitting answer",
+        )
 
     finally:
         cur.close()
