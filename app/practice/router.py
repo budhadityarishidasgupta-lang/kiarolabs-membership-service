@@ -600,9 +600,12 @@ def synonym_question(user=Depends(get_current_user)):
 
 @router.post("/synonym/answer")
 def synonym_answer(req: SynonymAnswerRequest, user=Depends(get_current_user)):
+    user_id = user.get("user_id")
+    user_email = user.get("sub")
+
     return submit_synonym_answer(
-        user_id=user["user_id"],
-        user_email=user["sub"],
+        user_id=user_id,
+        user_email=user_email,
         word_id=req.word_id,
         chosen=req.chosen,
         response_ms=req.response_ms,
