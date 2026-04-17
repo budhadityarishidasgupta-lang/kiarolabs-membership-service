@@ -599,7 +599,7 @@ def synonym_question(user=Depends(get_current_user)):
 
 
 @router.post("/synonym/answer")
-def synonym_answer(req: SynonymAnswerRequest, user=Depends(get_current_user)):
+def synonym_answer(req: SynonymAnswerRequest, user: dict = Depends(get_current_user)):
     user_id = user.get("user_id")
     user_email = user.get("sub")
 
