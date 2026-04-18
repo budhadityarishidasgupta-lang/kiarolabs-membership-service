@@ -29,6 +29,11 @@ class ResetPasswordPayload(BaseModel):
     new_password: str
 
 
+class DirectResetPasswordPayload(BaseModel):
+    email: EmailStr
+    new_password: str
+
+
 class AdminResetPasswordPayload(BaseModel):
     user_id: int
     new_password: str
@@ -175,6 +180,38 @@ def reset_password(payload: ResetPasswordPayload):
     except Exception:
         conn.rollback()
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/auth/reset-password-direct")
+def reset_password_direct(payload: DirectResetPasswordPayload):
+    email = payload.email.strip().lower()
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT user_id
+            FROM users
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+        row = cur.fetchone()
+
+        if row:
+            password_hash = _hash_password(payload.new_password)
+            _update_password_hashes(cur, row[0], password_hash)
+            conn.commit()
+
+        return {"message": "If account exists, password updated"}
+    except Exception:
+        conn.rollback()
+        return {"message": "If account exists, password updated"}
     finally:
         cur.close()
         conn.close()
