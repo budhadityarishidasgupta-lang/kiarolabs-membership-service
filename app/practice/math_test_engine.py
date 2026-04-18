@@ -187,6 +187,50 @@ def _build_resume_mock(tests):
     }
 
 
+def _build_progression(tests):
+    tests_sorted = sorted(tests, key=lambda test: test["sort_order"])
+    progression = []
+
+    for test in tests_sorted:
+        if not test["purchased"]:
+            state = "locked"
+        elif test["completed"]:
+            state = "completed"
+        elif test["in_progress"]:
+            state = "in_progress"
+        else:
+            state = "not_attempted"
+
+        progression.append(
+            {
+                "paper_code": test["paper_code"],
+                "state": state,
+                "score": test.get("last_score"),
+            }
+        )
+
+    return progression
+
+
+def _get_recommended_paper_code(tests):
+    tests_sorted = sorted(tests, key=lambda test: test["sort_order"])
+
+    candidates = [
+        test
+        for test in tests_sorted
+        if test["purchased"] and not test["completed"] and not test["in_progress"]
+    ]
+
+    if candidates:
+        return candidates[0]["paper_code"]
+
+    unpurchased = [test for test in tests_sorted if not test["purchased"]]
+    if unpurchased:
+        return unpurchased[0]["paper_code"]
+
+    return None
+
+
 def _build_math_test_response(row, access, total_questions=None, state=None):
     paper_code = row[0]
     paper_name = row[1]
@@ -305,6 +349,8 @@ def get_math_tests(user):
         )
 
     resume_mock = _build_resume_mock(final_tests)
+    progression = _build_progression(final_tests)
+    recommended_paper_code = _get_recommended_paper_code(final_tests)
 
     for test in final_tests:
         test.pop("_last_attempt_time", None)
@@ -315,6 +361,8 @@ def get_math_tests(user):
     return {
         "tests": final_tests,
         "resume_mock": resume_mock,
+        "progression": progression,
+        "recommended_paper_code": recommended_paper_code,
     }
 
 
