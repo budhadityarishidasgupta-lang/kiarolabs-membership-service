@@ -1,5 +1,7 @@
 import json
 
+from fastapi import HTTPException
+
 from app.database import get_connection
 
 
@@ -284,65 +286,38 @@ def submit_math_paper(user_id, paper_code, answers):
     try:
         cur.execute(
             """
-            SELECT EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'math_questions'
-                  AND column_name = 'paper_code'
-            )
-            """
+            SELECT question_number, correct_answer
+            FROM math_printable_answer_keys
+            WHERE paper_code = %s
+            ORDER BY question_number
+            """,
+            (paper_code,),
         )
-        has_paper_code = cur.fetchone()[0]
+        rows = cur.fetchall()
 
-        if has_paper_code:
-            cur.execute(
-                """
-                SELECT id, correct_option
-                FROM math_questions
-                WHERE paper_code = %s
-                """,
-                (paper_code,),
-            )
-            rows = cur.fetchall()
-            total = len(rows)
-        else:
-            question_ids = [
-                int(str(question_id).removeprefix("q"))
-                for question_id in (answers or {})
-                if str(question_id).removeprefix("q").isdigit()
+        if not rows:
+            raise HTTPException(status_code=400, detail="Answer key not found")
+
+        correct_answers = [r[1] for r in rows]
+
+        if isinstance(answers, dict):
+            user_answers = [
+                answers.get(f"q{question_number}", answers.get(str(question_number)))
+                for question_number, _correct in rows
             ]
-            if question_ids:
-                cur.execute(
-                    """
-                    SELECT id, correct_option
-                    FROM math_questions
-                    WHERE id = ANY(%s)
-                    """,
-                    (question_ids,),
-                )
-                rows = cur.fetchall()
-            else:
-                rows = []
+        else:
+            user_answers = answers or []
 
-            cur.execute(
-                """
-                SELECT total_questions
-                FROM math_test_papers
-                WHERE paper_code = %s
-                """,
-                (paper_code,),
-            )
-            total_row = cur.fetchone()
-            total = total_row[0] if total_row else len(rows)
-
-        correct_answers = {str(question_id): correct for question_id, correct in rows}
         score = 0
 
-        for raw_question_id, selected in (answers or {}).items():
-            question_id = str(raw_question_id).removeprefix("q")
-            correct = correct_answers.get(question_id)
-            if correct and str(selected).strip().upper() == str(correct).strip().upper():
+        for i, user_ans in enumerate(user_answers):
+            if (
+                i < len(correct_answers)
+                and str(user_ans).strip().upper() == str(correct_answers[i]).strip().upper()
+            ):
                 score += 1
+
+        total = len(correct_answers)
 
         cur.execute(
             """
