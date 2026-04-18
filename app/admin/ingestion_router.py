@@ -33,14 +33,20 @@ def get_math_papers():
     try:
         cur.execute(
             """
-            SELECT DISTINCT paper_code
-            FROM math_printable_questions
-            ORDER BY paper_code
+            SELECT paper_code, paper_name
+            FROM math_printable_papers
+            ORDER BY sort_order
             """
         )
 
         rows = cur.fetchall()
-        return [{"paper_code": r[0]} for r in rows]
+        return [
+            {
+                "paper_code": r[0],
+                "paper_name": r[1],
+            }
+            for r in rows
+        ]
     finally:
         cur.close()
         conn.close()

@@ -1,3 +1,5 @@
+from fastapi import HTTPException
+
 from app.database import get_connection
 from app.ingestion.maths.parser import parse_math_pdf
 
@@ -9,6 +11,20 @@ def ingest_math_pdf(file_path: str, paper_code: str) -> int:
     inserted = 0
 
     try:
+        cur.execute(
+            """
+            SELECT 1 FROM math_printable_papers
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+
+        if not cur.fetchone():
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid paper_code - must exist in master table",
+            )
+
         for question in questions:
             cur.execute(
                 """
@@ -41,4 +57,3 @@ def ingest_math_pdf(file_path: str, paper_code: str) -> int:
     finally:
         cur.close()
         conn.close()
-
