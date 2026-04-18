@@ -482,6 +482,10 @@ def submit_math_test(answers):
     return {"score": score, "total": total}
 
 
+def _normalize_answer(answer):
+    return str(answer).strip().lower()
+
+
 def submit_math_paper(user_id, paper_code, answers):
     conn = get_connection()
     cur = conn.cursor()
@@ -509,16 +513,24 @@ def submit_math_paper(user_id, paper_code, answers):
         else:
             user_answers = answers or []
 
+        total = len(rows)
+
+        if len(user_answers) != total:
+            raise HTTPException(
+                status_code=400,
+                detail="All questions must be answered",
+            )
+
         results = []
         score = 0
 
         for i, row in enumerate(rows):
             question_number = row[0]
-            correct_answer = str(row[1]).strip().lower()
+            correct_answer = _normalize_answer(row[1])
 
             user_answer = ""
             if i < len(user_answers):
-                user_answer = str(user_answers[i]).strip().lower()
+                user_answer = _normalize_answer(user_answers[i])
 
             is_correct = user_answer == correct_answer
 
@@ -533,8 +545,6 @@ def submit_math_paper(user_id, paper_code, answers):
                     "is_correct": is_correct,
                 }
             )
-
-        total = len(rows)
 
         cur.execute(
             """
