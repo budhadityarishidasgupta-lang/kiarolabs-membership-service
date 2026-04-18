@@ -13,6 +13,7 @@ from jose import jwt, JWTError
 from app.practice.router import router as practice_router
 from typing import Optional
 from app.comprehension.router import router as comprehension_router
+from app.auth_reset import init_password_reset_tables, router as auth_reset_router
 
 
 # =========================
@@ -38,6 +39,12 @@ def startup_event():
         print("✅ words tables initialized")
     except Exception as e:
         print("❌ words init failed:", e)
+
+    try:
+        init_password_reset_tables()
+        print("password reset tables initialized")
+    except Exception as e:
+        print("password reset init failed:", e)
 
 # =========================
 # CORS
@@ -933,3 +940,4 @@ def validate_user(email: str):
 # =========================
 app.include_router(practice_router, prefix="")
 app.include_router(comprehension_router)
+app.include_router(auth_reset_router)
