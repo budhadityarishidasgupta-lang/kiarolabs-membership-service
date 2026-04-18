@@ -54,11 +54,11 @@ from app.comprehension.repository import (
 )
 
 router = APIRouter(prefix="/practice", tags=["practice"])
+admin_router = APIRouter(tags=["admin"])
 
 
 def is_admin(user):
-    # 🔒 Phase 1: hardcoded admin (safe, reversible)
-    return user.get("sub") == "rishi@test.com"
+    return user.get("role") == "admin"
 
 
 # -----------------------------
@@ -209,6 +209,137 @@ def math_test_start(test_id: str, user=Depends(get_current_user)):
 @router.post("/math/test/submit")
 def math_test_submit(payload: dict):
     return submit_math_test(payload["answers"])
+
+
+@admin_router.post("/admin/math/printable/upload")
+def upload_math_printable_csv(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        content = file.file.read().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(content))
+
+        required_fields = {
+            "paper_code",
+            "question_number",
+            "question_text",
+            "option_a",
+            "option_b",
+            "option_c",
+            "option_d",
+            "correct_answer",
+        }
+
+        if not reader.fieldnames:
+            raise HTTPException(status_code=400, detail="CSV has no header row")
+
+        headers = {field.strip() for field in reader.fieldnames if field}
+        missing = sorted(required_fields - headers)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"CSV missing required columns: {', '.join(missing)}",
+            )
+
+        conn = get_connection()
+        cur = conn.cursor()
+        rows_uploaded = 0
+
+        try:
+            for idx, row in enumerate(reader, start=1):
+                clean = {
+                    (key.strip() if key else key): (value.strip() if isinstance(value, str) else value)
+                    for key, value in row.items()
+                }
+
+                paper_code = clean.get("paper_code")
+                question_number = clean.get("question_number")
+                question_text = clean.get("question_text")
+                correct_answer = clean.get("correct_answer")
+
+                if not paper_code or not question_number or not question_text or not correct_answer:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Row {idx}: paper_code, question_number, question_text and correct_answer are required",
+                    )
+
+                try:
+                    question_number_int = int(question_number)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Row {idx}: question_number must be an integer",
+                    )
+
+                cur.execute(
+                    """
+                    INSERT INTO math_printable_questions
+                    (paper_code, question_number, question_text, option_a, option_b, option_c, option_d)
+                    SELECT %s, %s, %s, %s, %s, %s, %s
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM math_printable_questions
+                        WHERE paper_code = %s
+                          AND question_number = %s
+                    )
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        paper_code,
+                        question_number_int,
+                        question_text,
+                        clean.get("option_a"),
+                        clean.get("option_b"),
+                        clean.get("option_c"),
+                        clean.get("option_d"),
+                        paper_code,
+                        question_number_int,
+                    ),
+                )
+
+                cur.execute(
+                    """
+                    INSERT INTO math_printable_answer_keys
+                    (paper_code, question_number, correct_answer)
+                    SELECT %s, %s, %s
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM math_printable_answer_keys
+                        WHERE paper_code = %s
+                          AND question_number = %s
+                    )
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        paper_code,
+                        question_number_int,
+                        correct_answer,
+                        paper_code,
+                        question_number_int,
+                    ),
+                )
+
+                rows_uploaded += 1
+
+            conn.commit()
+            return {"status": "uploaded", "rows": rows_uploaded}
+        except HTTPException:
+            conn.rollback()
+            raise
+        except Exception as e:
+            conn.rollback()
+            print("MATH PRINTABLE CSV ERROR:", str(e))
+            raise HTTPException(status_code=500, detail="CSV upload failed")
+        finally:
+            cur.close()
+            conn.close()
+
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded")
 
 
 # -----------------------------

@@ -10,6 +10,7 @@ from app.database_init_words import init_words_tables
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
+from app.practice.router import admin_router as practice_admin_router
 from app.practice.router import router as practice_router
 from app.practice.math_test_engine import init_math_submission_tables
 from typing import Optional
@@ -946,5 +947,6 @@ def validate_user(email: str):
 # Practice Engine Routes
 # =========================
 app.include_router(practice_router, prefix="")
+app.include_router(practice_admin_router)
 app.include_router(comprehension_router)
 app.include_router(auth_reset_router)
