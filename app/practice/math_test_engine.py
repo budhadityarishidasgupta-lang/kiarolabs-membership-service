@@ -284,16 +284,58 @@ def submit_math_paper(user_id, paper_code, answers):
     try:
         cur.execute(
             """
-            SELECT id, correct_option
-            FROM math_questions
-            WHERE paper_code = %s
-            """,
-            (paper_code,),
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'math_questions'
+                  AND column_name = 'paper_code'
+            )
+            """
         )
-        rows = cur.fetchall()
+        has_paper_code = cur.fetchone()[0]
+
+        if has_paper_code:
+            cur.execute(
+                """
+                SELECT id, correct_option
+                FROM math_questions
+                WHERE paper_code = %s
+                """,
+                (paper_code,),
+            )
+            rows = cur.fetchall()
+            total = len(rows)
+        else:
+            question_ids = [
+                int(str(question_id).removeprefix("q"))
+                for question_id in (answers or {})
+                if str(question_id).removeprefix("q").isdigit()
+            ]
+            if question_ids:
+                cur.execute(
+                    """
+                    SELECT id, correct_option
+                    FROM math_questions
+                    WHERE id = ANY(%s)
+                    """,
+                    (question_ids,),
+                )
+                rows = cur.fetchall()
+            else:
+                rows = []
+
+            cur.execute(
+                """
+                SELECT total_questions
+                FROM math_test_papers
+                WHERE paper_code = %s
+                """,
+                (paper_code,),
+            )
+            total_row = cur.fetchone()
+            total = total_row[0] if total_row else len(rows)
 
         correct_answers = {str(question_id): correct for question_id, correct in rows}
-        total = len(correct_answers)
         score = 0
 
         for raw_question_id, selected in (answers or {}).items():
