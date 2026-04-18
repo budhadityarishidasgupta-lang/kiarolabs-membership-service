@@ -84,6 +84,11 @@ class SessionAnswerRequest(BaseModel):
     response_ms: int
 
 
+class RetryIncorrectRequest(BaseModel):
+    paper_code: str
+    incorrect_questions: list[int]
+
+
 # -----------------------------
 # Course / Lesson Discovery
 # -----------------------------
@@ -173,6 +178,39 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
         question_id=payload["question_id"],
         selected_option=payload["selected_option"]
     )
+
+
+@router.post("/math/retry-incorrect")
+def math_retry_incorrect(req: RetryIncorrectRequest, user=Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT question_number, question_text
+            FROM math_printable_questions
+            WHERE paper_code = %s
+              AND question_number = ANY(%s)
+            ORDER BY question_number
+            """,
+            (req.paper_code, req.incorrect_questions),
+        )
+
+        rows = cur.fetchall()
+
+        return {
+            "questions": [
+                {
+                    "question_number": row[0],
+                    "question_text": row[1],
+                }
+                for row in rows
+            ]
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 @router.get("/math/tests")
