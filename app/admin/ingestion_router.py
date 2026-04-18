@@ -52,6 +52,31 @@ def get_math_papers():
         conn.close()
 
 
+@printable_router.get("/practice/math/printable/questions/meta")
+def get_math_printable_questions_meta(paper_code: str):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM math_printable_questions
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+
+        count = cur.fetchone()[0]
+        return {
+            "paper_code": paper_code,
+            "question_count": count,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 @router.post("/maths/upload-pdf")
 def upload_maths_pdf(
     paper_code: str = Form(...),
