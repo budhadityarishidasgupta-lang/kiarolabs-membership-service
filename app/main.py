@@ -10,6 +10,7 @@ from app.database_init_words import init_words_tables
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
+from app.admin.ingestion_router import printable_router
 from app.admin.ingestion_router import router as admin_ingestion_router
 from app.practice.router import admin_router as practice_admin_router
 from app.practice.router import router as practice_router
@@ -952,3 +953,4 @@ app.include_router(practice_admin_router)
 app.include_router(comprehension_router)
 app.include_router(auth_reset_router)
 app.include_router(admin_ingestion_router)
+app.include_router(printable_router)
