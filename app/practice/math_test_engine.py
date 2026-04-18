@@ -1,6 +1,38 @@
 from app.database import get_connection
 
 
+def _normalize_board(board):
+    if board is None:
+        return []
+    if isinstance(board, list):
+        return board
+    if isinstance(board, tuple):
+        return list(board)
+    if isinstance(board, str):
+        return [part.strip() for part in board.split(",") if part.strip()]
+    return [board]
+
+
+def _build_math_test_response(row, access):
+    paper_code = row[0]
+    paper_name = row[1]
+
+    return {
+        "test_id": paper_code,
+        "name": paper_name,
+        "duration": row[2],
+        "total_questions": row[3],
+        "access": access,
+        "paper_code": paper_code,
+        "paper_name": paper_name,
+        "title": row[4],
+        "subject": row[5],
+        "board": _normalize_board(row[6]),
+        "difficulty": row[7],
+        "sort_order": row[8],
+    }
+
+
 def get_math_tests(user):
     conn = get_connection()
     cur = conn.cursor()
@@ -21,10 +53,15 @@ def get_math_tests(user):
                 paper_code,
                 paper_name,
                 duration_minutes,
-                total_questions
+                total_questions,
+                title,
+                subject,
+                board,
+                difficulty,
+                sort_order
             FROM math_test_papers
             WHERE is_active = TRUE
-            ORDER BY paper_code;
+            ORDER BY sort_order ASC;
         """
         )
         rows = cur.fetchall()
@@ -32,16 +69,7 @@ def get_math_tests(user):
         cur.close()
         conn.close()
 
-        return [
-            {
-                "test_id": r[0],
-                "name": r[1],
-                "duration": r[2],
-                "total_questions": r[3],
-                "access": "full",
-            }
-            for r in rows
-        ]
+        return [_build_math_test_response(r, "full") for r in rows]
 
     # Step 1: resolve member_id from email if needed
     if not member_id:
@@ -79,10 +107,15 @@ def get_math_tests(user):
             paper_code,
             paper_name,
             duration_minutes,
-            total_questions
+            total_questions,
+            title,
+            subject,
+            board,
+            difficulty,
+            sort_order
         FROM math_test_papers
         WHERE is_active = TRUE
-        ORDER BY paper_code;
+        ORDER BY sort_order ASC;
     """
     )
 
@@ -97,15 +130,7 @@ def get_math_tests(user):
     for test in all_tests:
         test_id = test[0]
         access = "full" if test_id in purchased_tests else "locked"
-        final_tests.append(
-            {
-                "test_id": test_id,
-                "name": test[1],
-                "duration": test[2],
-                "total_questions": test[3],
-                "access": access,
-            }
-        )
+        final_tests.append(_build_math_test_response(test, access))
 
     return final_tests
 
