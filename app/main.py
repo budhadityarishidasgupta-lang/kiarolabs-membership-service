@@ -343,7 +343,11 @@ async def login(request: Request):
 
         return {
             "access_token": token,
-            "token_type": "bearer"
+            "token_type": "bearer",
+            "user_id": legacy_user_id,
+            "email": member_email,
+            "role": role,
+            "account_type": account_type or "free",
         }
 
     finally:
@@ -393,6 +397,7 @@ def dashboard(user=Depends(get_current_user)):
             cur.close()
             conn.close()
             return {
+                "role": user.get("role", "student"),
                 "modules": {
                     "spelling": {"attempts": 0, "accuracy": 0, "unlocked": False},
                     "words": {"attempts": 0, "accuracy": 0, "unlocked": False},
@@ -526,6 +531,7 @@ def dashboard(user=Depends(get_current_user)):
         weakest = min(metrics, key=metrics.get)
 
     return {
+        "role": user.get("role", "student"),
         "modules": modules,
         "insights": {
             "strongest": strongest,
