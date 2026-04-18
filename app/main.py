@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from app.practice.router import router as practice_router
+from app.practice.math_test_engine import init_math_submission_tables
 from typing import Optional
 from app.comprehension.router import router as comprehension_router
 from app.auth_reset import init_password_reset_tables, router as auth_reset_router
@@ -45,6 +46,12 @@ def startup_event():
         print("password reset tables initialized")
     except Exception as e:
         print("password reset init failed:", e)
+
+    try:
+        init_math_submission_tables()
+        print("math submission tables initialized")
+    except Exception as e:
+        print("math submission init failed:", e)
 
 # =========================
 # CORS

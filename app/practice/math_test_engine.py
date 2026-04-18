@@ -1,4 +1,30 @@
+import json
+
 from app.database import get_connection
+
+
+def init_math_submission_tables():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS math_submission_attempts (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL,
+                paper_code TEXT NOT NULL,
+                answers JSONB NOT NULL,
+                score INT NOT NULL,
+                total INT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 
 def _normalize_board(board):
@@ -249,3 +275,49 @@ def submit_math_test(answers):
             score += 1
 
     return {"score": score, "total": total}
+
+
+def submit_math_paper(user_id, paper_code, answers):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT id, correct_option
+            FROM math_questions
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        rows = cur.fetchall()
+
+        correct_answers = {str(question_id): correct for question_id, correct in rows}
+        total = len(correct_answers)
+        score = 0
+
+        for raw_question_id, selected in (answers or {}).items():
+            question_id = str(raw_question_id).removeprefix("q")
+            correct = correct_answers.get(question_id)
+            if correct and str(selected).strip().upper() == str(correct).strip().upper():
+                score += 1
+
+        cur.execute(
+            """
+            INSERT INTO math_submission_attempts
+            (user_id, paper_code, answers, score, total)
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            """,
+            (user_id, paper_code, json.dumps(answers or {}), score, total),
+        )
+
+        conn.commit()
+
+        return {
+            "score": score,
+            "total": total,
+            "percentage": (score * 100 / total) if total else 0,
+        }
+    finally:
+        cur.close()
+        conn.close()

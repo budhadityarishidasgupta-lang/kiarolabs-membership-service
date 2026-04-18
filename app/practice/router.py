@@ -21,6 +21,7 @@ from app.practice.math_engine import (
 from app.practice.math_test_engine import (
     check_mock_access,
     get_math_tests,
+    submit_math_paper,
     start_math_test,
     submit_math_test
 )
@@ -159,6 +160,13 @@ def math_question(lesson_id: int, user=Depends(get_current_user)):
 
 @router.post("/math/submit")
 def math_submit(payload: dict, user=Depends(get_current_user)):
+    if "paper_code" in payload and "answers" in payload:
+        return submit_math_paper(
+            user_id=user["user_id"],
+            paper_code=payload["paper_code"],
+            answers=payload["answers"],
+        )
+
     return submit_math_answer(
         student_id=user["user_id"],
         lesson_id=payload["lesson_id"],
