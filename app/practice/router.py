@@ -182,6 +182,12 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
 
 @router.post("/math/retry-incorrect")
 def math_retry_incorrect(req: RetryIncorrectRequest, user=Depends(get_current_user)):
+    if not req.incorrect_questions:
+        return {
+            "questions": [],
+            "message": "No incorrect questions",
+        }
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -208,6 +214,62 @@ def math_retry_incorrect(req: RetryIncorrectRequest, user=Depends(get_current_us
                 for row in rows
             ]
         }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/math/history")
+def math_history(paper_code: str, user=Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'math_attempts'
+            """
+        )
+        math_attempt_columns = {row[0] for row in cur.fetchall()}
+
+        if {"user_id", "paper_code", "score", "total", "created_at"}.issubset(math_attempt_columns):
+            cur.execute(
+                """
+                SELECT score, total, created_at
+                FROM math_attempts
+                WHERE user_id = %s
+                  AND paper_code = %s
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                (user["user_id"], paper_code),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT score, total, created_at
+                FROM math_submission_attempts
+                WHERE user_id = %s
+                  AND paper_code = %s
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                (user["user_id"], paper_code),
+            )
+
+        rows = cur.fetchall()
+
+        return [
+            {
+                "score": row[0],
+                "total": row[1],
+                "percentage": (row[0] * 100 / row[1]) if row[1] else 0,
+                "date": row[2],
+            }
+            for row in rows
+        ]
     finally:
         cur.close()
         conn.close()

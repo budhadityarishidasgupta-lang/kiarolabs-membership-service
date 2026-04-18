@@ -561,6 +561,7 @@ def submit_math_paper(user_id, paper_code, answers):
             "score": score,
             "total": total,
             "percentage": (score * 100 / total) if total else 0,
+            "answered_questions": len(user_answers),
             "breakdown": results,
         }
     finally:
