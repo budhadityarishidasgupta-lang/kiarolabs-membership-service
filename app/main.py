@@ -296,11 +296,11 @@ async def login(request: Request):
         if not user_row:
             cur.execute(
                 """
-                INSERT INTO users (email, name, role, is_active, created_at)
-                VALUES (%s, %s, 'student', TRUE, NOW())
-                RETURNING user_id
+                INSERT INTO users (email, name, password_hash, role, is_active, created_at)
+                VALUES (%s, %s, %s, 'student', TRUE, NOW())
+                RETURNING user_id, role, is_active
                 """,
-                (email, email.split("@")[0]),
+                (email, email.split("@")[0], member_password_hash),
             )
             user_row = cur.fetchone()
             conn.commit()
