@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from fastapi import HTTPException
 
@@ -33,23 +34,175 @@ def _normalize_board(board):
     if board is None:
         return []
     if isinstance(board, list):
-        return board
-    if isinstance(board, tuple):
-        return list(board)
-    if isinstance(board, str):
-        return [part.strip() for part in board.split(",") if part.strip()]
-    return [board]
+        board_str = " ".join(str(part) for part in board)
+    elif isinstance(board, tuple):
+        board_str = " ".join(str(part) for part in board)
+    else:
+        board_str = str(board)
+
+    normalized = []
+    if "GL" in board_str:
+        normalized.append("GL")
+    if "CEM" in board_str:
+        normalized.append("CEM")
+    if "Independent" in board_str:
+        normalized.append("Independent")
+
+    return normalized
 
 
-def _build_math_test_response(row, access):
+def _json_answer_count(answers):
+    if not answers:
+        return 0
+    if isinstance(answers, (list, tuple, dict)):
+        return len(answers)
+    if isinstance(answers, str):
+        try:
+            parsed = json.loads(answers)
+            if isinstance(parsed, (list, tuple, dict)):
+                return len(parsed)
+        except Exception:
+            return 0
+    return 0
+
+
+def _get_table_columns(cur, table_name):
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s
+        """,
+        (table_name,),
+    )
+    return {row[0] for row in cur.fetchall()}
+
+
+def _get_question_count(cur, paper_code, fallback_total):
+    math_question_columns = _get_table_columns(cur, "math_questions")
+    if "paper_code" not in math_question_columns:
+        return fallback_total or 0
+
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM math_questions
+        WHERE paper_code = %s
+        """,
+        (paper_code,),
+    )
+    return cur.fetchone()[0]
+
+
+def _get_submission_state(cur, user_id):
+    state = {}
+    if not user_id:
+        return state
+
+    cur.execute(
+        """
+        SELECT paper_code, answers, score, total, created_at
+        FROM math_submission_attempts
+        WHERE user_id = %s
+        ORDER BY created_at DESC
+        """,
+        (user_id,),
+    )
+
+    for paper_code, answers, score, total, created_at in cur.fetchall():
+        if paper_code in state:
+            continue
+
+        state[paper_code] = {
+            "answered_questions": _json_answer_count(answers),
+            "last_score": score,
+            "stored_total": total,
+            "last_attempt_time": created_at,
+        }
+
+    math_attempt_columns = _get_table_columns(cur, "math_attempts")
+    required_columns = {"user_id", "paper_code", "created_at"}
+
+    if required_columns.issubset(math_attempt_columns):
+        cur.execute(
+            """
+            SELECT paper_code, COUNT(*) AS answered_questions, MAX(created_at) AS last_attempt_time
+            FROM math_attempts
+            WHERE user_id = %s
+            GROUP BY paper_code
+            """,
+            (user_id,),
+        )
+
+        for paper_code, answered_questions, last_attempt_time in cur.fetchall():
+            existing = state.get(paper_code)
+            if existing and existing["last_attempt_time"] and existing["last_attempt_time"] >= last_attempt_time:
+                continue
+
+            state[paper_code] = {
+                "answered_questions": answered_questions,
+                "last_score": None,
+                "stored_total": None,
+                "last_attempt_time": last_attempt_time,
+            }
+
+        if "score" in math_attempt_columns:
+            for paper_code in list(state):
+                cur.execute(
+                    """
+                    SELECT score
+                    FROM math_attempts
+                    WHERE user_id = %s
+                      AND paper_code = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (user_id, paper_code),
+                )
+                score_row = cur.fetchone()
+                if score_row and score_row[0] is not None:
+                    state[paper_code]["last_score"] = score_row[0]
+
+    return state
+
+
+def _build_resume_mock(tests):
+    resumable = [
+        test
+        for test in tests
+        if test.get("purchased") is True and test.get("in_progress") is True
+    ]
+
+    if not resumable:
+        return None
+
+    resumable.sort(key=lambda test: test.get("_last_attempt_time") or datetime.min, reverse=True)
+    latest = resumable[0]
+
+    return {
+        "paper_code": latest["paper_code"],
+        "title": latest["title"],
+        "saved_question_number": latest["saved_question_number"],
+        "total_questions": latest["total_questions"],
+    }
+
+
+def _build_math_test_response(row, access, total_questions=None, state=None):
     paper_code = row[0]
     paper_name = row[1]
+    total = total_questions if total_questions is not None else row[3]
+    state = state or {}
+    answered_questions = state.get("answered_questions", 0)
+    completed = bool(total and answered_questions >= total)
+    in_progress = answered_questions > 0 and not completed
+    last_score = state.get("last_score") if completed else None
+    purchased = access == "full"
 
     return {
         "test_id": paper_code,
         "name": paper_name,
         "duration": row[2],
-        "total_questions": row[3],
+        "total_questions": total,
         "access": access,
         "paper_code": paper_code,
         "paper_name": paper_name,
@@ -58,6 +211,12 @@ def _build_math_test_response(row, access):
         "board": _normalize_board(row[6]),
         "difficulty": row[7],
         "sort_order": row[8],
+        "purchased": purchased,
+        "in_progress": in_progress,
+        "completed": completed,
+        "saved_question_number": answered_questions + 1 if in_progress else None,
+        "last_score": last_score,
+        "_last_attempt_time": state.get("last_attempt_time"),
     }
 
 
@@ -67,38 +226,14 @@ def get_math_tests(user):
 
     email = user.get("sub") if user else None
     member_id = user.get("member_id") if user else None
+    user_id = user.get("user_id") if user else None
 
     if not email:
         cur.close()
         conn.close()
-        return []
+        return {"tests": [], "resume_mock": None}
 
     # 🔓 Admin / UAT bypass
-    if email in ["rishi@test.com", "testrishi@gmail.com"]:
-        cur.execute(
-            """
-            SELECT
-                paper_code,
-                paper_name,
-                duration_minutes,
-                total_questions,
-                title,
-                subject,
-                board,
-                difficulty,
-                sort_order
-            FROM math_test_papers
-            WHERE is_active = TRUE
-            ORDER BY sort_order ASC;
-        """
-        )
-        rows = cur.fetchall()
-
-        cur.close()
-        conn.close()
-
-        return [_build_math_test_response(r, "full") for r in rows]
-
     # Step 1: resolve member_id from email if needed
     if not member_id:
         cur.execute(
@@ -125,6 +260,8 @@ def get_math_tests(user):
         )
         purchased_tests = {row[0] for row in cur.fetchall()}
 
+    admin_bypass = user.get("role") == "admin" or email in ["rishi@test.com", "testrishi@gmail.com"]
+
     print("MOCK TEST MEMBER:", member_id)
     print("MOCK TEST PURCHASED:", purchased_tests)
 
@@ -148,19 +285,37 @@ def get_math_tests(user):
     )
 
     all_tests = cur.fetchall()
-
-    cur.close()
-    conn.close()
+    submission_state = _get_submission_state(cur, user_id)
 
     final_tests = []
 
     # Step 4: build final response
     for test in all_tests:
         test_id = test[0]
-        access = "full" if test_id in purchased_tests else "locked"
-        final_tests.append(_build_math_test_response(test, access))
+        access = "full" if admin_bypass or test_id in purchased_tests else "locked"
+        total_questions = _get_question_count(cur, test_id, test[3])
 
-    return final_tests
+        final_tests.append(
+            _build_math_test_response(
+                test,
+                access,
+                total_questions=total_questions,
+                state=submission_state.get(test_id),
+            )
+        )
+
+    resume_mock = _build_resume_mock(final_tests)
+
+    for test in final_tests:
+        test.pop("_last_attempt_time", None)
+
+    cur.close()
+    conn.close()
+
+    return {
+        "tests": final_tests,
+        "resume_mock": resume_mock,
+    }
 
 
 def start_math_test(test_id):
