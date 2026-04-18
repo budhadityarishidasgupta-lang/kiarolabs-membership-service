@@ -501,8 +501,6 @@ def submit_math_paper(user_id, paper_code, answers):
         if not rows:
             raise HTTPException(status_code=400, detail="Answer key not found")
 
-        correct_answers = [r[1] for r in rows]
-
         if isinstance(answers, dict):
             user_answers = [
                 answers.get(f"q{question_number}", answers.get(str(question_number)))
@@ -511,16 +509,32 @@ def submit_math_paper(user_id, paper_code, answers):
         else:
             user_answers = answers or []
 
+        results = []
         score = 0
 
-        for i, user_ans in enumerate(user_answers):
-            if (
-                i < len(correct_answers)
-                and str(user_ans).strip().upper() == str(correct_answers[i]).strip().upper()
-            ):
+        for i, row in enumerate(rows):
+            question_number = row[0]
+            correct_answer = str(row[1]).strip().lower()
+
+            user_answer = ""
+            if i < len(user_answers):
+                user_answer = str(user_answers[i]).strip().lower()
+
+            is_correct = user_answer == correct_answer
+
+            if is_correct:
                 score += 1
 
-        total = len(correct_answers)
+            results.append(
+                {
+                    "question_number": question_number,
+                    "user_answer": user_answer,
+                    "correct_answer": correct_answer,
+                    "is_correct": is_correct,
+                }
+            )
+
+        total = len(rows)
 
         cur.execute(
             """
@@ -537,6 +551,7 @@ def submit_math_paper(user_id, paper_code, answers):
             "score": score,
             "total": total,
             "percentage": (score * 100 / total) if total else 0,
+            "breakdown": results,
         }
     finally:
         cur.close()
