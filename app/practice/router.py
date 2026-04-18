@@ -183,6 +183,9 @@ def math_tests(user=Depends(get_current_user)):
 def math_test_start(test_id: str, user=Depends(get_current_user)):
     email = user.get("sub")
 
+    if user.get("role") == "admin":
+        return start_math_test(test_id)
+
     # 🚨 CRITICAL CHECK
     has_access = check_mock_access(email, test_id)
 
