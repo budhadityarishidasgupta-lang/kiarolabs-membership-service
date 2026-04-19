@@ -19,6 +19,20 @@ class AnswerKeyRequest(BaseModel):
     answers: list[str]
 
 
+class PrintableAnswerUpdate(BaseModel):
+    question_number: int
+    correct_answer: str
+
+
+class PrintableAnswerUpdateRequest(BaseModel):
+    paper_code: str
+    answers: list[PrintableAnswerUpdate]
+
+
+class PrintablePaperRequest(BaseModel):
+    paper_code: str
+
+
 def require_admin(user=Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -71,6 +85,191 @@ def get_math_printable_questions_meta(paper_code: str):
         return {
             "paper_code": paper_code,
             "question_count": count,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@printable_router.get("/admin/math/printable/questions")
+def get_admin_math_printable_questions(paper_code: str, _user=Depends(require_admin)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT question_number, question_text
+            FROM math_printable_questions
+            WHERE paper_code = %s
+            ORDER BY question_number
+            """,
+            (paper_code,),
+        )
+
+        rows = cur.fetchall()
+        return {
+            "paper_code": paper_code,
+            "questions": [
+                {
+                    "question_number": row[0],
+                    "question_text": row[1],
+                }
+                for row in rows
+            ],
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@printable_router.get("/admin/math/printable/answers")
+def get_admin_math_printable_answers(paper_code: str, _user=Depends(require_admin)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT question_number, correct_answer
+            FROM math_printable_answer_keys
+            WHERE paper_code = %s
+            ORDER BY question_number
+            """,
+            (paper_code,),
+        )
+
+        rows = cur.fetchall()
+        return {
+            "paper_code": paper_code,
+            "answers": [
+                {
+                    "question_number": row[0],
+                    "correct_answer": row[1],
+                }
+                for row in rows
+            ],
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@printable_router.post("/admin/math/printable/answers/update")
+def update_admin_math_printable_answers(
+    payload: PrintableAnswerUpdateRequest,
+    _user=Depends(require_admin),
+):
+    if not payload.answers:
+        raise HTTPException(status_code=400, detail="Answers required")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        for answer in payload.answers:
+            cur.execute(
+                """
+                INSERT INTO math_printable_answer_keys
+                (paper_code, question_number, correct_answer)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (paper_code, question_number)
+                DO UPDATE SET correct_answer = EXCLUDED.correct_answer
+                """,
+                (
+                    payload.paper_code,
+                    answer.question_number,
+                    str(answer.correct_answer).strip(),
+                ),
+            )
+
+        conn.commit()
+        return {
+            "status": "success",
+            "paper_code": payload.paper_code,
+            "answers_saved": len(payload.answers),
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@printable_router.post("/admin/math/printable/delete")
+def delete_admin_math_printable_content(
+    payload: PrintablePaperRequest,
+    _user=Depends(require_admin),
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            DELETE FROM math_printable_questions
+            WHERE paper_code = %s
+            """,
+            (payload.paper_code,),
+        )
+        questions_deleted = cur.rowcount
+
+        cur.execute(
+            """
+            DELETE FROM math_printable_answer_keys
+            WHERE paper_code = %s
+            """,
+            (payload.paper_code,),
+        )
+        answers_deleted = cur.rowcount
+
+        conn.commit()
+        return {
+            "status": "deleted",
+            "paper_code": payload.paper_code,
+            "questions_deleted": questions_deleted,
+            "answers_deleted": answers_deleted,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@printable_router.get("/admin/math/printable/validate")
+def validate_admin_math_printable_paper(paper_code: str, _user=Depends(require_admin)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM math_printable_questions
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        q_count = cur.fetchone()[0]
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM math_printable_answer_keys
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        a_count = cur.fetchone()[0]
+
+        return {
+            "paper_code": paper_code,
+            "questions": q_count,
+            "answers": a_count,
+            "valid": q_count == a_count,
         }
     finally:
         cur.close()
