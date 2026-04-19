@@ -557,6 +557,151 @@ def dashboard(user=Depends(get_current_user)):
     }
 
 
+@app.get("/dashboard/insights")
+def dashboard_insights(user=Depends(get_current_user)):
+    user_id = user.get("user_id")
+
+    if not user_id:
+        return {
+            "summary": {
+                "average_score": 0,
+                "best_score": 0,
+                "total_tests": 0,
+            },
+            "recent_attempts": [],
+            "weak_areas": [],
+            "recommended_action": None,
+        }
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'math_attempts'
+            """
+        )
+        math_attempt_columns = {row[0] for row in cur.fetchall()}
+        has_paper_attempts = {"user_id", "paper_code", "score", "total", "created_at"}.issubset(math_attempt_columns)
+        attempts_table = "math_attempts" if has_paper_attempts else "math_submission_attempts"
+
+        cur.execute(
+            f"""
+            SELECT paper_code, score, total, created_at
+            FROM {attempts_table}
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        attempts = cur.fetchall()
+
+        if not attempts:
+            return {
+                "summary": {
+                    "average_score": 0,
+                    "best_score": 0,
+                    "total_tests": 0,
+                },
+                "recent_attempts": [],
+                "weak_areas": [],
+                "recommended_action": None,
+            }
+
+        percentages = [
+            (score / total * 100)
+            for _paper_code, score, total, _created_at in attempts
+            if total
+        ]
+
+        total_tests = len(attempts)
+        average_score = (sum(percentages) / len(percentages)) if percentages else 0
+        best_score = max(percentages) if percentages else 0
+
+        cur.execute(
+            f"""
+            SELECT paper_code, score, total, created_at
+            FROM {attempts_table}
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (user_id,),
+        )
+        recent_rows = cur.fetchall()
+        recent_attempts = [
+            {
+                "paper_code": paper_code,
+                "percentage": (score / total * 100) if total else 0,
+                "date": created_at,
+            }
+            for paper_code, score, total, created_at in recent_rows
+        ]
+
+        cur.execute(
+            f"""
+            SELECT paper_code, AVG(score::float / NULLIF(total, 0)) AS avg_score
+            FROM {attempts_table}
+            WHERE user_id = %s
+            GROUP BY paper_code
+            HAVING AVG(score::float / NULLIF(total, 0)) < 0.7
+            ORDER BY avg_score ASC
+            LIMIT 3
+            """,
+            (user_id,),
+        )
+        weak_rows = cur.fetchall()
+        weak_areas = [
+            {
+                "paper_code": paper_code,
+                "average_score": round((avg_score or 0) * 100, 2),
+            }
+            for paper_code, avg_score in weak_rows
+        ]
+
+        if weak_areas:
+            recommended_action = {
+                "type": "retry",
+                "paper_code": weak_areas[0]["paper_code"],
+            }
+        else:
+            attempted_papers = {paper_code for paper_code, _score, _total, _created_at in attempts}
+            cur.execute(
+                """
+                SELECT paper_code
+                FROM math_test_papers
+                WHERE is_active = TRUE
+                ORDER BY sort_order ASC
+                """
+            )
+            next_paper = None
+            for row in cur.fetchall():
+                if row[0] not in attempted_papers:
+                    next_paper = row[0]
+                    break
+
+            recommended_action = {
+                "type": "new",
+                "paper_code": next_paper,
+            } if next_paper else None
+
+        return {
+            "summary": {
+                "average_score": round(average_score, 2),
+                "best_score": round(best_score, 2),
+                "total_tests": total_tests,
+            },
+            "recent_attempts": recent_attempts,
+            "weak_areas": weak_areas,
+            "recommended_action": recommended_action,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/admin/users")
 def get_all_users(user=Depends(get_current_user)):
     if user.get("role") != "admin":
