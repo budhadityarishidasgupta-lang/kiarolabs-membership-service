@@ -571,6 +571,7 @@ def dashboard_insights(user=Depends(get_current_user)):
             "recent_attempts": [],
             "weak_areas": [],
             "recommended_action": None,
+            "learning_path": [],
         }
 
     conn = get_connection()
@@ -587,6 +588,16 @@ def dashboard_insights(user=Depends(get_current_user)):
         math_attempt_columns = {row[0] for row in cur.fetchall()}
         has_paper_attempts = {"user_id", "paper_code", "score", "total", "created_at"}.issubset(math_attempt_columns)
         attempts_table = "math_attempts" if has_paper_attempts else "math_submission_attempts"
+
+        cur.execute(
+            """
+            SELECT paper_code
+            FROM math_test_papers
+            WHERE is_active = TRUE
+            ORDER BY sort_order ASC
+            """
+        )
+        ordered_mock_papers = [row[0] for row in cur.fetchall()]
 
         cur.execute(
             f"""
@@ -608,6 +619,14 @@ def dashboard_insights(user=Depends(get_current_user)):
                 "recent_attempts": [],
                 "weak_areas": [],
                 "recommended_action": None,
+                "learning_path": [
+                    {
+                        "step": 1,
+                        "type": "new",
+                        "paper_code": ordered_mock_papers[0],
+                        "reason": "Start your first test",
+                    }
+                ] if ordered_mock_papers else [],
             }
 
         percentages = [
@@ -668,24 +687,47 @@ def dashboard_insights(user=Depends(get_current_user)):
             }
         else:
             attempted_papers = {paper_code for paper_code, _score, _total, _created_at in attempts}
-            cur.execute(
-                """
-                SELECT paper_code
-                FROM math_test_papers
-                WHERE is_active = TRUE
-                ORDER BY sort_order ASC
-                """
-            )
             next_paper = None
-            for row in cur.fetchall():
-                if row[0] not in attempted_papers:
-                    next_paper = row[0]
+            for paper_code in ordered_mock_papers:
+                if paper_code not in attempted_papers:
+                    next_paper = paper_code
                     break
 
             recommended_action = {
                 "type": "new",
                 "paper_code": next_paper,
             } if next_paper else None
+
+        attempted_papers = {paper_code for paper_code, _score, _total, _created_at in attempts}
+        next_unattempted_paper = None
+        for paper_code in ordered_mock_papers:
+            if paper_code not in attempted_papers:
+                next_unattempted_paper = paper_code
+                break
+
+        learning_path = []
+        step = 1
+
+        for weak_area in weak_areas[:2]:
+            learning_path.append(
+                {
+                    "step": step,
+                    "type": "retry",
+                    "paper_code": weak_area["paper_code"],
+                    "reason": f"Low score ({int(weak_area['average_score'])}%)",
+                }
+            )
+            step += 1
+
+        if next_unattempted_paper:
+            learning_path.append(
+                {
+                    "step": step,
+                    "type": "new",
+                    "paper_code": next_unattempted_paper,
+                    "reason": "Next recommended test",
+                }
+            )
 
         return {
             "summary": {
@@ -696,6 +738,7 @@ def dashboard_insights(user=Depends(get_current_user)):
             "recent_attempts": recent_attempts,
             "weak_areas": weak_areas,
             "recommended_action": recommended_action,
+            "learning_path": learning_path,
         }
     finally:
         cur.close()
