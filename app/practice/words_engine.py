@@ -245,9 +245,12 @@ def submit_words_answer(word_id: int, answer: str, user_id: int):
 
         cur.execute(
             """
-            SELECT word
+            SELECT
+                id,
+                word,
+                COALESCE(example, '') AS example
             FROM words_words
-            WHERE word_id = %s
+            WHERE id = %s
             LIMIT 1
             """,
             (word_id,),
@@ -259,10 +262,12 @@ def submit_words_answer(word_id: int, answer: str, user_id: int):
             return {
                 "correct": False,
                 "correct_answer": "",
+                "example": "",
                 "xp": 0,
             }
 
-        correct_word = clean_text(row[0])
+        _word_id, word, example = row
+        correct_word = clean_text(word)
         correct = answer.strip().lower() == correct_word.lower()
 
         # append-only attempts
@@ -331,6 +336,7 @@ def submit_words_answer(word_id: int, answer: str, user_id: int):
         return {
             "correct": correct,
             "correct_answer": correct_word,
+            "example": clean_text(example),
             "xp": 5 if correct else 0,
         }
 
