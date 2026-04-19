@@ -493,6 +493,43 @@ def submit_math_paper(user_id, paper_code, answers):
     try:
         cur.execute(
             """
+            SELECT 1
+            FROM math_printable_papers
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=400, detail="Invalid paper")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM math_printable_questions
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        question_count = cur.fetchone()[0]
+
+        if question_count == 0:
+            raise HTTPException(status_code=400, detail="Paper questions not available")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM math_printable_answer_keys
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        answer_count = cur.fetchone()[0]
+
+        if answer_count != question_count:
+            raise HTTPException(status_code=400, detail="Paper is not ready for submission")
+
+        cur.execute(
+            """
             SELECT question_number, correct_answer
             FROM math_printable_answer_keys
             WHERE paper_code = %s
@@ -502,9 +539,6 @@ def submit_math_paper(user_id, paper_code, answers):
         )
         rows = cur.fetchall()
 
-        if not rows:
-            raise HTTPException(status_code=400, detail="Answer key not found")
-
         if isinstance(answers, dict):
             user_answers = [
                 answers.get(f"q{question_number}", answers.get(str(question_number)))
@@ -513,7 +547,7 @@ def submit_math_paper(user_id, paper_code, answers):
         else:
             user_answers = answers or []
 
-        total = len(rows)
+        total = question_count
 
         if len(user_answers) != total:
             raise HTTPException(

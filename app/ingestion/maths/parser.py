@@ -20,9 +20,6 @@ def parse_math_pdf(file_path: str, paper_code: str) -> list[dict]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         question_text = text[start:end].strip()
 
-        if not question_text:
-            continue
-
         questions.append(
             ParsedMathQuestion(
                 paper_code=paper_code,
