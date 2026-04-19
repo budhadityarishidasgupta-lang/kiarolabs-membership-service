@@ -335,6 +335,7 @@ def validate_admin_math_printable_paper(paper_code: str, _user=Depends(require_a
             issues.append("Answer count does not match question count")
 
         has_complete_answer_key = q_count > 0 and a_count == q_count
+        ready = q_count > 0 and has_complete_answer_key
 
         return {
             "paper_code": paper_code,
@@ -342,11 +343,12 @@ def validate_admin_math_printable_paper(paper_code: str, _user=Depends(require_a
             "answers_count": a_count,
             "has_questions": q_count > 0,
             "has_complete_answer_key": has_complete_answer_key,
-            "valid": q_count > 0 and has_complete_answer_key,
+            "ready": ready,
             "issues": issues,
             # Backward-compatible aliases for existing admin UI/tests.
             "questions": q_count,
             "answers": a_count,
+            "valid": ready,
         }
     finally:
         cur.close()

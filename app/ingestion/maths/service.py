@@ -41,7 +41,7 @@ def ingest_math_pdf(file_path: str, paper_code: str) -> int:
             logger.warning("Printable maths PDF upload rejected because questions already exist")
             raise HTTPException(
                 status_code=400,
-                detail="Questions already exist for this paper. Delete first or use overwrite flow later.",
+                detail="Questions already exist for this paper. Delete first before re-uploading.",
             )
 
         questions = parse_math_pdf(file_path, paper_code)
