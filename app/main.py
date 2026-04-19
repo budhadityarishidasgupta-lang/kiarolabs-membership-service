@@ -572,6 +572,12 @@ def dashboard_insights(user=Depends(get_current_user)):
             "weak_areas": [],
             "recommended_action": None,
             "learning_path": [],
+            "streak": {
+                "current": 0,
+                "longest": 0,
+                "last_active": None,
+                "active_days_last_7": 0,
+            },
         }
 
     conn = get_connection()
@@ -609,6 +615,59 @@ def dashboard_insights(user=Depends(get_current_user)):
         )
         attempts = cur.fetchall()
 
+        cur.execute(
+            f"""
+            SELECT DISTINCT DATE(created_at)
+            FROM {attempts_table}
+            WHERE user_id = %s
+            ORDER BY DATE(created_at) DESC
+            """,
+            (user_id,),
+        )
+        activity_days = [
+            row[0].date() if hasattr(row[0], "date") else row[0]
+            for row in cur.fetchall()
+            if row[0]
+        ]
+
+        today = datetime.utcnow().date()
+        current_streak = 0
+
+        for i, day in enumerate(activity_days):
+            if i == 0:
+                if day == today or day == today - timedelta(days=1):
+                    current_streak = 1
+                else:
+                    break
+            elif activity_days[i - 1] - day == timedelta(days=1):
+                current_streak += 1
+            else:
+                break
+
+        longest_streak = 0
+        streak_run = 0
+        previous_day = None
+
+        for day in activity_days:
+            if previous_day is None:
+                streak_run = 1
+            elif previous_day - day == timedelta(days=1):
+                streak_run += 1
+            else:
+                streak_run = 1
+
+            longest_streak = max(longest_streak, streak_run)
+            previous_day = day
+
+        streak = {
+            "current": current_streak,
+            "longest": longest_streak,
+            "last_active": activity_days[0] if activity_days else None,
+            "active_days_last_7": sum(
+                1 for day in activity_days if today - timedelta(days=6) <= day <= today
+            ),
+        }
+
         if not attempts:
             return {
                 "summary": {
@@ -627,6 +686,7 @@ def dashboard_insights(user=Depends(get_current_user)):
                         "reason": "Start your first test",
                     }
                 ] if ordered_mock_papers else [],
+                "streak": streak,
             }
 
         percentages = [
@@ -739,6 +799,7 @@ def dashboard_insights(user=Depends(get_current_user)):
             "weak_areas": weak_areas,
             "recommended_action": recommended_action,
             "learning_path": learning_path,
+            "streak": streak,
         }
     finally:
         cur.close()
