@@ -1,6 +1,8 @@
 print("🚀 COMPREHENSION ROUTER LOADED")
 print("🚀 ROUTER FILE IS LOADING")
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
@@ -55,10 +57,48 @@ from app.comprehension.repository import (
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 admin_router = APIRouter(tags=["admin"])
+logger = logging.getLogger(__name__)
 
 
 def is_admin(user):
     return user.get("role") == "admin"
+
+
+def _missing_param(name: str):
+    logger.warning("Practice endpoint missing required parameter: %s", name)
+    raise HTTPException(status_code=400, detail=f"Missing required parameter: {name}")
+
+
+def _require_user_id(user):
+    user_id = user.get("user_id")
+    if not user_id:
+        logger.warning("Practice endpoint rejected request because user_id is missing")
+        raise HTTPException(status_code=400, detail="User not provisioned in learning system")
+    return user_id
+
+
+def _require_payload_param(payload: dict, name: str):
+    if not isinstance(payload, dict):
+        _missing_param(name)
+    value = payload.get(name)
+    if value is None:
+        _missing_param(name)
+    return value
+
+
+def _raise_not_found(detail: str):
+    logger.warning("Practice endpoint invalid identifier: %s", detail)
+    raise HTTPException(status_code=404, detail=detail)
+
+
+def _safe_execute(label: str, func, *args, **kwargs):
+    try:
+        return func(*args, **kwargs)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected practice endpoint failure in %s", label)
+        raise HTTPException(status_code=500, detail="Internal error. Please try again.")
 
 
 # -----------------------------
@@ -156,28 +196,59 @@ def math_lessons():
 
 
 @router.get("/math/question")
-def math_question(lesson_id: int, user=Depends(get_current_user)):
-    return get_math_question(
+def math_question(lesson_id: Optional[int] = None, user=Depends(get_current_user)):
+    if lesson_id is None:
+        _missing_param("lesson_id")
+
+    result = _safe_execute(
+        "math_question",
+        get_math_question,
         lesson_id=lesson_id,
-        user_id=user.get("user_id")
+        user_id=user.get("user_id"),
     )
+
+    if not result or result.get("question_id") is None:
+        _raise_not_found("Question not found")
+
+    return result
 
 
 @router.post("/math/submit")
 def math_submit(payload: dict, user=Depends(get_current_user)):
-    if "paper_code" in payload and "answers" in payload:
-        return submit_math_paper(
-            user_id=user["user_id"],
-            paper_code=payload["paper_code"],
-            answers=payload["answers"],
+    user_id = _require_user_id(user)
+
+    if "paper_code" in payload or "answers" in payload:
+        paper_code = _require_payload_param(payload, "paper_code")
+        answers = _require_payload_param(payload, "answers")
+        return _safe_execute(
+            "math_submit_paper",
+            submit_math_paper,
+            user_id=user_id,
+            paper_code=paper_code,
+            answers=answers,
         )
 
-    return submit_math_answer(
-        student_id=user["user_id"],
-        lesson_id=payload["lesson_id"],
-        question_id=payload["question_id"],
-        selected_option=payload["selected_option"]
+    lesson_id = _require_payload_param(payload, "lesson_id")
+    question_id = _require_payload_param(payload, "question_id")
+    selected_option = _require_payload_param(payload, "selected_option")
+
+    result = _safe_execute(
+        "math_submit",
+        submit_math_answer,
+        student_id=user_id,
+        lesson_id=lesson_id,
+        question_id=question_id,
+        selected_option=selected_option,
     )
+
+    if result.get("error") == "Question not found":
+        _raise_not_found("Question not found")
+
+    if result.get("error"):
+        logger.warning("Practice math submit rejected: %s", result["error"])
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
 
 
 @router.post("/math/retry-incorrect")
@@ -505,33 +576,36 @@ def get_spelling_courses(user=Depends(get_current_user)):
 
 @router.get("/spelling/question")
 def spelling_question(
-    lesson_id: int,
+    lesson_id: Optional[int] = None,
     word_id: Optional[int] = None,
     user=Depends(get_current_user)
 ):
     """
     Returns the next spelling word for a lesson
     """
-    if word_id:
+    user_id = _require_user_id(user)
+
+    if word_id is not None:
         from app.practice.spelling_engine import get_word_by_id
-        return get_word_by_id(user["user_id"], word_id)
+        result = _safe_execute("spelling_question_by_id", get_word_by_id, user_id, word_id)
+        if not result or result.get("word_id") is None or result.get("error"):
+            _raise_not_found("Question not found")
+        return result
 
-    print(f"SPELLING QUESTION DEBUG user={user}")
-    print(f"SPELLING QUESTION DEBUG lesson_id={lesson_id}")
+    if lesson_id is None:
+        _missing_param("lesson_id")
 
-    if not user.get("user_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="User not provisioned in learning system"
-        )
-
-    print(f"SPELLING QUESTION DEBUG user={user}")
-    print(f"SPELLING QUESTION DEBUG lesson_id={lesson_id}")
-
-    return get_spelling_question(
+    result = _safe_execute(
+        "spelling_question",
+        get_spelling_question,
         lesson_id=lesson_id,
-        user_id=user["user_id"]
+        user_id=user_id
     )
+
+    if not result or result.get("word_id") is None:
+        _raise_not_found("Question not found")
+
+    return result
 
 
 @router.get("/spelling/micro-challenge")
@@ -745,36 +819,46 @@ def submit_micro_challenge(
 # -----------------------------
 
 @router.post("/spelling/answer")
-def spelling_answer(req: SpellingAnswerRequest, user=Depends(get_current_user)):
+def spelling_answer(payload: dict, user=Depends(get_current_user)):
     """
     Saves spelling attempt and validates answer
     """
-    if not user.get("user_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="User not provisioned in learning system"
-        )
+    user_id = _require_user_id(user)
+    word_id = _require_payload_param(payload, "word_id")
+    answer = _require_payload_param(payload, "answer")
 
-    return submit_spelling_answer(
-        user_id=user["user_id"],
-        word_id=req.word_id,
-        answer=req.answer
+    result = _safe_execute(
+        "spelling_answer",
+        submit_spelling_answer,
+        user_id=user_id,
+        word_id=word_id,
+        answer=answer,
     )
+
+    if not result or not result.get("correct_word"):
+        _raise_not_found("Question not found")
+
+    return result
 
 
 @router.post("/spelling/submit")
-def spelling_submit(req: SpellingAnswerRequest, user=Depends(get_current_user)):
-    if not user.get("user_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="User not provisioned in learning system"
-        )
+def spelling_submit(payload: dict, user=Depends(get_current_user)):
+    user_id = _require_user_id(user)
+    word_id = _require_payload_param(payload, "word_id")
+    answer = _require_payload_param(payload, "answer")
 
-    return submit_spelling_answer(
-        user_id=user["user_id"],
-        word_id=req.word_id,
-        answer=req.answer
+    result = _safe_execute(
+        "spelling_submit",
+        submit_spelling_answer,
+        user_id=user_id,
+        word_id=word_id,
+        answer=answer,
     )
+
+    if not result or not result.get("correct_word"):
+        _raise_not_found("Question not found")
+
+    return result
 
 
 @router.get("/spelling/recommendations")
@@ -804,32 +888,43 @@ def words_courses(user=Depends(get_current_user)):
 
 
 @router.get("/words/question")
-def words_question(lesson_id: int, user=Depends(get_current_user)):
-    if not user.get("user_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="User not provisioned in learning system"
-        )
+def words_question(lesson_id: Optional[int] = None, user=Depends(get_current_user)):
+    user_id = _require_user_id(user)
 
-    return get_words_question(
+    if lesson_id is None:
+        _missing_param("lesson_id")
+
+    result = _safe_execute(
+        "words_question",
+        get_words_question,
         lesson_id=lesson_id,
-        user_id=user["user_id"],
+        user_id=user_id,
     )
+
+    if not result or result.get("word_id") is None:
+        _raise_not_found("Question not found")
+
+    return result
 
 
 @router.post("/words/submit")
-def words_submit(req: WordsAnswerRequest, user=Depends(get_current_user)):
-    if not user.get("user_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="User not provisioned in learning system"
-        )
+def words_submit(payload: dict, user=Depends(get_current_user)):
+    user_id = _require_user_id(user)
+    word_id = _require_payload_param(payload, "word_id")
+    answer = _require_payload_param(payload, "answer")
 
-    return submit_words_answer(
-        user_id=user["user_id"],
-        word_id=req.word_id,
-        answer=req.answer,
+    result = _safe_execute(
+        "words_submit",
+        submit_words_answer,
+        user_id=user_id,
+        word_id=word_id,
+        answer=answer,
     )
+
+    if not result or not result.get("correct_answer"):
+        _raise_not_found("Question not found")
+
+    return result
 
 # -----------------------------
 # WordSprint (Synonym) Endpoints
@@ -1208,7 +1303,7 @@ def spelling_dashboard_v2(user=Depends(get_current_user)):
 
 @router.get("/comprehension/passages")
 def get_comprehension_passages(user=Depends(get_current_user)):
-    return list_passages()
+    return _safe_execute("get_comprehension_passages", list_passages)
 
 @router.get("/comprehension/courses")
 def get_comprehension_courses(user=Depends(get_current_user)):
@@ -1246,6 +1341,9 @@ def get_comprehension_courses(user=Depends(get_current_user)):
 
         rows = cur.fetchall()
 
+    except Exception:
+        logger.exception("Unexpected practice endpoint failure in get_comprehension_courses")
+        raise HTTPException(status_code=500, detail="Internal error. Please try again.")
     finally:
         cur.close()
         conn.close()
@@ -1284,16 +1382,16 @@ def get_comprehension_courses(user=Depends(get_current_user)):
 
 
 @router.get("/comprehension/start")
-def start_comprehension(passage_id: int, user=Depends(get_current_user)):
-    if not user.get("user_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="User not provisioned"
-        )
+def start_comprehension(passage_id: Optional[int] = None, user=Depends(get_current_user)):
+    if passage_id is None:
+        _missing_param("passage_id")
 
-    result = start_passage(passage_id, user["user_id"])
+    user_id = _require_user_id(user)
+
+    result = _safe_execute("start_comprehension", start_passage, passage_id, user_id)
 
     if not result:
+        logger.warning("Practice comprehension start invalid passage_id: %s", passage_id)
         raise HTTPException(status_code=404, detail="Passage not found")
 
     questions = result["questions"]
@@ -1315,8 +1413,15 @@ def start_comprehension(passage_id: int, user=Depends(get_current_user)):
 
 
 @router.get("/comprehension/question")
-def get_comprehension_question(passage_id: int, user=Depends(get_current_user)):
-    user_id = user["user_id"]
+def get_comprehension_question(
+    passage_id: Optional[int] = None,
+    question_id: Optional[int] = None,
+    user=Depends(get_current_user),
+):
+    if passage_id is None:
+        _missing_param("passage_id")
+
+    user_id = _require_user_id(user)
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1324,21 +1429,25 @@ def get_comprehension_question(passage_id: int, user=Depends(get_current_user)):
     try:
         selected_question_id = None
 
-        cur.execute(
-            """
-            SELECT question_id
-            FROM comprehension_attempts
-            WHERE user_id = %s
-            AND correct = false
-            ORDER BY created_at DESC
-            LIMIT 5
-            """,
-            (user_id,),
-        )
-        weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
+        if question_id is not None:
+            selected_question_id = question_id
 
-        if weak_questions:
-            selected_question_id = random.choice(weak_questions)
+        if selected_question_id is None:
+            cur.execute(
+                """
+                SELECT question_id
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                AND correct = false
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                (user_id,),
+            )
+            weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
+
+            if weak_questions:
+                selected_question_id = random.choice(weak_questions)
 
         if not selected_question_id:
             cur.execute(
@@ -1346,7 +1455,7 @@ def get_comprehension_question(passage_id: int, user=Depends(get_current_user)):
                 SELECT question_id
                 FROM comprehension_questions
                 WHERE passage_id = %s
-                ORDER BY RANDOM()
+                ORDER BY sort_order ASC, question_id ASC
                 LIMIT 1
                 """,
                 (passage_id,),
@@ -1371,7 +1480,7 @@ def get_comprehension_question(passage_id: int, user=Depends(get_current_user)):
                 selected_question_id = safety_row[0]
 
         if not selected_question_id:
-            raise HTTPException(status_code=404, detail="Question not found")
+            _raise_not_found("Question not found")
 
         cur.execute(
             """
@@ -1385,13 +1494,16 @@ def get_comprehension_question(passage_id: int, user=Depends(get_current_user)):
         )
         question = cur.fetchone()
 
+        if question_id is not None and not question:
+            _raise_not_found("Question not found")
+
         if not question:
             cur.execute(
                 """
                 SELECT question_id, question_text, option_a, option_b, option_c, option_d
                 FROM comprehension_questions
                 WHERE passage_id = %s
-                ORDER BY RANDOM()
+                ORDER BY sort_order ASC, question_id ASC
                 LIMIT 1
                 """,
                 (passage_id,),
@@ -1399,13 +1511,18 @@ def get_comprehension_question(passage_id: int, user=Depends(get_current_user)):
             question = cur.fetchone()
 
         if not question:
-            raise HTTPException(status_code=404, detail="Question not found")
+            _raise_not_found("Question not found")
 
         return {
             "question_id": question[0],
             "question_text": question[1],
             "options": [question[2], question[3], question[4], question[5]],
         }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected practice endpoint failure in get_comprehension_question")
+        raise HTTPException(status_code=500, detail="Internal error. Please try again.")
     finally:
         cur.close()
         conn.close()
@@ -1508,17 +1625,24 @@ def get_next_passage(current_passage_id: int, user=Depends(get_current_user)):
 
 @router.post("/comprehension/answer")
 def submit_comprehension_answer(payload: dict, user=Depends(get_current_user)):
-    if not user.get("user_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="User not provisioned in learning system"
-        )
+    user_id = _require_user_id(user)
+    passage_id = _require_payload_param(payload, "passage_id")
+    question_id = _require_payload_param(payload, "question_id")
+    selected_answer = _require_payload_param(payload, "selected_answer")
 
-    return submit_answer(
-        user_id=user["user_id"],
-        passage_id=payload["passage_id"],
-        question_id=payload["question_id"],
-        selected_answer=payload["selected_answer"]
+    from app.comprehension.repository import get_question_by_id
+
+    question = _safe_execute("submit_comprehension_answer.lookup", get_question_by_id, question_id)
+    if not question or question.get("passage_id") != passage_id:
+        _raise_not_found("Question not found")
+
+    return _safe_execute(
+        "submit_comprehension_answer",
+        submit_answer,
+        user_id=user_id,
+        passage_id=passage_id,
+        question_id=question_id,
+        selected_answer=selected_answer,
     )
 
 

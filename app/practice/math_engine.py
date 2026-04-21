@@ -40,97 +40,87 @@ def get_math_question(lesson_id, user_id=None):
     conn = get_connection()
     cur = conn.cursor()
 
-    selected_question_id = None
+    try:
+        selected_question_id = None
 
-    if user_id:
+        if user_id:
+            cur.execute(
+                """
+                SELECT question_id
+                FROM math_attempts
+                WHERE student_id = %s
+                AND is_correct = false
+                AND lesson_id = %s
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                (user_id, lesson_id),
+            )
+            weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
+            if weak_questions:
+                selected_question_id = random.choice(weak_questions)
+
+        if not selected_question_id:
+            cur.execute(
+                """
+                SELECT id
+                FROM math_questions
+                WHERE lesson_id = %s
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (lesson_id,),
+            )
+            fallback_row = cur.fetchone()
+            if fallback_row:
+                selected_question_id = fallback_row[0]
+
+        if not selected_question_id:
+            return {
+                "status": "no_questions",
+                "lesson_id": lesson_id
+            }
+
         cur.execute(
             """
-            SELECT question_id
-            FROM math_attempts
-            WHERE student_id = %s
-            AND is_correct = false
-            AND lesson_id = %s
-            ORDER BY created_at DESC
-            LIMIT 5
+            SELECT
+                id,
+                stem,
+                option_a,
+                option_b,
+                option_c,
+                option_d,
+                correct_option
+            FROM math_questions
+            WHERE id = %s
+              AND lesson_id = %s
+            LIMIT 1
             """,
-            (user_id, lesson_id),
+            (selected_question_id, lesson_id),
         )
-        weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
-        if weak_questions:
-            selected_question_id = random.choice(weak_questions)
 
-    if not selected_question_id:
-        cur.execute(
-            """
-            SELECT id
-            FROM math_questions
-            ORDER BY RANDOM()
-            LIMIT 1;
-            """
-        )
-        fallback_row = cur.fetchone()
-        if fallback_row:
-            selected_question_id = fallback_row[0]
+        row = cur.fetchone()
 
-    if not selected_question_id:
-        cur.execute(
-            """
-            SELECT id
-            FROM math_questions
-            ORDER BY RANDOM()
-            LIMIT 1;
-            """
-        )
-        safety_row = cur.fetchone()
-        if safety_row:
-            selected_question_id = safety_row[0]
+        if not row:
+            return {
+                "status": "no_questions",
+                "lesson_id": lesson_id
+            }
 
-    if not selected_question_id:
+        return {
+            "question_id": row[0],
+            "stem": row[1],
+            "options": [
+                row[2],
+                row[3],
+                row[4],
+                row[5]
+            ],
+            "correct_option": row[6]
+        }
+    finally:
         cur.close()
         conn.close()
-        return {
-            "status": "no_questions",
-            "lesson_id": lesson_id
-        }
-
-    cur.execute(
-        """
-        SELECT
-            id,
-            stem,
-            option_a,
-            option_b,
-            option_c,
-            option_d,
-            correct_option
-        FROM math_questions
-        ORDER BY RANDOM()
-        LIMIT 1;
-        """
-    )
-
-    row = cur.fetchone()
-
-    cur.close()
-    conn.close()
-
-    if not row:
-        return {
-            "status": "no_questions",
-            "lesson_id": lesson_id
-        }
-
-    return {
-        "question_id": row[0],
-        "stem": row[1],
-        "options": [
-            row[2],
-            row[3],
-            row[4],
-            row[5]
-        ],
-        "correct_option": row[6]
-    }
 
 
 def submit_math_answer(student_id, lesson_id, question_id, selected_option):
