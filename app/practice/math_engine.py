@@ -1,161 +1,48 @@
-from app.database import get_connection
-import random
+from app.repositories.math_repository import (
+    get_math_lessons_list,
+    get_math_next_question,
+    get_math_question_record,
+    record_math_attempt,
+)
 
 
 def get_math_lessons():
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT
-            id,
-            lesson_name,
-            display_name,
-            topic,
-            difficulty
-        FROM math_lessons
-        WHERE is_active = TRUE
-        ORDER BY id;
-    """)
-
-    rows = cur.fetchall()
-
-    lessons = []
-    for r in rows:
-        lessons.append({
-            "lesson_id": r[0],
-            "lesson_name": r[1],
-            "display_name": r[2],
-            "topic": r[3],
-            "difficulty": r[4],
-        })
-
-    cur.close()
-    conn.close()
-
-    return lessons
+    return get_math_lessons_list()
 
 
 def get_math_question(lesson_id, user_id=None):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        selected_question_id = None
-
-        if user_id:
-            cur.execute(
-                """
-                SELECT question_id
-                FROM math_attempts
-                WHERE student_id = %s
-                AND is_correct = false
-                AND lesson_id = %s
-                ORDER BY created_at DESC
-                LIMIT 5
-                """,
-                (user_id, lesson_id),
-            )
-            weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
-            if weak_questions:
-                selected_question_id = random.choice(weak_questions)
-
-        if not selected_question_id:
-            cur.execute(
-                """
-                SELECT id
-                FROM math_questions
-                WHERE lesson_id = %s
-                ORDER BY id ASC
-                LIMIT 1
-                """,
-                (lesson_id,),
-            )
-            fallback_row = cur.fetchone()
-            if fallback_row:
-                selected_question_id = fallback_row[0]
-
-        if not selected_question_id:
-            return {
-                "status": "no_questions",
-                "lesson_id": lesson_id
-            }
-
-        cur.execute(
-            """
-            SELECT
-                id,
-                stem,
-                option_a,
-                option_b,
-                option_c,
-                option_d,
-                correct_option
-            FROM math_questions
-            WHERE id = %s
-              AND lesson_id = %s
-            LIMIT 1
-            """,
-            (selected_question_id, lesson_id),
-        )
-
-        row = cur.fetchone()
-
-        if not row:
-            return {
-                "status": "no_questions",
-                "lesson_id": lesson_id
-            }
-
+    item = get_math_next_question(user_id or 0, lesson_id)
+    if not item:
         return {
-            "question_id": row[0],
-            "stem": row[1],
-            "options": [
-                row[2],
-                row[3],
-                row[4],
-                row[5]
-            ],
-            "correct_option": row[6]
+            "status": "no_questions",
+            "lesson_id": lesson_id
         }
-    finally:
-        cur.close()
-        conn.close()
+
+    return {
+        "question_id": item["question_id"],
+        "stem": item["stem"],
+        "options": [
+            item["option_a"],
+            item["option_b"],
+            item["option_c"],
+            item["option_d"]
+        ],
+        "correct_option": item["correct_option"]
+    }
 
 
 def submit_math_answer(student_id, lesson_id, question_id, selected_option):
-    from app.database import get_connection
+    question = get_math_question_record(question_id)
 
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT
-            correct_option,
-            option_a,
-            option_b,
-            option_c,
-            option_d,
-            option_e
-        FROM math_questions
-        WHERE id = %s
-    """, (question_id,))
-
-    row = cur.fetchone()
-
-    if not row:
-        cur.close()
-        conn.close()
+    if not question:
         return {"error": "Question not found"}
 
-    correct_option, option_a, option_b, option_c, option_d, option_e = row
-
     options_map = {
-        "A": option_a,
-        "B": option_b,
-        "C": option_c,
-        "D": option_d,
-        "E": option_e,
+        "A": question["option_a"],
+        "B": question["option_b"],
+        "C": question["option_c"],
+        "D": question["option_d"],
+        "E": question["option_e"],
     }
 
     normalized_selected = None
@@ -174,25 +61,19 @@ def submit_math_answer(student_id, lesson_id, question_id, selected_option):
                     break
 
     if normalized_selected is None:
-        cur.close()
-        conn.close()
         return {
             "error": "Invalid selected option"
         }
 
-    is_correct = (normalized_selected == correct_option)
-
-    cur.execute("""
-        INSERT INTO math_attempts
-        (student_id, question_id, lesson_id, selected_option, is_correct, created_at)
-        VALUES (%s, %s, %s, %s, %s, NOW())
-    """, (student_id, question_id, lesson_id, normalized_selected, is_correct))
-
-    conn.commit()
-    cur.close()
-    conn.close()
+    is_correct = (normalized_selected == question["correct_option"])
+    record_math_attempt(
+        user_id=student_id,
+        question_id=question_id,
+        correct=is_correct,
+        selected_option=normalized_selected,
+    )
 
     return {
         "correct": is_correct,
-        "correct_option": correct_option
+        "correct_option": question["correct_option"]
     }

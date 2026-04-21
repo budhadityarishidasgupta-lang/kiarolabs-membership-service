@@ -1,5 +1,15 @@
 import random
-from app.database import get_connection
+
+from app.repositories.spelling_repository import (
+    get_spelling_next_item,
+    get_spelling_micro_challenge_data,
+    get_spelling_word_details,
+    record_spelling_attempt,
+)
+from app.repositories.spelling_stats_repository import (
+    get_spelling_weak_pattern,
+    update_spelling_pattern_stats,
+)
 
 
 def clean_text(value):
@@ -11,17 +21,12 @@ def clean_text(value):
     return text
 
 
-# ---------------------------------------------------------
-# Word masking helper
-# ---------------------------------------------------------
 def mask_word(word: str, patterns: list = None, blanks_count: int = 2):
     """
     Replace internal letters with underscores.
     Keeps first and last letters visible.
     """
-
     try:
-
         if not word or len(word) <= 3:
             return word
 
@@ -60,7 +65,6 @@ def mask_word(word: str, patterns: list = None, blanks_count: int = 2):
             return word
 
         blanks_count = min(blanks_count, len(candidates))
-
         hidden_positions = random.sample(candidates, blanks_count)
 
         for pos in hidden_positions:
@@ -69,76 +73,24 @@ def mask_word(word: str, patterns: list = None, blanks_count: int = 2):
         return "".join(chars)
 
     except Exception:
-        # never crash masking
         return word
 
 
-# ---------------------------------------------------------
-# Pattern extraction helper
-# ---------------------------------------------------------
 def extract_patterns(word: str):
     patterns = ["ph", "gh", "tion", "sion", "ough", "dge", "tch", "ck", "wr", "kn"]
     found = []
 
-    for p in patterns:
-        if p in word.lower():
-            found.append(p)
+    for pattern in patterns:
+        if pattern in word.lower():
+            found.append(pattern)
 
     return found
 
 
-# ---------------------------------------------------------
-# Get spelling question
-# ---------------------------------------------------------
 def get_spelling_question(lesson_id: int, user_id: int):
-
-    conn = None
-    cur = None
-
     try:
-
-        conn = get_connection()
-        cur = conn.cursor()
-
-        selected_word_id = None
-
-        # STEP 1: STRICT lesson-based selection (deterministic)
-        cur.execute(
-            """
-            SELECT w.word_id
-            FROM spelling_lesson_words lw
-            JOIN spelling_words w
-            ON lw.word_id = w.word_id
-            WHERE lw.lesson_id = %s
-            ORDER BY lw.word_id
-            LIMIT 1
-            """,
-            (lesson_id,),
-        )
-
-        row = cur.fetchone()
-        if row:
-            selected_word_id = row[0]
-
-        # STEP 2 fallback: random word inside lesson
-        if not selected_word_id:
-            cur.execute(
-                """
-                SELECT w.word_id
-                FROM spelling_lesson_words lw
-                JOIN spelling_words w
-                    ON lw.word_id = w.word_id
-                WHERE lw.lesson_id = %s
-                ORDER BY RANDOM()
-                LIMIT 1
-                """,
-                (lesson_id,),
-            )
-            fallback_row = cur.fetchone()
-            if fallback_row:
-                selected_word_id = fallback_row[0]
-
-        if not selected_word_id:
+        item = get_spelling_next_item(user_id, lesson_id)
+        if not item:
             return {
                 "word_id": None,
                 "word_audio": "",
@@ -147,74 +99,19 @@ def get_spelling_question(lesson_id: int, user_id: int):
                 "example_sentence": "",
             }
 
-        # Load selected word details
-        cur.execute(
-            """
-            SELECT
-                w.word_id,
-                w.word,
-                COALESCE(w.hint, '') AS hint,
-                COALESCE(w.example_sentence, '') AS example_sentence
-            FROM spelling_lesson_words lw
-            JOIN spelling_words w
-                ON lw.word_id = w.word_id
-            WHERE lw.lesson_id = %s
-            AND w.word_id = %s
-            LIMIT 1
-            """,
-            (lesson_id, selected_word_id),
-        )
-
-        row = cur.fetchone()
-
-        if not row:
-            return {
-                "word_id": None,
-                "word_audio": "",
-                "masked_word": "",
-                "hint": "",
-                "example_sentence": "",
-            }
-
-        word_id, word, hint, example_sentence = row
-        clean_hint = clean_text(hint)
-        clean_example = clean_text(example_sentence)
-
-        weak_pattern = None
-        try:
-            cur.execute(
-                """
-                SELECT pattern
-                FROM spelling_pattern_stats
-                WHERE user_id = %s
-                ORDER BY accuracy ASC
-                LIMIT 1
-                """,
-                (user_id,),
-            )
-            pattern_row = cur.fetchone()
-            if pattern_row:
-                weak_pattern = pattern_row[0]
-        except Exception:
-            weak_pattern = None
-
+        weak_pattern = get_spelling_weak_pattern(user_id)
         patterns = [weak_pattern] if weak_pattern else None
-        masked_word = mask_word(word, patterns, blanks_count=3)
 
         return {
-            "word_id": word_id,
-            # 🔒 DO NOT expose answer
+            "word_id": item["word_id"],
             "word_audio": "",
-            # ✅ UI must use this
-            "masked_word": masked_word,
-            "hint": clean_hint,
-            "example_sentence": clean_example,
+            "masked_word": mask_word(item["word"], patterns, blanks_count=3),
+            "hint": clean_text(item["hint"]),
+            "example_sentence": clean_text(item["example_sentence"]),
         }
 
     except Exception as e:
-
         print("SPELLING QUESTION ERROR:", str(e))
-
         return {
             "word_id": None,
             "word_audio": "",
@@ -223,130 +120,72 @@ def get_spelling_question(lesson_id: int, user_id: int):
             "example_sentence": "",
         }
 
-    finally:
-
-        if cur:
-            cur.close()
-
-        if conn:
-            conn.close()
-
 
 def get_word_by_id(user_id: int, word_id: int):
-    from app.database import get_connection
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT word, hint, example_sentence
-        FROM spelling_words
-        WHERE word_id = %s
-    """, (word_id,))
-
-    row = cur.fetchone()
-
-    if not row:
+    details = get_spelling_word_details(word_id)
+    if not details:
         return {"error": "Word not found"}
 
-    word, hint, example = row
-
-    def mask_word_simple(w):
-        return w[0] + "_"*(len(w)-2) + w[-1] if len(w) > 2 else w
+    def mask_word_simple(word):
+        return word[0] + "_" * (len(word) - 2) + word[-1] if len(word) > 2 else word
 
     return {
         "word_id": word_id,
-        "masked_word": mask_word_simple(word),
-        "hint": hint or "",
-        "example_sentence": example or ""
+        "masked_word": mask_word_simple(details["word"]),
+        "hint": details["hint"] or "",
+        "example_sentence": details["example_sentence"] or "",
     }
 
 
 def build_micro_challenge(user_id: int, word_id: int):
-    from app.database import get_connection
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT word, hint, example_sentence
-        FROM spelling_words
-        WHERE word_id = %s
-    """, (word_id,))
-
-    row = cur.fetchone()
-
-    if not row:
+    data = get_spelling_micro_challenge_data(word_id)
+    if not data:
         return {"error": "Word not found"}
 
-    word, hint, example = row
+    word = data["word"]
+    hint = data["hint"]
+    example = data["example_sentence"]
 
-    def mask_variation(word, level):
+    def mask_variation(source_word, level):
         if level == 1:
-            return word[0] + "_"*(len(word)-2) + word[-1]
-        elif level == 2:
-            return "_" + word[1:-1] + "_"
-        else:
-            return word[0:2] + "_"*(len(word)-3) + word[-1]
+            return source_word[0] + "_" * (len(source_word) - 2) + source_word[-1]
+        if level == 2:
+            return "_" + source_word[1:-1] + "_"
+        return source_word[0:2] + "_" * (len(source_word) - 3) + source_word[-1]
 
     questions = [
         {
             "attempt": 1,
             "masked_word": mask_variation(word, 1),
             "hint": hint or "",
-            "example": example or ""
+            "example": example or "",
         },
         {
             "attempt": 2,
             "masked_word": mask_variation(word, 2),
             "hint": hint or "",
-            "example": example or ""
+            "example": example or "",
         },
         {
             "attempt": 3,
             "masked_word": mask_variation(word, 3),
             "hint": hint or "",
-            "example": example or ""
-        }
+            "example": example or "",
+        },
     ]
 
     return {
         "word_id": word_id,
         "word": word,
         "questions": questions,
-        "total": 3
+        "total": 3,
     }
 
 
-# ---------------------------------------------------------
-# Submit spelling answer
-# ---------------------------------------------------------
 def submit_spelling_answer(word_id: int, answer: str, user_id: int):
-
-    conn = None
-    cur = None
-
     try:
-
-        conn = get_connection()
-        cur = conn.cursor()
-
-        cur.execute(
-            """
-            SELECT
-                word,
-                COALESCE(hint, '') AS hint,
-                COALESCE(example_sentence, '') AS example_sentence
-            FROM spelling_words
-            WHERE word_id = %s
-            LIMIT 1
-            """,
-            (word_id,),
-        )
-
-        row = cur.fetchone()
-
-        if not row:
+        details = get_spelling_word_details(word_id)
+        if not details:
             return {
                 "correct": False,
                 "correct_word": "",
@@ -354,151 +193,31 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
                 "example_sentence": "",
             }
 
-        correct_word, hint, example_sentence = row
-        clean_correct_word = clean_text(correct_word)
-        clean_hint = clean_text(hint)
-        clean_example = clean_text(example_sentence)
+        clean_correct_word = clean_text(details["word"])
+        clean_hint = clean_text(details["hint"])
+        clean_example = clean_text(details["example_sentence"])
 
-        # normalize spelling comparison
         correct = answer.strip().lower() == clean_correct_word.lower()
         pattern_hint = None
 
         if not correct:
-            cur.execute(
-                """
-                SELECT pattern
-                FROM spelling_pattern_stats
-                WHERE user_id = %s
-                ORDER BY accuracy ASC
-                LIMIT 1
-                """,
-                (user_id,),
-            )
+            pattern = get_spelling_weak_pattern(user_id)
+            if pattern and pattern in clean_correct_word.lower():
+                pattern_hint = f"Focus on pattern '{pattern}'"
 
-            row = cur.fetchone()
-
-            if row:
-                pattern = row[0]
-
-                if pattern in clean_correct_word.lower():
-                    pattern_hint = f"Focus on pattern '{pattern}'"
-
-        # validate platform user exists
-        cur.execute(
-            """
-            SELECT user_id
-            FROM users
-            WHERE user_id = %s
-            """,
-            (user_id,),
+        record_spelling_attempt(
+            user_id=user_id,
+            lesson_id=0,
+            word_id=word_id,
+            submitted_text=answer,
+            correct=correct,
         )
 
-        user_row = cur.fetchone()
-
-        if not user_row:
-            raise Exception("Invalid user_id")
-
-        # record attempt
-        cur.execute(
-            """
-            INSERT INTO spelling_attempts
-            (user_id, word_id, correct, time_taken, blanks_count, wrong_letters_count, course_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (user_id, word_id, correct, 0, 0, 0, 0),
+        update_spelling_pattern_stats(
+            user_id,
+            extract_patterns(clean_correct_word),
+            correct,
         )
-
-        # ---- UPDATE STATS TABLE ----
-        correct_count = 1 if correct else 0
-        wrong_count = 0 if correct else 1
-
-        cur.execute(
-            """
-            INSERT INTO spelling_word_stats (
-                user_id,
-                word_id,
-                attempts_count,
-                correct_count,
-                wrong_count,
-                last_attempt_at,
-                last_correct_at,
-                accuracy
-            )
-            VALUES (
-                %s,
-                %s,
-                1,
-                %s,
-                %s,
-                NOW(),
-                CASE WHEN %s = 1 THEN NOW() ELSE NULL END,
-                %s
-            )
-            ON CONFLICT (user_id, word_id)
-            DO UPDATE SET
-                attempts_count = spelling_word_stats.attempts_count + 1,
-                correct_count = spelling_word_stats.correct_count + EXCLUDED.correct_count,
-                wrong_count = spelling_word_stats.wrong_count + EXCLUDED.wrong_count,
-                last_attempt_at = NOW(),
-                last_correct_at = CASE
-                    WHEN EXCLUDED.correct_count = 1 THEN NOW()
-                    ELSE spelling_word_stats.last_correct_at
-                END,
-                accuracy = (
-                    (spelling_word_stats.correct_count + EXCLUDED.correct_count)::float /
-                    (spelling_word_stats.attempts_count + 1)
-                )
-            """,
-            (
-                user_id,
-                word_id,
-                correct_count,
-                wrong_count,
-                correct_count,
-                1.0 if correct else 0.0,
-            ),
-        )
-
-        patterns = extract_patterns(clean_correct_word)
-
-        for p in patterns:
-
-            correct_count = 1 if correct else 0
-            wrong_count = 0 if correct else 1
-
-            cur.execute(
-                """
-                INSERT INTO spelling_pattern_stats (
-                    user_id,
-                    pattern,
-                    attempts_count,
-                    correct_count,
-                    wrong_count,
-                    accuracy,
-                    last_attempt_at
-                )
-                VALUES (%s, %s, 1, %s, %s, %s, NOW())
-                ON CONFLICT (user_id, pattern)
-                DO UPDATE SET
-                    attempts_count = spelling_pattern_stats.attempts_count + 1,
-                    correct_count = spelling_pattern_stats.correct_count + EXCLUDED.correct_count,
-                    wrong_count = spelling_pattern_stats.wrong_count + EXCLUDED.wrong_count,
-                    last_attempt_at = NOW(),
-                    accuracy = (
-                        (spelling_pattern_stats.correct_count + EXCLUDED.correct_count)::float /
-                        (spelling_pattern_stats.attempts_count + 1)
-                    )
-                """,
-                (
-                    user_id,
-                    p,
-                    correct_count,
-                    wrong_count,
-                    1.0 if correct else 0.0,
-                ),
-            )
-
-        conn.commit()
 
         return {
             "correct": correct,
@@ -508,14 +227,5 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
         }
 
     except Exception as e:
-
         print("SPELLING SUBMIT ERROR:", str(e))
         raise
-
-    finally:
-
-        if cur:
-            cur.close()
-
-        if conn:
-            conn.close()
