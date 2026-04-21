@@ -101,6 +101,92 @@ def _safe_execute(label: str, func, *args, **kwargs):
         raise HTTPException(status_code=500, detail="Internal error. Please try again.")
 
 
+def _get_module_resume(cur, module: str, user_id: int):
+    module_key = (module or "").strip().lower()
+
+    if module_key == "spelling":
+        cur.execute(
+            """
+            SELECT lw.lesson_id, sa.word_id
+            FROM spelling_attempts sa
+            LEFT JOIN spelling_lesson_words lw
+                ON lw.word_id = sa.word_id
+            WHERE sa.user_id = %s
+            ORDER BY sa.created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "lesson_id": row[0],
+            "question_id": row[1],
+        }
+
+    if module_key == "words":
+        cur.execute(
+            """
+            SELECT lw.lesson_id, wa.word_id
+            FROM words_attempts wa
+            LEFT JOIN words_lesson_words lw
+                ON lw.word_id = wa.word_id
+            WHERE wa.user_id = %s
+            ORDER BY wa.created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "lesson_id": row[0],
+            "question_id": row[1],
+        }
+
+    if module_key in {"math", "maths"}:
+        cur.execute(
+            """
+            SELECT lesson_id, question_id
+            FROM math_attempts
+            WHERE student_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "lesson_id": row[0],
+            "question_id": row[1],
+        }
+
+    if module_key == "comprehension":
+        cur.execute(
+            """
+            SELECT passage_id, question_id
+            FROM comprehension_attempts
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "lesson_id": row[0],
+            "question_id": row[1],
+        }
+
+    raise HTTPException(status_code=404, detail="Module not found")
+
+
 # -----------------------------
 # Request Models
 # -----------------------------
@@ -1262,6 +1348,28 @@ def get_resume_learning(user=Depends(get_current_user)):
 
         return result
 
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/{module}/resume")
+def get_module_resume(module: str, user=Depends(get_current_user)):
+    user_id = _require_user_id(user)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        result = _get_module_resume(cur, module, user_id)
+        if not result:
+            _raise_not_found("Resume not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected practice endpoint failure in get_module_resume")
+        raise HTTPException(status_code=500, detail="Internal error. Please try again.")
     finally:
         cur.close()
         conn.close()
