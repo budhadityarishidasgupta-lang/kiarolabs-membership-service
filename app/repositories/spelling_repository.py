@@ -1,5 +1,3 @@
-from uuid import uuid4
-
 from app.database import get_connection
 from app.repositories.spelling_stats_repository import update_spelling_stats_from_attempt
 
@@ -169,6 +167,10 @@ def record_spelling_attempt(
     cur = conn.cursor()
 
     try:
+        lesson_id = None
+        question_id = None
+        session_id = None
+
         cur.execute(
             """
             INSERT INTO spelling_attempts
@@ -197,8 +199,8 @@ def record_spelling_attempt(
                 0,
                 0,
                 lesson_id,
-                str(uuid4()),
-                str(uuid4()),
+                question_id,
+                session_id,
                 "v1",
             ),
         )
