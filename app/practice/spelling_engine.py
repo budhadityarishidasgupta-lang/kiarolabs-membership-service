@@ -99,10 +99,19 @@ def get_spelling_question(lesson_id: int, user_id: int):
                 lesson_id=lesson_id,
                 conn=conn,
             )
+            resume_word = None
+            if last_word_id:
+                resume_word = get_spelling_word_details(
+                    word_id=last_word_id,
+                    conn=conn,
+                )
         finally:
             conn.close()
 
-        item = get_spelling_next_item(user_id, lesson_id)
+        if resume_word:
+            item = resume_word
+        else:
+            item = get_spelling_next_item(user_id, lesson_id)
         if not item:
             return {
                 "word_id": None,
@@ -111,6 +120,7 @@ def get_spelling_question(lesson_id: int, user_id: int):
                 "hint": "",
                 "example_sentence": "",
                 "resume_from_word_id": last_word_id,
+                "resumed": False,
             }
 
         weak_pattern = get_spelling_weak_pattern(user_id)
@@ -125,6 +135,7 @@ def get_spelling_question(lesson_id: int, user_id: int):
             "hint": clean_text(item["hint"]),
             "example_sentence": clean_text(item["example_sentence"]),
             "resume_from_word_id": last_word_id,
+            "resumed": bool(resume_word),
         }
 
     except Exception as e:

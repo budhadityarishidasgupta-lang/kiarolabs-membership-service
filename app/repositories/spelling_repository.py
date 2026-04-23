@@ -152,8 +152,11 @@ def get_spelling_next_item(user_id: int, lesson_id: int):
         conn.close()
 
 
-def get_spelling_word_details(word_id: int):
-    conn = get_connection()
+def get_spelling_word_details(word_id: int, conn=None):
+    owns_connection = conn is None
+    if owns_connection:
+        conn = get_connection()
+
     cur = conn.cursor()
 
     try:
@@ -177,7 +180,8 @@ def get_spelling_word_details(word_id: int):
         }
     finally:
         cur.close()
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 
 def record_spelling_attempt(
