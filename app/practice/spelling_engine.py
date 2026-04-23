@@ -1,4 +1,5 @@
 import random
+import uuid
 
 from app.repositories.spelling_repository import (
     get_spelling_next_item,
@@ -101,8 +102,10 @@ def get_spelling_question(lesson_id: int, user_id: int):
 
         weak_pattern = get_spelling_weak_pattern(user_id)
         patterns = [weak_pattern] if weak_pattern else None
+        question_id = str(uuid.uuid4())
 
         return {
+            "question_id": question_id,
             "word_id": item["word_id"],
             "word_audio": "",
             "masked_word": mask_word(item["word"], patterns, blanks_count=3),
@@ -182,7 +185,13 @@ def build_micro_challenge(user_id: int, word_id: int):
     }
 
 
-def submit_spelling_answer(word_id: int, answer: str, user_id: int, session_id: str | None = None):
+def submit_spelling_answer(
+    word_id: int,
+    answer: str,
+    user_id: int,
+    session_id: str | None = None,
+    question_id: str | None = None,
+):
     try:
         details = get_spelling_word_details(word_id)
         if not details:
@@ -212,6 +221,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int, session_id: 
             submitted_text=answer,
             correct=correct,
             session_id=session_id,
+            question_id=question_id,
         )
 
         update_spelling_pattern_stats(
