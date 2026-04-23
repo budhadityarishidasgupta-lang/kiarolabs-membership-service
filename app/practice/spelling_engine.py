@@ -6,6 +6,7 @@ from app.repositories.spelling_repository import (
     get_resume_word_id,
     get_weak_word_id,
     get_lesson_id_for_word,
+    is_word_mastered,
     get_spelling_next_item,
     get_spelling_micro_challenge_data,
     get_spelling_word_details,
@@ -122,49 +123,58 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     word_id=resume_word_id,
                     conn=conn,
                 )
-        finally:
-            conn.close()
 
-        if weak_word:
-            item = weak_word
-        elif resume_word:
-            item = resume_word
-        else:
-            item = get_spelling_next_item(user_id, lesson_id)
-        if not item:
+            if weak_word:
+                item = weak_word
+            elif resume_word:
+                item = resume_word
+            else:
+                item = get_spelling_next_item(user_id, lesson_id)
+
+            if not item:
+                return {
+                    "word_id": None,
+                    "word_audio": "",
+                    "masked_word": "",
+                    "hint": "",
+                    "example_sentence": "",
+                    "weak_word_id": weak_word_id,
+                    "resume_from_word_id": resume_word_id,
+                    "resumed": False,
+                    "resume_strategy": "last_correct_next",
+                    "adaptive_strategy": "weak_priority_then_resume",
+                }
+
+            mastered = is_word_mastered(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                word_id=item["word_id"],
+                conn=conn,
+            )
+
+            weak_pattern = get_spelling_weak_pattern(user_id)
+            patterns = [weak_pattern] if weak_pattern else None
+            question_id = str(uuid.uuid4())
+            session_id = session_id or str(uuid.uuid4())
+
             return {
-                "word_id": None,
+                "question_id": question_id,
+                "session_id": session_id,
+                "lesson_id": lesson_id,
+                "word_id": item["word_id"],
                 "word_audio": "",
-                "masked_word": "",
-                "hint": "",
-                "example_sentence": "",
+                "masked_word": mask_word(item["word"], patterns, blanks_count=3),
+                "hint": clean_text(item["hint"]),
+                "example_sentence": clean_text(item["example_sentence"]),
                 "weak_word_id": weak_word_id,
                 "resume_from_word_id": resume_word_id,
-                "resumed": False,
+                "resumed": bool(resume_word),
                 "resume_strategy": "last_correct_next",
                 "adaptive_strategy": "weak_priority_then_resume",
+                "mastered": mastered,
             }
-
-        weak_pattern = get_spelling_weak_pattern(user_id)
-        patterns = [weak_pattern] if weak_pattern else None
-        question_id = str(uuid.uuid4())
-        session_id = session_id or str(uuid.uuid4())
-
-        return {
-            "question_id": question_id,
-            "session_id": session_id,
-            "lesson_id": lesson_id,
-            "word_id": item["word_id"],
-            "word_audio": "",
-            "masked_word": mask_word(item["word"], patterns, blanks_count=3),
-            "hint": clean_text(item["hint"]),
-            "example_sentence": clean_text(item["example_sentence"]),
-            "weak_word_id": weak_word_id,
-            "resume_from_word_id": resume_word_id,
-            "resumed": bool(resume_word),
-            "resume_strategy": "last_correct_next",
-            "adaptive_strategy": "weak_priority_then_resume",
-        }
+        finally:
+            conn.close()
 
     except Exception as e:
         print("SPELLING QUESTION ERROR:", str(e))

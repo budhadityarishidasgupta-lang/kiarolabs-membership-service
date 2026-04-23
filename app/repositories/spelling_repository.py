@@ -116,6 +116,43 @@ def get_lesson_id_for_word(word_id: int, conn=None):
             conn.close()
 
 
+def is_word_mastered(user_id, lesson_id, word_id, conn):
+    """
+    Returns True if the word is mastered for this user in this lesson.
+    Mastery is lesson-scoped and derived only from attempts.
+    """
+
+    query = """
+        WITH recent_attempts AS (
+            SELECT correct
+            FROM spelling_attempts
+            WHERE user_id = %s
+              AND lesson_id = %s
+              AND word_id = %s
+            ORDER BY created_at DESC
+            LIMIT 2
+        )
+        SELECT
+            COUNT(*) AS total_recent,
+            SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END) AS correct_recent,
+            SUM(CASE WHEN correct = FALSE THEN 1 ELSE 0 END) AS wrong_recent
+        FROM recent_attempts
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, (user_id, lesson_id, word_id))
+        row = cur.fetchone()
+
+    if not row:
+        return False
+
+    total_recent = row[0] or 0
+    correct_recent = row[1] or 0
+    wrong_recent = row[2] or 0
+
+    return total_recent == 2 and correct_recent == 2 and wrong_recent == 0
+
+
 def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:
     cur.execute(
         """
