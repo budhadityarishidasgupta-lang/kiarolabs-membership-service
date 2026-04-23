@@ -7,6 +7,7 @@ from app.repositories.spelling_repository import (
     get_weak_word_id,
     get_lesson_id_for_word,
     is_word_mastered,
+    get_next_unmastered_word,
     get_spelling_next_item,
     get_spelling_micro_challenge_data,
     get_spelling_word_details,
@@ -124,10 +125,24 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     conn=conn,
                 )
 
+            next_unmastered_word_id = get_next_unmastered_word(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                conn=conn,
+            )
+            next_unmastered_word = None
+            if next_unmastered_word_id:
+                next_unmastered_word = get_spelling_word_details(
+                    word_id=next_unmastered_word_id,
+                    conn=conn,
+                )
+
             if weak_word:
                 item = weak_word
             elif resume_word:
                 item = resume_word
+            elif next_unmastered_word:
+                item = next_unmastered_word
             else:
                 item = get_spelling_next_item(user_id, lesson_id)
 
@@ -140,9 +155,10 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     "example_sentence": "",
                     "weak_word_id": weak_word_id,
                     "resume_from_word_id": resume_word_id,
+                    "next_unmastered_word_id": next_unmastered_word_id,
                     "resumed": False,
                     "resume_strategy": "last_correct_next",
-                    "adaptive_strategy": "weak_priority_then_resume",
+                    "adaptive_strategy": "weak_then_resume_then_unmastered",
                 }
 
             mastered = is_word_mastered(
@@ -168,9 +184,10 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "example_sentence": clean_text(item["example_sentence"]),
                 "weak_word_id": weak_word_id,
                 "resume_from_word_id": resume_word_id,
+                "next_unmastered_word_id": next_unmastered_word_id,
                 "resumed": bool(resume_word),
                 "resume_strategy": "last_correct_next",
-                "adaptive_strategy": "weak_priority_then_resume",
+                "adaptive_strategy": "weak_then_resume_then_unmastered",
                 "mastered": mastered,
             }
         finally:

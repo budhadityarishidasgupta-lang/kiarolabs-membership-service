@@ -153,6 +153,36 @@ def is_word_mastered(user_id, lesson_id, word_id, conn):
     return total_recent == 2 and correct_recent == 2 and wrong_recent == 0
 
 
+def get_next_unmastered_word(user_id, lesson_id, conn):
+    """
+    Returns next unmastered word in lesson.
+    Skips mastered words.
+    """
+
+    query = """
+        SELECT slw.word_id
+        FROM spelling_lesson_words slw
+        WHERE slw.lesson_id = %s
+          AND slw.word_id NOT IN (
+              SELECT word_id
+              FROM spelling_attempts
+              WHERE user_id = %s
+                AND lesson_id = %s
+              GROUP BY word_id
+              HAVING COUNT(*) FILTER (WHERE correct = TRUE) >= 2
+                 AND COUNT(*) FILTER (WHERE correct = FALSE) = 0
+          )
+        ORDER BY slw.word_id ASC
+        LIMIT 1
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, (lesson_id, user_id, lesson_id))
+        result = cur.fetchone()
+
+    return result[0] if result else None
+
+
 def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:
     cur.execute(
         """
