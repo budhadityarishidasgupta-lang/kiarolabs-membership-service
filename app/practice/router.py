@@ -2,6 +2,7 @@ print("🚀 COMPREHENSION ROUTER LOADED")
 print("🚀 ROUTER FILE IS LOADING")
 
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import Optional
@@ -912,6 +913,7 @@ def spelling_answer(payload: dict, user=Depends(get_current_user)):
     user_id = _require_user_id(user)
     word_id = _require_payload_param(payload, "word_id")
     answer = _require_payload_param(payload, "answer")
+    session_id = str(uuid.uuid4())
 
     result = _safe_execute(
         "spelling_answer",
@@ -919,6 +921,7 @@ def spelling_answer(payload: dict, user=Depends(get_current_user)):
         user_id=user_id,
         word_id=word_id,
         answer=answer,
+        session_id=session_id,
     )
 
     if not result or not result.get("correct_word"):
@@ -932,6 +935,7 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
     user_id = _require_user_id(user)
     word_id = _require_payload_param(payload, "word_id")
     answer = _require_payload_param(payload, "answer")
+    session_id = str(uuid.uuid4())
 
     result = _safe_execute(
         "spelling_submit",
@@ -939,6 +943,7 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
         user_id=user_id,
         word_id=word_id,
         answer=answer,
+        session_id=session_id,
     )
 
     if not result or not result.get("correct_word"):

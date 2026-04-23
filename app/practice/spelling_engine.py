@@ -182,7 +182,7 @@ def build_micro_challenge(user_id: int, word_id: int):
     }
 
 
-def submit_spelling_answer(word_id: int, answer: str, user_id: int):
+def submit_spelling_answer(word_id: int, answer: str, user_id: int, session_id: str | None = None):
     try:
         details = get_spelling_word_details(word_id)
         if not details:
@@ -211,6 +211,7 @@ def submit_spelling_answer(word_id: int, answer: str, user_id: int):
             word_id=word_id,
             submitted_text=answer,
             correct=correct,
+            session_id=session_id,
         )
 
         update_spelling_pattern_stats(

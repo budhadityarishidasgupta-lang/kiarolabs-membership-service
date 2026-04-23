@@ -164,6 +164,7 @@ def record_spelling_attempt(
     word_id: int,
     submitted_text: str,
     correct: bool,
+    session_id: str | None = None,
 ):
     conn = get_connection()
     cur = conn.cursor()
@@ -178,7 +179,7 @@ def record_spelling_attempt(
 
         lesson_id = None
         question_id = None
-        session_id = None
+        session_id = session_id if session_id else None
         contract_version = "v1"
 
         query = """
