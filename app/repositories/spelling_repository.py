@@ -32,6 +32,28 @@ def get_spelling_micro_challenge_data(word_id: int):
         conn.close()
 
 
+def get_last_attempted_word(user_id, lesson_id, conn):
+    """
+    Returns the last attempted word_id for a user in a lesson.
+    Safe read-only function.
+    """
+
+    query = """
+        SELECT word_id
+        FROM spelling_attempts
+        WHERE user_id = %s
+          AND lesson_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, (user_id, lesson_id))
+        result = cur.fetchone()
+
+    return result[0] if result else None
+
+
 def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:
     cur.execute(
         """

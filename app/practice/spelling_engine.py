@@ -1,7 +1,9 @@
 import random
 import uuid
 
+from app.database import get_connection
 from app.repositories.spelling_repository import (
+    get_last_attempted_word,
     get_spelling_next_item,
     get_spelling_micro_challenge_data,
     get_spelling_word_details,
@@ -90,6 +92,16 @@ def extract_patterns(word: str):
 
 def get_spelling_question(lesson_id: int, user_id: int):
     try:
+        conn = get_connection()
+        try:
+            last_word_id = get_last_attempted_word(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                conn=conn,
+            )
+        finally:
+            conn.close()
+
         item = get_spelling_next_item(user_id, lesson_id)
         if not item:
             return {
@@ -98,6 +110,7 @@ def get_spelling_question(lesson_id: int, user_id: int):
                 "masked_word": "",
                 "hint": "",
                 "example_sentence": "",
+                "resume_from_word_id": last_word_id,
             }
 
         weak_pattern = get_spelling_weak_pattern(user_id)
@@ -111,6 +124,7 @@ def get_spelling_question(lesson_id: int, user_id: int):
             "masked_word": mask_word(item["word"], patterns, blanks_count=3),
             "hint": clean_text(item["hint"]),
             "example_sentence": clean_text(item["example_sentence"]),
+            "resume_from_word_id": last_word_id,
         }
 
     except Exception as e:
