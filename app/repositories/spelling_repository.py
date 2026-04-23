@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.database import get_connection
 from app.repositories.spelling_stats_repository import update_spelling_stats_from_attempt
 
@@ -167,43 +169,61 @@ def record_spelling_attempt(
     cur = conn.cursor()
 
     try:
+        time_taken = 0
+        blanks_count = 0
+        wrong_letters_count = 0
+        created_at = datetime.now(timezone.utc)
+        course_id = 0
+        member_id = None
+
         lesson_id = None
         question_id = None
         session_id = None
+        contract_version = "v1"
 
-        cur.execute(
-            """
-            INSERT INTO spelling_attempts
-            (
+        query = """
+            INSERT INTO spelling_attempts (
                 user_id,
                 word_id,
                 correct,
                 time_taken,
                 blanks_count,
                 wrong_letters_count,
+                created_at,
                 course_id,
+                member_id,
+
+                -- NEW FIELDS (SAFE ADDITIVE)
                 lesson_id,
                 question_id,
                 session_id,
                 submitted_at,
                 contract_version
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
-            """,
-            (
-                user_id,
-                word_id,
-                correct,
-                0,
-                0,
-                0,
-                0,
-                lesson_id,
-                question_id,
-                session_id,
-                "v1",
-            ),
+            VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, NOW(), %s
+            )
+        """
+
+        values = (
+            user_id,
+            word_id,
+            correct,
+            time_taken,
+            blanks_count,
+            wrong_letters_count,
+            created_at,
+            course_id,
+            member_id,
+
+            # NEW FIELDS
+            lesson_id,
+            question_id,
+            session_id,
+            contract_version,
         )
+        cur.execute(query, values)
         conn.commit()
     except Exception:
         conn.rollback()
