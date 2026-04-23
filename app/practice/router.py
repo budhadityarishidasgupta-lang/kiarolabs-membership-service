@@ -913,6 +913,7 @@ def spelling_answer(payload: dict, user=Depends(get_current_user)):
     user_id = _require_user_id(user)
     word_id = _require_payload_param(payload, "word_id")
     answer = _require_payload_param(payload, "answer")
+    lesson_id = payload.get("lesson_id")
     question_id = payload.get("question_id")
     session_id = str(uuid.uuid4())
 
@@ -920,6 +921,7 @@ def spelling_answer(payload: dict, user=Depends(get_current_user)):
         "spelling_answer",
         submit_spelling_answer,
         user_id=user_id,
+        lesson_id=lesson_id,
         word_id=word_id,
         answer=answer,
         session_id=session_id,
@@ -937,6 +939,7 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
     user_id = _require_user_id(user)
     word_id = _require_payload_param(payload, "word_id")
     answer = _require_payload_param(payload, "answer")
+    lesson_id = payload.get("lesson_id")
     question_id = payload.get("question_id")
     session_id = str(uuid.uuid4())
 
@@ -944,6 +947,7 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
         "spelling_submit",
         submit_spelling_answer,
         user_id=user_id,
+        lesson_id=lesson_id,
         word_id=word_id,
         answer=answer,
         session_id=session_id,

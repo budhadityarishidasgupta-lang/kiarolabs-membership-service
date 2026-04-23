@@ -160,12 +160,12 @@ def get_spelling_word_details(word_id: int):
 
 def record_spelling_attempt(
     user_id: int,
-    lesson_id: int,
     word_id: int,
     submitted_text: str,
     correct: bool,
     session_id: str | None = None,
     question_id: str | None = None,
+    lesson_id: int | None = None,
 ):
     conn = get_connection()
     cur = conn.cursor()
@@ -178,7 +178,7 @@ def record_spelling_attempt(
         course_id = 0
         member_id = None
 
-        lesson_id = None
+        lesson_id = lesson_id if lesson_id else None
         question_id = question_id if question_id else None
         session_id = session_id if session_id else None
         contract_version = "v1"

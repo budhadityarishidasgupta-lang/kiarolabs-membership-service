@@ -191,6 +191,7 @@ def submit_spelling_answer(
     user_id: int,
     session_id: str | None = None,
     question_id: str | None = None,
+    lesson_id: int | None = None,
 ):
     try:
         details = get_spelling_word_details(word_id)
@@ -216,7 +217,7 @@ def submit_spelling_answer(
 
         record_spelling_attempt(
             user_id=user_id,
-            lesson_id=0,
+            lesson_id=lesson_id,
             word_id=word_id,
             submitted_text=answer,
             correct=correct,
