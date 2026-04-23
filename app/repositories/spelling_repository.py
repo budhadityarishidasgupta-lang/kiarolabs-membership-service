@@ -50,8 +50,9 @@ def get_resume_word_id(user_id, lesson_id, conn):
         )
         SELECT slw.word_id
         FROM spelling_lesson_words slw
+        JOIN last_correct lc ON TRUE
         WHERE slw.lesson_id = %s
-          AND slw.word_id > COALESCE((SELECT word_id FROM last_correct), 0)
+          AND slw.word_id > lc.word_id
         ORDER BY slw.word_id ASC
         LIMIT 1
     """
@@ -87,6 +88,32 @@ def get_weak_word_id(user_id, lesson_id, conn):
         result = cur.fetchone()
 
     return result[0] if result else None
+
+
+def get_lesson_id_for_word(word_id: int, conn=None):
+    owns_connection = conn is None
+    if owns_connection:
+        conn = get_connection()
+
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT lesson_id
+            FROM spelling_lesson_words
+            WHERE word_id = %s
+            ORDER BY lesson_id ASC
+            LIMIT 1
+            """,
+            (word_id,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close()
+        if owns_connection:
+            conn.close()
 
 
 def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:

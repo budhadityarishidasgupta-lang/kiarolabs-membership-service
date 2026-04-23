@@ -35,6 +35,8 @@ from app.practice.synonym_engine import (
     get_synonym_progress,
     get_next_synonym_question,
     get_practice_session,
+    get_latest_synonym_attempt_word_id,
+    get_synonym_attempt_summary,
 )
 from app.practice.spelling_engine import (
     get_spelling_question,
@@ -665,6 +667,7 @@ def get_spelling_courses(user=Depends(get_current_user)):
 def spelling_question(
     lesson_id: Optional[int] = None,
     word_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     user=Depends(get_current_user)
 ):
     """
@@ -686,7 +689,8 @@ def spelling_question(
         "spelling_question",
         get_spelling_question,
         lesson_id=lesson_id,
-        user_id=user_id
+        user_id=user_id,
+        session_id=session_id,
     )
 
     if not result or result.get("word_id") is None:
@@ -915,7 +919,7 @@ def spelling_answer(payload: dict, user=Depends(get_current_user)):
     answer = _require_payload_param(payload, "answer")
     lesson_id = payload.get("lesson_id")
     question_id = payload.get("question_id")
-    session_id = str(uuid.uuid4())
+    session_id = payload.get("session_id") or str(uuid.uuid4())
 
     result = _safe_execute(
         "spelling_answer",
@@ -941,7 +945,7 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
     answer = _require_payload_param(payload, "answer")
     lesson_id = payload.get("lesson_id")
     question_id = payload.get("question_id")
-    session_id = str(uuid.uuid4())
+    session_id = payload.get("session_id") or str(uuid.uuid4())
 
     result = _safe_execute(
         "spelling_submit",
@@ -1145,20 +1149,12 @@ def get_dashboard_stats(user_email):
                 "accuracy": spelling_accuracy
             }
 
-            cursor.execute("""
-            SELECT
-            COUNT(*) as attempts,
-            COALESCE(AVG(CASE WHEN is_correct THEN 1 ELSE 0 END) * 100, 0)
-            FROM synonym_attempts
-            WHERE user_id = %s
-            """, (user_id,))
-
-            row = cursor.fetchone()
+            synonym_summary = get_synonym_attempt_summary(user_id)
 
             modules["words"] = {
                 "unlocked": True,
-                "attempts": row[0] or 0,
-                "accuracy": round(row[1] or 0, 2)
+                "attempts": synonym_summary["attempts"],
+                "accuracy": synonym_summary["accuracy"],
             }
 
             cursor.execute("""
@@ -1303,18 +1299,11 @@ def get_resume_learning(user=Depends(get_current_user)):
 
         # WORDSPRINT
         try:
-            cur.execute("""
-                SELECT word_id
-                FROM synonym_attempts
-                WHERE user_id = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (user_id,))
-            row = cur.fetchone()
+            latest_word_id = get_latest_synonym_attempt_word_id(user_id)
 
-            if row:
+            if latest_word_id:
                 result["words"] = {
-                    "word_id": row[0],
+                    "word_id": latest_word_id,
                     "next_action": "continue"
                 }
         except:

@@ -5,6 +5,7 @@ from app.database import get_connection
 from app.repositories.spelling_repository import (
     get_resume_word_id,
     get_weak_word_id,
+    get_lesson_id_for_word,
     get_spelling_next_item,
     get_spelling_micro_challenge_data,
     get_spelling_word_details,
@@ -91,7 +92,7 @@ def extract_patterns(word: str):
     return found
 
 
-def get_spelling_question(lesson_id: int, user_id: int):
+def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None = None):
     try:
         conn = get_connection()
         try:
@@ -147,9 +148,12 @@ def get_spelling_question(lesson_id: int, user_id: int):
         weak_pattern = get_spelling_weak_pattern(user_id)
         patterns = [weak_pattern] if weak_pattern else None
         question_id = str(uuid.uuid4())
+        session_id = session_id or str(uuid.uuid4())
 
         return {
             "question_id": question_id,
+            "session_id": session_id,
+            "lesson_id": lesson_id,
             "word_id": item["word_id"],
             "word_audio": "",
             "masked_word": mask_word(item["word"], patterns, blanks_count=3),
@@ -264,9 +268,11 @@ def submit_spelling_answer(
             if pattern and pattern in clean_correct_word.lower():
                 pattern_hint = f"Focus on pattern '{pattern}'"
 
+        resolved_lesson_id = lesson_id or get_lesson_id_for_word(word_id)
+
         record_spelling_attempt(
             user_id=user_id,
-            lesson_id=lesson_id,
+            lesson_id=resolved_lesson_id,
             word_id=word_id,
             submitted_text=answer,
             correct=correct,
@@ -285,6 +291,9 @@ def submit_spelling_answer(
             "correct_word": clean_correct_word,
             "hint": clean_text(pattern_hint) or clean_hint,
             "example_sentence": clean_example,
+            "lesson_id": resolved_lesson_id,
+            "question_id": question_id,
+            "session_id": session_id,
         }
 
     except Exception as e:

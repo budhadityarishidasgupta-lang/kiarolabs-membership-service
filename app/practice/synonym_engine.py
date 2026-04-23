@@ -56,6 +56,183 @@ def _build_options(cur, word_id, correct_answer):
     return options
 
 
+def _table_exists(cur, table_name):
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        LIMIT 1
+        """,
+        (table_name,),
+    )
+    return cur.fetchone() is not None
+
+
+def _get_table_columns(cur, table_name):
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        """,
+        (table_name,),
+    )
+    return {row[0] for row in cur.fetchall()}
+
+
+def _resolve_synonym_attempt_store(cur):
+    for table_name in ("synonym_attempts", "words_attempts"):
+        if _table_exists(cur, table_name):
+            return table_name, _get_table_columns(cur, table_name)
+    return None, set()
+
+
+def _get_synonym_correct_column(columns):
+    if "is_correct" in columns:
+        return "is_correct"
+    if "correct" in columns:
+        return "correct"
+    return None
+
+
+def _get_synonym_timestamp_column(columns):
+    if "created_at" in columns:
+        return "created_at"
+    if "submitted_at" in columns:
+        return "submitted_at"
+    return None
+
+
+def _insert_synonym_attempt(cur, user_id, word_id, chosen, correct, response_ms):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    if not table_name:
+        raise HTTPException(status_code=500, detail="Synonym attempts table not available")
+
+    insert_columns = ["user_id", "word_id"]
+    insert_values = [user_id, word_id]
+
+    answer_column = None
+    for candidate in ("answer", "selected_answer", "chosen_answer"):
+        if candidate in columns:
+            answer_column = candidate
+            break
+    if answer_column:
+        insert_columns.append(answer_column)
+        insert_values.append(chosen)
+
+    correct_column = _get_synonym_correct_column(columns)
+    if not correct_column:
+        raise HTTPException(status_code=500, detail="Synonym attempts table missing correctness column")
+    insert_columns.append(correct_column)
+    insert_values.append(correct)
+
+    if "response_ms" in columns:
+        insert_columns.append("response_ms")
+        insert_values.append(response_ms or 0)
+    elif "time_taken_ms" in columns:
+        insert_columns.append("time_taken_ms")
+        insert_values.append(response_ms or 0)
+
+    timestamp_column = None
+    for candidate in ("created_at", "submitted_at"):
+        if candidate in columns:
+            timestamp_column = candidate
+            break
+
+    values_sql = ["%s"] * len(insert_columns)
+    if timestamp_column:
+        insert_columns.append(timestamp_column)
+        values_sql.append("NOW()")
+
+    query = f"""
+        INSERT INTO public.{table_name}
+        ({", ".join(insert_columns)})
+        VALUES ({", ".join(values_sql)})
+    """
+    cur.execute(query, tuple(insert_values))
+
+
+def _get_recent_incorrect_synonym_word_ids(cur, user_id):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    correct_column = _get_synonym_correct_column(columns)
+    timestamp_column = _get_synonym_timestamp_column(columns)
+    if not table_name or not correct_column or not timestamp_column:
+        return []
+
+    cur.execute(
+        f"""
+        SELECT word_id
+        FROM public.{table_name}
+        WHERE user_id = %s
+          AND {correct_column} = FALSE
+        ORDER BY {timestamp_column} DESC
+        LIMIT 5
+        """,
+        (user_id,),
+    )
+    return [row[0] for row in cur.fetchall() if row and row[0]]
+
+
+def get_synonym_attempt_summary(user_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        table_name, columns = _resolve_synonym_attempt_store(cur)
+        correct_column = _get_synonym_correct_column(columns)
+        if not table_name or not correct_column:
+            return {"attempts": 0, "accuracy": 0.0}
+
+        cur.execute(
+            f"""
+            SELECT
+                COUNT(*) AS attempts,
+                COALESCE(AVG(CASE WHEN {correct_column} THEN 1 ELSE 0 END) * 100, 0)
+            FROM public.{table_name}
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone() or (0, 0.0)
+        return {
+            "attempts": row[0] or 0,
+            "accuracy": round(row[1] or 0, 2),
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_latest_synonym_attempt_word_id(user_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        table_name, columns = _resolve_synonym_attempt_store(cur)
+        timestamp_column = _get_synonym_timestamp_column(columns)
+        if not table_name or not timestamp_column:
+            return None
+
+        cur.execute(
+            f"""
+            SELECT word_id
+            FROM public.{table_name}
+            WHERE user_id = %s
+            ORDER BY {timestamp_column} DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close()
+        conn.close()
+
+
 # --------------------------------------------------
 # QUESTION GENERATION
 # --------------------------------------------------
@@ -70,19 +247,7 @@ def get_synonym_question(user_email):
         user_id = _resolve_user_id(cur, user_email)
 
         if user_id:
-            cur.execute(
-                """
-                SELECT word_id
-                FROM synonym_attempts
-                WHERE user_id = %s
-                AND is_correct = false
-                ORDER BY created_at DESC
-                LIMIT 5
-                """,
-                (user_id,),
-            )
-
-            weak_words = [r[0] for r in cur.fetchall() if r and r[0]]
+            weak_words = _get_recent_incorrect_synonym_word_ids(cur, user_id)
             if weak_words:
                 selected_word_id = random.choice(weak_words)
 
@@ -229,14 +394,7 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
 
         print("INSERT DEBUG:", user_id, word_id, chosen, correct)
 
-        cur.execute(
-            """
-            INSERT INTO public.words_attempts
-                (user_id, word_id, answer, correct, created_at)
-            VALUES (%s, %s, %s, %s, NOW())
-            """,
-            (user_id, word_id, chosen, correct),
-        )
+        _insert_synonym_attempt(cur, user_id, word_id, chosen, correct, response_ms)
 
         conn.commit()
 
@@ -299,19 +457,9 @@ def get_synonym_progress(user_email):
         )
         due = cur.fetchone()[0]
 
-        cur.execute(
-            """
-            SELECT COUNT(*),
-                   COALESCE(SUM(CASE WHEN is_correct THEN 1 ELSE 0 END),0)
-            FROM public.attempts
-            WHERE user_id=%s
-            """,
-            (user_id,),
-        )
-
-        total, correct = cur.fetchone()
-
-        accuracy = correct / total if total else 0.0
+        attempt_summary = get_synonym_attempt_summary(user_id)
+        total = attempt_summary["attempts"]
+        accuracy = (attempt_summary["accuracy"] / 100.0) if total else 0.0
 
         return {
             "mastered_words": mastered,
