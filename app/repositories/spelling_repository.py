@@ -63,6 +63,32 @@ def get_resume_word_id(user_id, lesson_id, conn):
     return result[0] if result else None
 
 
+def get_weak_word_id(user_id, lesson_id, conn):
+    """
+    Returns a weak word_id for a user within a lesson.
+    Weak = more incorrect attempts than correct attempts.
+    Lesson-scoped (platform compliant).
+    """
+
+    query = """
+        SELECT word_id
+        FROM spelling_attempts
+        WHERE user_id = %s
+          AND lesson_id = %s
+        GROUP BY word_id
+        HAVING SUM(CASE WHEN correct = FALSE THEN 1 ELSE 0 END) >
+               SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)
+        ORDER BY MAX(created_at) DESC
+        LIMIT 1
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, (user_id, lesson_id))
+        result = cur.fetchone()
+
+    return result[0] if result else None
+
+
 def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:
     cur.execute(
         """
