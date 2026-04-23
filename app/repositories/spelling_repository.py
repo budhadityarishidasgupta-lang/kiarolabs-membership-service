@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from app.database import get_connection
 from app.repositories.spelling_stats_repository import update_spelling_stats_from_attempt
 
@@ -170,10 +172,35 @@ def record_spelling_attempt(
         cur.execute(
             """
             INSERT INTO spelling_attempts
-            (user_id, word_id, correct, time_taken, blanks_count, wrong_letters_count, course_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (
+                user_id,
+                word_id,
+                correct,
+                time_taken,
+                blanks_count,
+                wrong_letters_count,
+                course_id,
+                lesson_id,
+                question_id,
+                session_id,
+                submitted_at,
+                contract_version
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             """,
-            (user_id, word_id, correct, 0, 0, 0, 0),
+            (
+                user_id,
+                word_id,
+                correct,
+                0,
+                0,
+                0,
+                0,
+                lesson_id,
+                str(uuid4()),
+                str(uuid4()),
+                "v1",
+            ),
         )
         conn.commit()
     except Exception:
