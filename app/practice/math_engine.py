@@ -12,6 +12,16 @@ def get_math_lessons():
     return get_math_lessons_list()
 
 
+def _normalize_practice_session_id(session_id):
+    if session_id is None or session_id == "":
+        return uuid.uuid4().int % 2147483647
+
+    try:
+        return int(session_id)
+    except (TypeError, ValueError):
+        return uuid.uuid4().int % 2147483647
+
+
 def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
     item = get_math_next_question(user_id or 0, lesson_id)
     if not item:
@@ -20,7 +30,7 @@ def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
             "lesson_id": lesson_id
         }
 
-    session_id = session_id or str(uuid.uuid4())
+    session_id = _normalize_practice_session_id(session_id)
 
     return {
         "session_id": session_id,
@@ -72,13 +82,14 @@ def submit_math_answer(student_id, lesson_id, question_id, selected_option, sess
         }
 
     is_correct = (normalized_selected == question["correct_option"])
+    normalized_session_id = _normalize_practice_session_id(session_id)
     record_math_attempt(
         user_id=student_id,
         lesson_id=lesson_id,
         question_id=question_id,
         correct=is_correct,
         selected_option=normalized_selected,
-        session_id=session_id,
+        session_id=normalized_session_id,
     )
 
     return {
@@ -86,5 +97,5 @@ def submit_math_answer(student_id, lesson_id, question_id, selected_option, sess
         "correct_option": question["correct_option"],
         "lesson_id": lesson_id,
         "question_id": question_id,
-        "session_id": session_id,
+        "session_id": normalized_session_id,
     }
