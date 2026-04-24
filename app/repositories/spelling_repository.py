@@ -322,6 +322,7 @@ def record_spelling_attempt(
     word_id: int,
     submitted_text: str,
     correct: bool,
+    response_ms: int = 0,
     session_id: str | None = None,
     question_id: str | None = None,
     lesson_id: int | None = None,
@@ -330,7 +331,7 @@ def record_spelling_attempt(
     cur = conn.cursor()
 
     try:
-        time_taken = 0
+        time_taken = max(int(response_ms or 0), 0)
         blanks_count = 0
         wrong_letters_count = 0
         created_at = datetime.now(timezone.utc)

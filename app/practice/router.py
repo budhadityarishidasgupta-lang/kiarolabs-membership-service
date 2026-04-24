@@ -202,6 +202,7 @@ class SynonymAnswerRequest(BaseModel):
 class SpellingAnswerRequest(BaseModel):
     word_id: int
     answer: str
+    response_ms: int | None = None
 
 class WordsAnswerRequest(BaseModel):
     word_id: int
@@ -953,6 +954,10 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
     answer = _require_payload_param(payload, "answer")
     lesson_id = payload.get("lesson_id")
     question_id = payload.get("question_id")
+    try:
+        response_ms = int(payload.get("response_ms") or 0)
+    except (TypeError, ValueError):
+        response_ms = 0
     session_id = payload.get("session_id") or str(uuid.uuid4())
 
     result = _safe_execute(
@@ -962,6 +967,7 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
         lesson_id=lesson_id,
         word_id=word_id,
         answer=answer,
+        response_ms=response_ms,
         session_id=session_id,
         question_id=question_id,
     )

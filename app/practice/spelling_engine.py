@@ -269,6 +269,7 @@ def submit_spelling_answer(
     word_id: int,
     answer: str,
     user_id: int,
+    response_ms: int = 0,
     session_id: str | None = None,
     question_id: str | None = None,
     lesson_id: int | None = None,
@@ -303,6 +304,7 @@ def submit_spelling_answer(
             word_id=word_id,
             submitted_text=answer,
             correct=correct,
+            response_ms=response_ms,
             session_id=session_id,
             question_id=question_id,
         )
