@@ -197,9 +197,10 @@ def get_synonym_attempt_summary(user_id):
             (user_id,),
         )
         row = cur.fetchone() or (0, 0.0)
+        accuracy = float(row[1] or 0)
         return {
             "attempts": row[0] or 0,
-            "accuracy": round(row[1] or 0, 2),
+            "accuracy": round(accuracy, 2),
         }
     finally:
         cur.close()

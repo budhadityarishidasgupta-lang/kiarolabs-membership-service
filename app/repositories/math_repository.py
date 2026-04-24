@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.database import get_connection
 from app.repositories.math_stats_repository import ensure_math_stats_table, update_math_stats_from_attempt
 
@@ -108,6 +110,10 @@ def _avoid_immediate_repeat(items: list[dict], last_question_id):
     return filtered or items
 
 
+def _sort_last_seen(value):
+    return value if value is not None else datetime.min
+
+
 def get_math_next_question(user_id: int, lesson_id_or_scope: int):
     ensure_math_stats_table()
     conn = get_connection()
@@ -125,8 +131,8 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
         review = [item for item in items if item["times_seen"] > 0 and item not in weak]
 
         unseen = sorted(unseen, key=lambda item: item["question_id"])
-        weak = sorted(weak, key=lambda item: (item["accuracy"], item["last_seen_at"] or 0, item["question_id"]))
-        review = sorted(review, key=lambda item: (item["accuracy"], item["last_seen_at"] or 0, item["question_id"]))
+        weak = sorted(weak, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["question_id"]))
+        review = sorted(review, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["question_id"]))
 
         for pool in (unseen, weak, review):
             candidate_pool = _avoid_immediate_repeat(pool, last_question_id)

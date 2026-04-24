@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.database import get_connection
 from app.repositories.words_stats_repository import update_words_stats_from_attempt
 
@@ -113,6 +115,10 @@ def _avoid_immediate_repeat(items: list[dict], last_word_id):
     return filtered or items
 
 
+def _sort_last_seen(value):
+    return value if value is not None else datetime.min
+
+
 def get_words_next_item(user_id: int, lesson_id: int):
     conn = get_connection()
     cur = conn.cursor()
@@ -129,8 +135,8 @@ def get_words_next_item(user_id: int, lesson_id: int):
         review = [item for item in items if item["times_seen"] > 0 and not item["is_weak"]]
 
         unseen = sorted(unseen, key=lambda item: item["word_id"])
-        weak = sorted(weak, key=lambda item: (item["accuracy"], item["last_seen_at"] or 0, item["word_id"]))
-        review = sorted(review, key=lambda item: (item["accuracy"], item["last_seen_at"] or 0, item["word_id"]))
+        weak = sorted(weak, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["word_id"]))
+        review = sorted(review, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["word_id"]))
 
         for pool in (unseen, weak, review):
             candidate_pool = _avoid_immediate_repeat(pool, last_word_id)
