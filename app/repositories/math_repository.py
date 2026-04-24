@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 
 from app.database import get_connection
 from app.repositories.math_stats_repository import ensure_math_stats_table, update_math_stats_from_attempt
@@ -117,6 +118,28 @@ def _fetch_questions_for_filter(cur, user_id: int, where_sql: str, params: tuple
     return _map_question_rows(cur.fetchall())
 
 
+def _extract_lesson_keywords(lesson: dict) -> list[str]:
+    raw_parts = [
+        lesson.get("display_name") or "",
+        lesson.get("lesson_name") or "",
+        lesson.get("topic") or "",
+    ]
+    raw_text = " ".join(part for part in raw_parts if part)
+    tokens = re.findall(r"[A-Za-z0-9]+", raw_text.lower())
+    stop_words = {"with", "and", "the", "same", "into", "than"}
+    keywords = []
+
+    for token in tokens:
+        if token in stop_words:
+            continue
+        if len(token) < 3:
+            continue
+        if token not in keywords:
+            keywords.append(token)
+
+    return keywords
+
+
 def _fetch_lesson_questions(cur, user_id: int, lesson_id: int) -> list[dict]:
     lesson = _get_lesson_details(cur, lesson_id)
     if not lesson:
@@ -151,6 +174,26 @@ def _fetch_lesson_questions(cur, user_id: int, lesson_id: int) -> list[dict]:
             user_id,
             "LOWER(COALESCE(q.difficulty, '')) = LOWER(%s)",
             (difficulty,),
+        )
+        if rows:
+            return rows
+
+    keywords = _extract_lesson_keywords(lesson)
+    if keywords:
+        keyword_clauses = []
+        keyword_params = []
+        for keyword in keywords:
+            like_value = f"%{keyword}%"
+            keyword_clauses.append(
+                "(LOWER(COALESCE(q.topic, '')) LIKE LOWER(%s) OR LOWER(COALESCE(q.stem, '')) LIKE LOWER(%s))"
+            )
+            keyword_params.extend([like_value, like_value])
+
+        rows = _fetch_questions_for_filter(
+            cur,
+            user_id,
+            " OR ".join(keyword_clauses),
+            tuple(keyword_params),
         )
         if rows:
             return rows
