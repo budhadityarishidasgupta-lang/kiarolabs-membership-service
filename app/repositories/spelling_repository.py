@@ -153,6 +153,43 @@ def is_word_mastered(user_id, lesson_id, word_id, conn):
     return total_recent == 2 and correct_recent == 2 and wrong_recent == 0
 
 
+def get_word_timing_stats(user_id, lesson_id, word_id, conn):
+    """
+    Returns average timing stats for a spelling word within a lesson.
+    Derived only from attempts.
+    """
+
+    query = """
+        SELECT
+            COUNT(*) AS attempt_count,
+            AVG(COALESCE(time_taken, 0)) AS avg_time_ms
+        FROM spelling_attempts
+        WHERE user_id = %s
+          AND lesson_id = %s
+          AND word_id = %s
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, (user_id, lesson_id, word_id))
+        row = cur.fetchone()
+
+    if not row:
+        return {
+            "attempt_count": 0,
+            "avg_time_ms": 0,
+            "is_slow": False,
+        }
+
+    attempt_count = row[0] or 0
+    avg_time_ms = float(row[1] or 0)
+
+    return {
+        "attempt_count": attempt_count,
+        "avg_time_ms": avg_time_ms,
+        "is_slow": avg_time_ms > 10000 if attempt_count > 0 else False,
+    }
+
+
 def get_next_unmastered_word(user_id, lesson_id, conn):
     """
     Returns next unmastered word in lesson.

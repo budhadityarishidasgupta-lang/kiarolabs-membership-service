@@ -7,6 +7,7 @@ from app.repositories.spelling_repository import (
     get_weak_word_id,
     get_lesson_id_for_word,
     is_word_mastered,
+    get_word_timing_stats,
     get_next_unmastered_word,
     get_spelling_next_item,
     get_spelling_micro_challenge_data,
@@ -94,6 +95,24 @@ def extract_patterns(word: str):
     return found
 
 
+def compute_priority_score(is_weak, is_mastered, is_slow):
+    score = 0
+
+    if is_weak:
+        score += 100
+
+    if not is_mastered:
+        score += 50
+
+    if is_slow:
+        score += 20
+
+    if score == 0:
+        score = 10
+
+    return score
+
+
 def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None = None):
     try:
         conn = get_connection()
@@ -137,14 +156,53 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     conn=conn,
                 )
 
+            candidates = []
+
             if weak_word:
-                item = weak_word
-            elif resume_word:
-                item = resume_word
-            elif next_unmastered_word:
-                item = next_unmastered_word
+                candidates.append(("weak", weak_word))
+
+            if resume_word:
+                candidates.append(("resume", resume_word))
+
+            if next_unmastered_word:
+                candidates.append(("next", next_unmastered_word))
+
+            scored_candidates = []
+
+            for label, candidate in candidates:
+                word_id = candidate["word_id"] if "word_id" in candidate else candidate["id"]
+
+                is_weak = label == "weak"
+                is_mastered = is_word_mastered(
+                    user_id=user_id,
+                    lesson_id=lesson_id,
+                    word_id=word_id,
+                    conn=conn,
+                )
+                timing_stats = get_word_timing_stats(
+                    user_id=user_id,
+                    lesson_id=lesson_id,
+                    word_id=word_id,
+                    conn=conn,
+                )
+                is_slow = timing_stats["is_slow"]
+                score = compute_priority_score(is_weak, is_mastered, is_slow)
+
+                scored_candidates.append((score, candidate, label, timing_stats, is_mastered))
+
+            if scored_candidates:
+                scored_candidates.sort(key=lambda entry: entry[0], reverse=True)
+                best_score, item, selected_strategy, selected_timing_stats, mastered = scored_candidates[0]
             else:
                 item = get_spelling_next_item(user_id, lesson_id)
+                selected_strategy = "fallback"
+                best_score = 0
+                selected_timing_stats = {
+                    "attempt_count": 0,
+                    "avg_time_ms": 0,
+                    "is_slow": False,
+                }
+                mastered = False
 
             if not item:
                 return {
@@ -158,15 +216,24 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     "next_unmastered_word_id": next_unmastered_word_id,
                     "resumed": False,
                     "resume_strategy": "last_correct_next",
-                    "adaptive_strategy": "weak_then_resume_then_unmastered",
+                    "adaptive_strategy": "deterministic_priority_scoring",
+                    "selection_strategy": selected_strategy,
+                    "selection_score": best_score,
                 }
 
-            mastered = is_word_mastered(
-                user_id=user_id,
-                lesson_id=lesson_id,
-                word_id=item["word_id"],
-                conn=conn,
-            )
+            if selected_strategy == "fallback":
+                mastered = is_word_mastered(
+                    user_id=user_id,
+                    lesson_id=lesson_id,
+                    word_id=item["word_id"],
+                    conn=conn,
+                )
+                selected_timing_stats = get_word_timing_stats(
+                    user_id=user_id,
+                    lesson_id=lesson_id,
+                    word_id=item["word_id"],
+                    conn=conn,
+                )
 
             weak_pattern = get_spelling_weak_pattern(user_id)
             patterns = [weak_pattern] if weak_pattern else None
@@ -185,10 +252,13 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "weak_word_id": weak_word_id,
                 "resume_from_word_id": resume_word_id,
                 "next_unmastered_word_id": next_unmastered_word_id,
-                "resumed": bool(resume_word),
+                "resumed": selected_strategy == "resume",
                 "resume_strategy": "last_correct_next",
-                "adaptive_strategy": "weak_then_resume_then_unmastered",
+                "adaptive_strategy": "deterministic_priority_scoring",
+                "selection_strategy": selected_strategy,
+                "selection_score": best_score,
                 "mastered": mastered,
+                "timing": selected_timing_stats,
             }
         finally:
             conn.close()
