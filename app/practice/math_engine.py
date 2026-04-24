@@ -1,3 +1,5 @@
+import uuid
+
 from app.repositories.math_repository import (
     get_math_lessons_list,
     get_math_next_question,
@@ -10,7 +12,7 @@ def get_math_lessons():
     return get_math_lessons_list()
 
 
-def get_math_question(lesson_id, user_id=None):
+def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
     item = get_math_next_question(user_id or 0, lesson_id)
     if not item:
         return {
@@ -18,7 +20,11 @@ def get_math_question(lesson_id, user_id=None):
             "lesson_id": lesson_id
         }
 
+    session_id = session_id or str(uuid.uuid4())
+
     return {
+        "session_id": session_id,
+        "lesson_id": lesson_id,
         "question_id": item["question_id"],
         "stem": item["stem"],
         "options": [
@@ -31,7 +37,7 @@ def get_math_question(lesson_id, user_id=None):
     }
 
 
-def submit_math_answer(student_id, lesson_id, question_id, selected_option):
+def submit_math_answer(student_id, lesson_id, question_id, selected_option, session_id: str | None = None):
     question = get_math_question_record(question_id)
 
     if not question:
@@ -71,9 +77,13 @@ def submit_math_answer(student_id, lesson_id, question_id, selected_option):
         question_id=question_id,
         correct=is_correct,
         selected_option=normalized_selected,
+        session_id=session_id,
     )
 
     return {
         "correct": is_correct,
-        "correct_option": question["correct_option"]
+        "correct_option": question["correct_option"],
+        "lesson_id": question["lesson_id"],
+        "question_id": question_id,
+        "session_id": session_id,
     }

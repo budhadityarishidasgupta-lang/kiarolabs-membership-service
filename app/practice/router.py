@@ -285,7 +285,11 @@ def math_lessons():
 
 
 @router.get("/math/question")
-def math_question(lesson_id: Optional[int] = None, user=Depends(get_current_user)):
+def math_question(
+    lesson_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
     if lesson_id is None:
         _missing_param("lesson_id")
 
@@ -294,6 +298,7 @@ def math_question(lesson_id: Optional[int] = None, user=Depends(get_current_user
         get_math_question,
         lesson_id=lesson_id,
         user_id=user.get("user_id"),
+        session_id=session_id,
     )
 
     if not result or result.get("question_id") is None:
@@ -305,6 +310,7 @@ def math_question(lesson_id: Optional[int] = None, user=Depends(get_current_user
 @router.post("/math/submit")
 def math_submit(payload: dict, user=Depends(get_current_user)):
     user_id = _require_user_id(user)
+    session_id = payload.get("session_id") or str(uuid.uuid4())
 
     if "paper_code" in payload or "answers" in payload:
         paper_code = _require_payload_param(payload, "paper_code")
@@ -315,6 +321,7 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
             user_id=user_id,
             paper_code=paper_code,
             answers=answers,
+            session_id=session_id,
         )
 
     lesson_id = _require_payload_param(payload, "lesson_id")
@@ -328,6 +335,7 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
         lesson_id=lesson_id,
         question_id=question_id,
         selected_option=selected_option,
+        session_id=session_id,
     )
 
     if result.get("error") == "Question not found":

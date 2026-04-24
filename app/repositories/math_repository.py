@@ -181,7 +181,13 @@ def get_math_question_record(question_id: int):
         conn.close()
 
 
-def record_math_attempt(user_id: int, question_id: int, correct: bool, selected_option: str):
+def record_math_attempt(
+    user_id: int,
+    question_id: int,
+    correct: bool,
+    selected_option: str,
+    session_id: str | None = None,
+):
     question = get_math_question_record(question_id)
     if not question:
         return
@@ -193,10 +199,29 @@ def record_math_attempt(user_id: int, question_id: int, correct: bool, selected_
         cur.execute(
             """
             INSERT INTO math_attempts
-            (student_id, question_id, lesson_id, selected_option, is_correct, created_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
+            (
+                student_id,
+                question_id,
+                lesson_id,
+                selected_option,
+                is_correct,
+                created_at,
+                attempted_at,
+                session_id,
+                submitted_at,
+                contract_version
+            )
+            VALUES (%s, %s, %s, %s, %s, NOW(), NOW(), %s, NOW(), %s)
             """,
-            (user_id, question_id, question["lesson_id"], selected_option, correct),
+            (
+                user_id,
+                question_id,
+                question["lesson_id"],
+                selected_option,
+                correct,
+                session_id,
+                "v1",
+            ),
         )
         conn.commit()
     except Exception:

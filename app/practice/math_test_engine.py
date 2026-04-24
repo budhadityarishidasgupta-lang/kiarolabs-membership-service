@@ -486,7 +486,7 @@ def _normalize_answer(answer):
     return str(answer).strip().lower()
 
 
-def submit_math_paper(user_id, paper_code, answers):
+def submit_math_paper(user_id, paper_code, answers, session_id: str | None = None):
     conn = get_connection()
     cur = conn.cursor()
 
@@ -583,10 +583,19 @@ def submit_math_paper(user_id, paper_code, answers):
         cur.execute(
             """
             INSERT INTO math_submission_attempts
-            (user_id, paper_code, answers, score, total)
-            VALUES (%s, %s, %s::jsonb, %s, %s)
+            (
+                user_id,
+                paper_code,
+                answers,
+                score,
+                total,
+                session_id,
+                submitted_at,
+                contract_version
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s, %s, NOW(), %s)
             """,
-            (user_id, paper_code, json.dumps(answers or {}), score, total),
+            (user_id, paper_code, json.dumps(answers or {}), score, total, session_id, "v1"),
         )
 
         conn.commit()
@@ -597,6 +606,8 @@ def submit_math_paper(user_id, paper_code, answers):
             "percentage": (score * 100 / total) if total else 0,
             "answered_questions": len(user_answers),
             "breakdown": results,
+            "paper_code": paper_code,
+            "session_id": session_id,
         }
     finally:
         cur.close()
