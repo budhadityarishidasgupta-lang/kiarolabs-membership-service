@@ -39,34 +39,7 @@ def get_math_lessons_list():
         conn.close()
 
 
-def _fetch_lesson_questions(cur, user_id: int, lesson_id: int) -> list[dict]:
-    cur.execute(
-        """
-        SELECT
-            q.id,
-            q.stem,
-            q.option_a,
-            q.option_b,
-            q.option_c,
-            q.option_d,
-            q.correct_option,
-            COALESCE(s.times_seen, 0) AS times_seen,
-            COALESCE(s.times_correct, 0) AS times_correct,
-            COALESCE(s.times_wrong, 0) AS times_wrong,
-            COALESCE(s.accuracy, 0) AS accuracy,
-            s.last_seen_at,
-            COALESCE(s.is_weak, FALSE) AS is_weak
-        FROM math_questions q
-        LEFT JOIN math_question_stats s
-            ON s.question_id = q.id
-           AND s.user_id = %s
-        WHERE q.lesson_id = %s
-        ORDER BY q.id ASC
-        """,
-        (user_id, lesson_id),
-    )
-
-    rows = cur.fetchall()
+def _map_question_rows(rows) -> list[dict]:
     return [
         {
             "question_id": row[0],
@@ -85,6 +58,104 @@ def _fetch_lesson_questions(cur, user_id: int, lesson_id: int) -> list[dict]:
         }
         for row in rows
     ]
+
+
+def _get_lesson_details(cur, lesson_id: int):
+    cur.execute(
+        """
+        SELECT
+            id,
+            lesson_name,
+            display_name,
+            topic,
+            difficulty
+        FROM math_lessons
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (lesson_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "lesson_id": row[0],
+        "lesson_name": row[1],
+        "display_name": row[2],
+        "topic": row[3],
+        "difficulty": row[4],
+    }
+
+
+def _fetch_questions_for_filter(cur, user_id: int, where_sql: str, params: tuple) -> list[dict]:
+    cur.execute(
+        f"""
+        SELECT
+            q.id,
+            q.stem,
+            q.option_a,
+            q.option_b,
+            q.option_c,
+            q.option_d,
+            q.correct_option,
+            COALESCE(s.times_seen, 0) AS times_seen,
+            COALESCE(s.times_correct, 0) AS times_correct,
+            COALESCE(s.times_wrong, 0) AS times_wrong,
+            COALESCE(s.accuracy, 0) AS accuracy,
+            s.last_seen_at,
+            COALESCE(s.is_weak, FALSE) AS is_weak
+        FROM math_questions q
+        LEFT JOIN math_question_stats s
+            ON s.question_id = q.id
+           AND s.user_id = %s
+        WHERE {where_sql}
+        ORDER BY q.id ASC
+        """,
+        (user_id, *params),
+    )
+
+    return _map_question_rows(cur.fetchall())
+
+
+def _fetch_lesson_questions(cur, user_id: int, lesson_id: int) -> list[dict]:
+    lesson = _get_lesson_details(cur, lesson_id)
+    if not lesson:
+        return []
+
+    topic = (lesson.get("topic") or "").strip()
+    difficulty = (lesson.get("difficulty") or "").strip()
+
+    if topic and difficulty:
+        rows = _fetch_questions_for_filter(
+            cur,
+            user_id,
+            "LOWER(COALESCE(q.topic, '')) = LOWER(%s) AND LOWER(COALESCE(q.difficulty, '')) = LOWER(%s)",
+            (topic, difficulty),
+        )
+        if rows:
+            return rows
+
+    if topic:
+        rows = _fetch_questions_for_filter(
+            cur,
+            user_id,
+            "LOWER(COALESCE(q.topic, '')) = LOWER(%s)",
+            (topic,),
+        )
+        if rows:
+            return rows
+
+    if difficulty:
+        rows = _fetch_questions_for_filter(
+            cur,
+            user_id,
+            "LOWER(COALESCE(q.difficulty, '')) = LOWER(%s)",
+            (difficulty,),
+        )
+        if rows:
+            return rows
+
+    return []
 
 
 def _get_latest_question_id(cur, user_id: int, lesson_id: int):
@@ -154,13 +225,14 @@ def get_math_question_record(question_id: int):
             """
             SELECT
                 id,
-                lesson_id,
                 stem,
                 option_a,
                 option_b,
                 option_c,
                 option_d,
                 option_e,
+                topic,
+                difficulty,
                 correct_option
             FROM math_questions
             WHERE id = %s
@@ -173,14 +245,15 @@ def get_math_question_record(question_id: int):
             return None
         return {
             "question_id": row[0],
-            "lesson_id": row[1],
-            "stem": row[2],
-            "option_a": row[3],
-            "option_b": row[4],
-            "option_c": row[5],
-            "option_d": row[6],
-            "option_e": row[7],
-            "correct_option": row[8],
+            "stem": row[1],
+            "option_a": row[2],
+            "option_b": row[3],
+            "option_c": row[4],
+            "option_d": row[5],
+            "option_e": row[6],
+            "topic": row[7],
+            "difficulty": row[8],
+            "correct_option": row[9],
         }
     finally:
         cur.close()
@@ -189,6 +262,7 @@ def get_math_question_record(question_id: int):
 
 def record_math_attempt(
     user_id: int,
+    lesson_id: int,
     question_id: int,
     correct: bool,
     selected_option: str,
@@ -222,7 +296,7 @@ def record_math_attempt(
             (
                 user_id,
                 question_id,
-                question["lesson_id"],
+                lesson_id,
                 selected_option,
                 correct,
                 session_id,

@@ -74,6 +74,7 @@ def submit_math_answer(student_id, lesson_id, question_id, selected_option, sess
     is_correct = (normalized_selected == question["correct_option"])
     record_math_attempt(
         user_id=student_id,
+        lesson_id=lesson_id,
         question_id=question_id,
         correct=is_correct,
         selected_option=normalized_selected,
@@ -83,7 +84,7 @@ def submit_math_answer(student_id, lesson_id, question_id, selected_option, sess
     return {
         "correct": is_correct,
         "correct_option": question["correct_option"],
-        "lesson_id": question["lesson_id"],
+        "lesson_id": lesson_id,
         "question_id": question_id,
         "session_id": session_id,
     }
