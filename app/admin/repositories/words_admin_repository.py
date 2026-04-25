@@ -1,11 +1,31 @@
 from app.database import get_connection
 
 
+def _table_has_column(cur, table_schema: str, table_name: str, column_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = %s
+          AND table_name = %s
+          AND column_name = %s
+        LIMIT 1
+        """,
+        (table_schema, table_name, column_name),
+    )
+    return cur.fetchone() is not None
+
+
 def get_words_overview():
     conn = get_connection()
     cur = conn.cursor()
 
     try:
+        lessons_have_is_active = _table_has_column(cur, "public", "lessons", "is_active")
+        active_lesson_predicate = (
+            "COALESCE(l.is_active, TRUE) = TRUE" if lessons_have_is_active else "TRUE"
+        )
+
         cur.execute(
             """
             SELECT COUNT(*)
@@ -16,19 +36,19 @@ def get_words_overview():
         course_count = cur.fetchone()[0]
 
         cur.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM public.lessons l
             JOIN public.courses c
                 ON c.course_id = l.course_id
             WHERE c.course_type = 'synonym'
-              AND COALESCE(l.is_active, TRUE) = TRUE
+              AND {active_lesson_predicate}
             """
         )
         lesson_count = cur.fetchone()[0]
 
         cur.execute(
-            """
+            f"""
             SELECT COUNT(DISTINCT lw.word_id)
             FROM public.lesson_words lw
             JOIN public.lessons l
@@ -36,7 +56,7 @@ def get_words_overview():
             JOIN public.courses c
                 ON c.course_id = l.course_id
             WHERE c.course_type = 'synonym'
-              AND COALESCE(l.is_active, TRUE) = TRUE
+              AND {active_lesson_predicate}
             """
         )
         item_count = cur.fetchone()[0]
@@ -59,8 +79,13 @@ def list_words_courses():
     cur = conn.cursor()
 
     try:
+        lessons_have_is_active = _table_has_column(cur, "public", "lessons", "is_active")
+        active_join_clause = (
+            "AND COALESCE(l.is_active, TRUE) = TRUE" if lessons_have_is_active else ""
+        )
+
         cur.execute(
-            """
+            f"""
             SELECT
                 c.course_id,
                 c.title,
@@ -68,7 +93,7 @@ def list_words_courses():
             FROM public.courses c
             LEFT JOIN public.lessons l
                 ON l.course_id = c.course_id
-               AND COALESCE(l.is_active, TRUE) = TRUE
+               {active_join_clause}
             WHERE c.course_type = 'synonym'
             GROUP BY c.course_id, c.title
             ORDER BY c.course_id ASC
@@ -121,8 +146,15 @@ def list_words_lessons(course_id: int | None = None):
     cur = conn.cursor()
 
     try:
+        lessons_have_is_active = _table_has_column(cur, "public", "lessons", "is_active")
         params = []
-        where_clauses = ["c.course_type = 'synonym'", "COALESCE(l.is_active, TRUE) = TRUE"]
+        where_clauses = ["c.course_type = 'synonym'"]
+        is_active_select = "TRUE AS is_active"
+        active_group_field = ""
+        if lessons_have_is_active:
+            where_clauses.append("COALESCE(l.is_active, TRUE) = TRUE")
+            is_active_select = "COALESCE(l.is_active, TRUE) AS is_active"
+            active_group_field = ", l.is_active"
         if course_id is not None:
             where_clauses.append("l.course_id = %s")
             params.append(course_id)
@@ -136,7 +168,7 @@ def list_words_lessons(course_id: int | None = None):
                 c.title AS course_name,
                 l.title,
                 COALESCE(l.sort_order, 0) AS sort_order,
-                COALESCE(l.is_active, TRUE) AS is_active,
+                {is_active_select},
                 COUNT(DISTINCT lw.word_id) AS item_count
             FROM public.lessons l
             JOIN public.courses c
@@ -144,7 +176,7 @@ def list_words_lessons(course_id: int | None = None):
             LEFT JOIN public.lesson_words lw
                 ON lw.lesson_id = l.lesson_id
             {where_sql}
-            GROUP BY l.lesson_id, l.course_id, c.title, l.title, l.sort_order, l.is_active
+            GROUP BY l.lesson_id, l.course_id, c.title, l.title, l.sort_order{active_group_field}
             ORDER BY l.course_id ASC, COALESCE(l.sort_order, 0) ASC, l.lesson_id ASC
             """,
             tuple(params),
@@ -174,6 +206,8 @@ def create_words_lesson(course_id: int, lesson_name: str):
     cur = conn.cursor()
 
     try:
+        lessons_have_is_active = _table_has_column(cur, "public", "lessons", "is_active")
+
         cur.execute(
             """
             SELECT COALESCE(MAX(sort_order), 0) + 1
@@ -184,14 +218,24 @@ def create_words_lesson(course_id: int, lesson_name: str):
         )
         sort_order = cur.fetchone()[0]
 
-        cur.execute(
-            """
-            INSERT INTO public.lessons (course_id, title, sort_order, is_active)
-            VALUES (%s, %s, %s, TRUE)
-            RETURNING lesson_id, course_id, title, sort_order, COALESCE(is_active, TRUE)
-            """,
-            (course_id, lesson_name.strip(), sort_order),
-        )
+        if lessons_have_is_active:
+            cur.execute(
+                """
+                INSERT INTO public.lessons (course_id, title, sort_order, is_active)
+                VALUES (%s, %s, %s, TRUE)
+                RETURNING lesson_id, course_id, title, sort_order, COALESCE(is_active, TRUE)
+                """,
+                (course_id, lesson_name.strip(), sort_order),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO public.lessons (course_id, title, sort_order)
+                VALUES (%s, %s, %s)
+                RETURNING lesson_id, course_id, title, sort_order, TRUE
+                """,
+                (course_id, lesson_name.strip(), sort_order),
+            )
         row = cur.fetchone()
         conn.commit()
         return {
