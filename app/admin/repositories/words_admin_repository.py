@@ -22,6 +22,7 @@ def get_words_overview():
             JOIN public.courses c
                 ON c.course_id = l.course_id
             WHERE c.course_type = 'synonym'
+              AND COALESCE(l.is_active, TRUE) = TRUE
             """
         )
         lesson_count = cur.fetchone()[0]
@@ -35,6 +36,7 @@ def get_words_overview():
             JOIN public.courses c
                 ON c.course_id = l.course_id
             WHERE c.course_type = 'synonym'
+              AND COALESCE(l.is_active, TRUE) = TRUE
             """
         )
         item_count = cur.fetchone()[0]
@@ -66,6 +68,7 @@ def list_words_courses():
             FROM public.courses c
             LEFT JOIN public.lessons l
                 ON l.course_id = c.course_id
+               AND COALESCE(l.is_active, TRUE) = TRUE
             WHERE c.course_type = 'synonym'
             GROUP BY c.course_id, c.title
             ORDER BY c.course_id ASC
@@ -119,7 +122,7 @@ def list_words_lessons(course_id: int | None = None):
 
     try:
         params = []
-        where_clauses = ["c.course_type = 'synonym'"]
+        where_clauses = ["c.course_type = 'synonym'", "COALESCE(l.is_active, TRUE) = TRUE"]
         if course_id is not None:
             where_clauses.append("l.course_id = %s")
             params.append(course_id)
@@ -133,6 +136,7 @@ def list_words_lessons(course_id: int | None = None):
                 c.title AS course_name,
                 l.title,
                 COALESCE(l.sort_order, 0) AS sort_order,
+                COALESCE(l.is_active, TRUE) AS is_active,
                 COUNT(DISTINCT lw.word_id) AS item_count
             FROM public.lessons l
             JOIN public.courses c
@@ -140,7 +144,7 @@ def list_words_lessons(course_id: int | None = None):
             LEFT JOIN public.lesson_words lw
                 ON lw.lesson_id = l.lesson_id
             {where_sql}
-            GROUP BY l.lesson_id, l.course_id, c.title, l.title, l.sort_order
+            GROUP BY l.lesson_id, l.course_id, c.title, l.title, l.sort_order, l.is_active
             ORDER BY l.course_id ASC, COALESCE(l.sort_order, 0) ASC, l.lesson_id ASC
             """,
             tuple(params),
@@ -155,7 +159,8 @@ def list_words_lessons(course_id: int | None = None):
                 "lesson_name": row[3],
                 "display_name": row[3],
                 "sort_order": row[4],
-                "item_count": row[5],
+                "is_active": row[5],
+                "item_count": row[6],
             }
             for row in rows
         ]
@@ -181,9 +186,9 @@ def create_words_lesson(course_id: int, lesson_name: str):
 
         cur.execute(
             """
-            INSERT INTO public.lessons (course_id, title, sort_order)
-            VALUES (%s, %s, %s)
-            RETURNING lesson_id, course_id, title, sort_order
+            INSERT INTO public.lessons (course_id, title, sort_order, is_active)
+            VALUES (%s, %s, %s, TRUE)
+            RETURNING lesson_id, course_id, title, sort_order, COALESCE(is_active, TRUE)
             """,
             (course_id, lesson_name.strip(), sort_order),
         )
@@ -195,6 +200,7 @@ def create_words_lesson(course_id: int, lesson_name: str):
             "lesson_name": row[2],
             "display_name": row[2],
             "sort_order": row[3],
+            "is_active": row[4],
         }
     except Exception:
         conn.rollback()
