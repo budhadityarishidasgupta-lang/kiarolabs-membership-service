@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.admin.ingestion_router import require_admin
 from app.admin.repositories.math_admin_repository import (
     create_math_lesson,
+    delete_math_lesson,
     get_math_overview,
     list_math_courses,
     list_math_lessons,
@@ -154,4 +155,12 @@ def create_module_lesson(module: str, payload: CreateLessonRequest, _user=Depend
             is_active=payload.is_active,
         )
 
+    return {"status": "ok", "data": data}
+
+
+@router.delete("/maths/lessons/{lesson_id}")
+def delete_maths_lesson(lesson_id: int, _user=Depends(require_admin)):
+    data = delete_math_lesson(lesson_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Lesson not found")
     return {"status": "ok", "data": data}

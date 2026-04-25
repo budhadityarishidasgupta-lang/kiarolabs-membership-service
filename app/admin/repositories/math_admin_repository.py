@@ -283,3 +283,34 @@ def create_math_lesson(
     finally:
         cur.close()
         conn.close()
+
+
+def delete_math_lesson(lesson_id: int):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            DELETE FROM math_lessons
+            WHERE id = %s
+            RETURNING id, lesson_code, COALESCE(display_name, lesson_name)
+            """,
+            (lesson_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        conn.commit()
+        return {
+            "lesson_id": row[0],
+            "lesson_code": row[1],
+            "display_name": row[2],
+            "deleted": True,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
