@@ -6,13 +6,35 @@ def get_spelling_overview():
     cur = conn.cursor()
 
     try:
-        cur.execute("SELECT COUNT(*) FROM spelling_courses")
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT c.course_id)
+            FROM spelling_courses c
+            JOIN spelling_lessons l
+                ON l.course_id = c.course_id
+            WHERE COALESCE(l.is_active, TRUE) = TRUE
+            """
+        )
         course_count = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM spelling_lessons")
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM spelling_lessons
+            WHERE COALESCE(is_active, TRUE) = TRUE
+            """
+        )
         lesson_count = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM spelling_words")
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT lw.word_id)
+            FROM spelling_lesson_words lw
+            JOIN spelling_lessons l
+                ON l.lesson_id = lw.lesson_id
+            WHERE COALESCE(l.is_active, TRUE) = TRUE
+            """
+        )
         item_count = cur.fetchone()[0]
 
         return {
@@ -38,10 +60,11 @@ def list_spelling_courses():
             SELECT
                 c.course_id,
                 c.course_name,
-                COUNT(l.lesson_id) AS lesson_count
+                COUNT(DISTINCT l.lesson_id) AS lesson_count
             FROM spelling_courses c
             LEFT JOIN spelling_lessons l
                 ON l.course_id = c.course_id
+               AND COALESCE(l.is_active, TRUE) = TRUE
             GROUP BY c.course_id, c.course_name
             ORDER BY c.course_id ASC
             """
@@ -96,8 +119,10 @@ def list_spelling_lessons(course_id: int | None = None):
         params = []
         where_sql = ""
         if course_id is not None:
-            where_sql = "WHERE l.course_id = %s"
+            where_sql = "WHERE l.course_id = %s AND COALESCE(l.is_active, TRUE) = TRUE"
             params.append(course_id)
+        else:
+            where_sql = "WHERE COALESCE(l.is_active, TRUE) = TRUE"
 
         cur.execute(
             f"""
@@ -109,7 +134,7 @@ def list_spelling_lessons(course_id: int | None = None):
                 COALESCE(l.display_name, l.lesson_name) AS display_name,
                 COALESCE(l.sort_order, 0) AS sort_order,
                 COALESCE(l.is_active, TRUE) AS is_active,
-                COUNT(lw.word_id) AS item_count
+                COUNT(DISTINCT lw.word_id) AS item_count
             FROM spelling_lessons l
             JOIN spelling_courses c
                 ON c.course_id = l.course_id
@@ -192,4 +217,3 @@ def create_spelling_lesson(
     finally:
         cur.close()
         conn.close()
-

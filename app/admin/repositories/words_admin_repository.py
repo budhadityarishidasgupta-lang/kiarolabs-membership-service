@@ -6,13 +6,37 @@ def get_words_overview():
     cur = conn.cursor()
 
     try:
-        cur.execute("SELECT COUNT(*) FROM words_courses")
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM public.courses
+            WHERE course_type = 'synonym'
+            """
+        )
         course_count = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM words_lessons")
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM public.lessons l
+            JOIN public.courses c
+                ON c.course_id = l.course_id
+            WHERE c.course_type = 'synonym'
+            """
+        )
         lesson_count = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM words_words")
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT lw.word_id)
+            FROM public.lesson_words lw
+            JOIN public.lessons l
+                ON l.lesson_id = lw.lesson_id
+            JOIN public.courses c
+                ON c.course_id = l.course_id
+            WHERE c.course_type = 'synonym'
+            """
+        )
         item_count = cur.fetchone()[0]
 
         return {
@@ -36,14 +60,15 @@ def list_words_courses():
         cur.execute(
             """
             SELECT
-                c.id,
-                c.name,
-                COUNT(l.id) AS lesson_count
-            FROM words_courses c
-            LEFT JOIN words_lessons l
-                ON l.course_id = c.id
-            GROUP BY c.id, c.name
-            ORDER BY c.id ASC
+                c.course_id,
+                c.title,
+                COUNT(DISTINCT l.lesson_id) AS lesson_count
+            FROM public.courses c
+            LEFT JOIN public.lessons l
+                ON l.course_id = c.course_id
+            WHERE c.course_type = 'synonym'
+            GROUP BY c.course_id, c.title
+            ORDER BY c.course_id ASC
             """
         )
         rows = cur.fetchall()
@@ -68,9 +93,9 @@ def create_words_course(name: str):
     try:
         cur.execute(
             """
-            INSERT INTO words_courses (name)
-            VALUES (%s)
-            RETURNING id, name
+            INSERT INTO public.courses (title, course_type)
+            VALUES (%s, 'synonym')
+            RETURNING course_id, title
             """,
             (name.strip(),),
         )
@@ -94,27 +119,29 @@ def list_words_lessons(course_id: int | None = None):
 
     try:
         params = []
-        where_sql = ""
+        where_clauses = ["c.course_type = 'synonym'"]
         if course_id is not None:
-            where_sql = "WHERE l.course_id = %s"
+            where_clauses.append("l.course_id = %s")
             params.append(course_id)
+        where_sql = f"WHERE {' AND '.join(where_clauses)}"
 
         cur.execute(
             f"""
             SELECT
-                l.id,
+                l.lesson_id,
                 l.course_id,
-                c.name AS course_name,
-                l.name,
-                COUNT(lw.word_id) AS item_count
-            FROM words_lessons l
-            JOIN words_courses c
-                ON c.id = l.course_id
-            LEFT JOIN words_lesson_words lw
-                ON lw.lesson_id = l.id
+                c.title AS course_name,
+                l.title,
+                COALESCE(l.sort_order, 0) AS sort_order,
+                COUNT(DISTINCT lw.word_id) AS item_count
+            FROM public.lessons l
+            JOIN public.courses c
+                ON c.course_id = l.course_id
+            LEFT JOIN public.lesson_words lw
+                ON lw.lesson_id = l.lesson_id
             {where_sql}
-            GROUP BY l.id, l.course_id, c.name, l.name
-            ORDER BY l.course_id ASC, l.id ASC
+            GROUP BY l.lesson_id, l.course_id, c.title, l.title, l.sort_order
+            ORDER BY l.course_id ASC, COALESCE(l.sort_order, 0) ASC, l.lesson_id ASC
             """,
             tuple(params),
         )
@@ -127,7 +154,8 @@ def list_words_lessons(course_id: int | None = None):
                 "course_name": row[2],
                 "lesson_name": row[3],
                 "display_name": row[3],
-                "item_count": row[4],
+                "sort_order": row[4],
+                "item_count": row[5],
             }
             for row in rows
         ]
@@ -143,11 +171,21 @@ def create_words_lesson(course_id: int, lesson_name: str):
     try:
         cur.execute(
             """
-            INSERT INTO words_lessons (course_id, name)
-            VALUES (%s, %s)
-            RETURNING id, course_id, name
+            SELECT COALESCE(MAX(sort_order), 0) + 1
+            FROM public.lessons
+            WHERE course_id = %s
             """,
-            (course_id, lesson_name.strip()),
+            (course_id,),
+        )
+        sort_order = cur.fetchone()[0]
+
+        cur.execute(
+            """
+            INSERT INTO public.lessons (course_id, title, sort_order)
+            VALUES (%s, %s, %s)
+            RETURNING lesson_id, course_id, title, sort_order
+            """,
+            (course_id, lesson_name.strip(), sort_order),
         )
         row = cur.fetchone()
         conn.commit()
@@ -156,6 +194,7 @@ def create_words_lesson(course_id: int, lesson_name: str):
             "course_id": row[1],
             "lesson_name": row[2],
             "display_name": row[2],
+            "sort_order": row[3],
         }
     except Exception:
         conn.rollback()
@@ -163,4 +202,3 @@ def create_words_lesson(course_id: int, lesson_name: str):
     finally:
         cur.close()
         conn.close()
-
