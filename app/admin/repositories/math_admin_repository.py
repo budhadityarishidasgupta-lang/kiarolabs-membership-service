@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 from app.database import get_connection
@@ -8,7 +9,9 @@ def _build_math_lesson_code_seed(lesson_name: str, display_name: str | None = No
     cleaned = re.sub(r"[^A-Za-z0-9]+", "_", raw.upper()).strip("_")
     if not cleaned:
         cleaned = "LESSON"
-    return f"MATH_{cleaned[:48]}"
+    prefix = cleaned[:6]
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:6].upper()
+    return f"MATH_{prefix}_{digest}"
 
 
 def _generate_unique_math_lesson_code(cur, lesson_name: str, display_name: str | None = None, topic: str | None = None) -> str:
