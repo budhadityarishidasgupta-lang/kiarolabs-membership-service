@@ -6,8 +6,10 @@ from app.admin.repositories.math_admin_repository import (
     create_math_lesson,
     delete_math_lesson,
     get_math_overview,
+    list_math_lesson_question_answers,
     list_math_courses,
     list_math_lessons,
+    update_math_question_correct_answer,
 )
 from app.admin.repositories.spelling_admin_repository import (
     create_spelling_course,
@@ -39,6 +41,10 @@ class CreateLessonRequest(BaseModel):
     topic: str | None = None
     difficulty: str | None = None
     is_active: bool = True
+
+
+class UpdateMathCorrectAnswerRequest(BaseModel):
+    correct_answer: str
 
 
 def _normalize_module(module: str) -> str:
@@ -163,4 +169,28 @@ def delete_maths_lesson(lesson_id: int, _user=Depends(require_admin)):
     data = delete_math_lesson(lesson_id)
     if not data:
         raise HTTPException(status_code=404, detail="Lesson not found")
+    return {"status": "ok", "data": data}
+
+
+@router.get("/maths/lessons/{lesson_id}/questions")
+def get_maths_lesson_questions(lesson_id: int, _user=Depends(require_admin)):
+    data = list_math_lesson_question_answers(lesson_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return {"status": "ok", "data": data}
+
+
+@router.patch("/maths/questions/{question_id}/correct-answer")
+def patch_maths_question_correct_answer(
+    question_id: int,
+    payload: UpdateMathCorrectAnswerRequest,
+    _user=Depends(require_admin),
+):
+    try:
+        data = update_math_question_correct_answer(question_id, payload.correct_answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Question not found")
     return {"status": "ok", "data": data}

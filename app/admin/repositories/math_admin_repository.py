@@ -2,6 +2,7 @@ import hashlib
 import re
 
 from app.database import get_connection
+from app.repositories.math_repository import _get_lesson_details, get_math_question_record
 
 
 def _clean_optional_text(value: str | None, max_length: int = 50) -> str | None:
@@ -214,6 +215,164 @@ def list_math_lessons():
             )
 
         return lessons
+    finally:
+        cur.close()
+        conn.close()
+
+
+def list_math_lesson_question_answers(lesson_id: int):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        lesson = _get_lesson_details(cur, lesson_id)
+        if not lesson:
+            return None
+
+        topic = (lesson.get("topic") or "").strip()
+        difficulty = (lesson.get("difficulty") or "").strip()
+
+        def _fetch(where_sql: str, params: tuple):
+            cur.execute(
+                f"""
+                SELECT
+                    q.id,
+                    q.stem,
+                    q.correct_option,
+                    q.option_a,
+                    q.option_b,
+                    q.option_c,
+                    q.option_d,
+                    q.option_e
+                FROM math_questions q
+                WHERE {where_sql}
+                ORDER BY q.id ASC
+                """,
+                params,
+            )
+            return cur.fetchall()
+
+        rows = []
+        if topic and difficulty:
+            rows = _fetch(
+                "LOWER(COALESCE(q.topic, '')) = LOWER(%s) AND LOWER(COALESCE(q.difficulty, '')) = LOWER(%s)",
+                (topic, difficulty),
+            )
+
+        if not rows and topic:
+            rows = _fetch(
+                "LOWER(COALESCE(q.topic, '')) = LOWER(%s)",
+                (topic,),
+            )
+
+        if not rows and difficulty:
+            rows = _fetch(
+                "LOWER(COALESCE(q.difficulty, '')) = LOWER(%s)",
+                (difficulty,),
+            )
+
+        if not rows:
+            keywords = _extract_lesson_keywords(
+                lesson_name=lesson.get("lesson_name") or "",
+                display_name=lesson.get("display_name"),
+                topic=topic,
+            )
+            if keywords:
+                keyword_clauses = []
+                keyword_params: list[str] = []
+                for keyword in keywords:
+                    like_value = f"%{keyword}%"
+                    keyword_clauses.append(
+                        "(LOWER(COALESCE(q.topic, '')) LIKE LOWER(%s) OR LOWER(COALESCE(q.stem, '')) LIKE LOWER(%s))"
+                    )
+                    keyword_params.extend([like_value, like_value])
+
+                rows = _fetch(" OR ".join(keyword_clauses), tuple(keyword_params))
+
+        questions = []
+        for row in rows:
+            options_map = {
+                "A": row[3],
+                "B": row[4],
+                "C": row[5],
+                "D": row[6],
+                "E": row[7],
+            }
+            correct_option = row[2]
+            questions.append(
+                {
+                    "question_id": row[0],
+                    "stem": row[1],
+                    "correct_option": correct_option,
+                    "correct_answer": options_map.get(correct_option) or "",
+                }
+            )
+
+        return {
+            "lesson_id": lesson["lesson_id"],
+            "lesson_name": lesson["lesson_name"],
+            "display_name": lesson.get("display_name") or lesson["lesson_name"],
+            "questions": questions,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+def update_math_question_correct_answer(question_id: int, correct_answer: str):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cleaned_answer = (correct_answer or "").strip()
+        if not cleaned_answer:
+            raise ValueError("correct_answer is required")
+
+        question = get_math_question_record(question_id)
+        if not question:
+            return None
+
+        option_column_map = {
+            "A": "option_a",
+            "B": "option_b",
+            "C": "option_c",
+            "D": "option_d",
+            "E": "option_e",
+        }
+        target_column = option_column_map.get(question.get("correct_option"))
+        if not target_column:
+            raise ValueError("Question is missing a valid correct option")
+
+        cur.execute(
+            f"""
+            UPDATE math_questions
+            SET {target_column} = %s
+            WHERE id = %s
+            RETURNING id, stem, correct_option, option_a, option_b, option_c, option_d, option_e
+            """,
+            (cleaned_answer, question_id),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return None
+
+        options_map = {
+            "A": row[3],
+            "B": row[4],
+            "C": row[5],
+            "D": row[6],
+            "E": row[7],
+        }
+        return {
+            "question_id": row[0],
+            "stem": row[1],
+            "correct_option": row[2],
+            "correct_answer": options_map.get(row[2]) or "",
+        }
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cur.close()
         conn.close()
