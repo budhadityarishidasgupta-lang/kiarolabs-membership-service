@@ -418,6 +418,35 @@ def save_answer_key(payload: AnswerKeyRequest, current_user=Depends(get_current_
         conn.close()
 
 
+@router.get("/maths/answer-key")
+def get_answer_key(paper_code: str, current_user=Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT correct_answer
+            FROM math_printable_answer_keys
+            WHERE paper_code = %s
+            ORDER BY question_number
+            """,
+            (paper_code,),
+        )
+
+        rows = cur.fetchall()
+        return {
+            "paper_code": paper_code,
+            "answers": [row[0] for row in rows],
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 @router.post("/comprehension/upload")
 def upload_comprehension(
     paper_code: str = Form(...),
