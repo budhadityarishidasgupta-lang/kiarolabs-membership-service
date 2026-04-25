@@ -252,3 +252,98 @@ def create_words_lesson(course_id: int, lesson_name: str):
     finally:
         cur.close()
         conn.close()
+
+
+def list_words_lesson_content(lesson_id: int):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT
+                l.lesson_id,
+                l.title,
+                l.title
+            FROM public.lessons l
+            JOIN public.courses c
+                ON c.course_id = l.course_id
+            WHERE l.lesson_id = %s
+              AND c.course_type = 'synonym'
+            LIMIT 1
+            """,
+            (lesson_id,),
+        )
+        lesson_row = cur.fetchone()
+        if not lesson_row:
+            return None
+
+        cur.execute(
+            """
+            SELECT
+                w.word_id,
+                w.headword,
+                COALESCE(w.synonyms, '')
+            FROM public.lesson_words lw
+            JOIN public.words w
+                ON w.word_id = lw.word_id
+            WHERE lw.lesson_id = %s
+            ORDER BY w.word_id ASC
+            """,
+            (lesson_id,),
+        )
+        rows = cur.fetchall()
+
+        items = [
+            {
+                "item_id": row[0],
+                "prompt": row[1],
+                "answer": row[2],
+            }
+            for row in rows
+        ]
+
+        return {
+            "lesson_id": lesson_row[0],
+            "lesson_name": lesson_row[1],
+            "display_name": lesson_row[2],
+            "items": items,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+def update_words_content_answer(item_id: int, answer: str):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cleaned_answer = (answer or "").strip()
+        if not cleaned_answer:
+            raise ValueError("answer is required")
+
+        cur.execute(
+            """
+            UPDATE public.words
+            SET synonyms = %s
+            WHERE word_id = %s
+            RETURNING word_id, headword, COALESCE(synonyms, '')
+            """,
+            (cleaned_answer, item_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        conn.commit()
+        return {
+            "item_id": row[0],
+            "prompt": row[1],
+            "answer": row[2],
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()

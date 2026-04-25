@@ -15,15 +15,19 @@ from app.admin.repositories.spelling_admin_repository import (
     create_spelling_course,
     create_spelling_lesson,
     get_spelling_overview,
+    list_spelling_lesson_content,
     list_spelling_courses,
     list_spelling_lessons,
+    update_spelling_content_answer,
 )
 from app.admin.repositories.words_admin_repository import (
     create_words_course,
     create_words_lesson,
     get_words_overview,
+    list_words_lesson_content,
     list_words_courses,
     list_words_lessons,
+    update_words_content_answer,
 )
 
 
@@ -45,6 +49,10 @@ class CreateLessonRequest(BaseModel):
 
 class UpdateMathCorrectAnswerRequest(BaseModel):
     correct_answer: str
+
+
+class UpdateLessonContentAnswerRequest(BaseModel):
+    answer: str
 
 
 def _normalize_module(module: str) -> str:
@@ -193,4 +201,66 @@ def patch_maths_question_correct_answer(
 
     if not data:
         raise HTTPException(status_code=404, detail="Question not found")
+    return {"status": "ok", "data": data}
+
+
+@router.get("/{module}/lessons/{lesson_id}/content")
+def get_module_lesson_content(module: str, lesson_id: int, _user=Depends(require_admin)):
+    normalized = _normalize_module(module)
+
+    if normalized == "maths":
+        maths_data = list_math_lesson_question_answers(lesson_id)
+        if not maths_data:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+        data = {
+            "lesson_id": maths_data["lesson_id"],
+            "lesson_name": maths_data["lesson_name"],
+            "display_name": maths_data.get("display_name"),
+            "items": [
+                {
+                    "item_id": question["question_id"],
+                    "prompt": question["stem"],
+                    "answer": question["correct_answer"],
+                }
+                for question in maths_data.get("questions", [])
+            ],
+        }
+    elif normalized == "spelling":
+        data = list_spelling_lesson_content(lesson_id)
+    else:
+        data = list_words_lesson_content(lesson_id)
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    return {"status": "ok", "data": data}
+
+
+@router.patch("/{module}/content/{item_id}/answer")
+def patch_module_content_answer(
+    module: str,
+    item_id: int,
+    payload: UpdateLessonContentAnswerRequest,
+    _user=Depends(require_admin),
+):
+    normalized = _normalize_module(module)
+
+    try:
+        if normalized == "maths":
+            updated = update_math_question_correct_answer(item_id, payload.answer)
+            data = {
+                "item_id": updated["question_id"],
+                "prompt": updated["stem"],
+                "answer": updated["correct_answer"],
+            } if updated else None
+        elif normalized == "spelling":
+            data = update_spelling_content_answer(item_id, payload.answer)
+        else:
+            data = update_words_content_answer(item_id, payload.answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Item not found")
+
     return {"status": "ok", "data": data}
