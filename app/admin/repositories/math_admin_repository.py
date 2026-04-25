@@ -4,6 +4,13 @@ import re
 from app.database import get_connection
 
 
+def _clean_optional_text(value: str | None, max_length: int = 50) -> str | None:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return None
+    return cleaned[:max_length]
+
+
 def _build_math_lesson_code_seed(lesson_name: str, display_name: str | None = None, topic: str | None = None) -> str:
     raw = " ".join(part for part in [display_name, lesson_name, topic] if part and part.strip())
     cleaned = re.sub(r"[^A-Za-z0-9]+", "_", raw.upper()).strip("_")
@@ -11,7 +18,7 @@ def _build_math_lesson_code_seed(lesson_name: str, display_name: str | None = No
         cleaned = "LESSON"
     prefix = cleaned[:6]
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:6].upper()
-    return f"MATH_{prefix}_{digest}"
+    return f"MATH_{prefix}_{digest}"[:50]
 
 
 def _generate_unique_math_lesson_code(cur, lesson_name: str, display_name: str | None = None, topic: str | None = None) -> str:
@@ -122,10 +129,12 @@ def create_math_lesson(
     cur = conn.cursor()
 
     try:
-        cleaned_lesson_name = lesson_name.strip()
-        cleaned_display_name = (display_name or "").strip() or None
-        cleaned_topic = (topic or "").strip() or None
-        cleaned_difficulty = (difficulty or "").strip() or None
+        cleaned_lesson_name = _clean_optional_text(lesson_name, max_length=50)
+        cleaned_display_name = _clean_optional_text(display_name, max_length=50)
+        cleaned_topic = _clean_optional_text(topic, max_length=50)
+        cleaned_difficulty = _clean_optional_text(difficulty, max_length=50)
+        if not cleaned_lesson_name:
+            raise ValueError("lesson_name is required")
         lesson_code = _generate_unique_math_lesson_code(
             cur,
             lesson_name=cleaned_lesson_name,
