@@ -50,6 +50,100 @@ def _generate_unique_math_lesson_code(cur, lesson_name: str, display_name: str |
         suffix += 1
 
 
+def _extract_lesson_keywords(lesson_name: str, display_name: str | None = None, topic: str | None = None) -> list[str]:
+    raw_parts = [display_name or "", lesson_name or "", topic or ""]
+    raw_text = " ".join(part for part in raw_parts if part)
+    tokens = re.findall(r"[A-Za-z0-9]+", raw_text.lower())
+    stop_words = {"with", "and", "the", "same", "into", "than"}
+    keywords: list[str] = []
+
+    for token in tokens:
+        if token in stop_words:
+            continue
+        if len(token) < 3:
+            continue
+        if token not in keywords:
+            keywords.append(token)
+
+    return keywords
+
+
+def _count_questions_for_filter(cur, where_sql: str, params: tuple) -> int:
+    cur.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM math_questions q
+        WHERE {where_sql}
+        """,
+        params,
+    )
+    row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def _get_math_lesson_item_count(
+    cur,
+    lesson_name: str,
+    display_name: str | None = None,
+    topic: str | None = None,
+    difficulty: str | None = None,
+) -> int:
+    topic_value = (topic or "").strip()
+    difficulty_value = (difficulty or "").strip()
+
+    if topic_value and difficulty_value:
+        count = _count_questions_for_filter(
+            cur,
+            "LOWER(COALESCE(q.topic, '')) = LOWER(%s) AND LOWER(COALESCE(q.difficulty, '')) = LOWER(%s)",
+            (topic_value, difficulty_value),
+        )
+        if count:
+            return count
+
+    if topic_value:
+        count = _count_questions_for_filter(
+            cur,
+            "LOWER(COALESCE(q.topic, '')) = LOWER(%s)",
+            (topic_value,),
+        )
+        if count:
+            return count
+
+    if difficulty_value:
+        count = _count_questions_for_filter(
+            cur,
+            "LOWER(COALESCE(q.difficulty, '')) = LOWER(%s)",
+            (difficulty_value,),
+        )
+        if count:
+            return count
+
+    keywords = _extract_lesson_keywords(
+        lesson_name=lesson_name,
+        display_name=display_name,
+        topic=topic_value,
+    )
+    if keywords:
+        keyword_clauses = []
+        keyword_params: list[str] = []
+        for keyword in keywords:
+            like_value = f"%{keyword}%"
+            keyword_clauses.append(
+                "(LOWER(COALESCE(q.topic, '')) LIKE LOWER(%s) OR LOWER(COALESCE(q.stem, '')) LIKE LOWER(%s))"
+            )
+            keyword_params.extend([like_value, like_value])
+
+        count = _count_questions_for_filter(
+            cur,
+            " OR ".join(keyword_clauses),
+            tuple(keyword_params),
+        )
+        if count:
+            return count
+
+    return 0
+
+
 def get_math_overview():
     conn = get_connection()
     cur = conn.cursor()
@@ -100,15 +194,22 @@ def list_math_lessons():
 
         lessons = []
         for row in rows:
+            item_count = _get_math_lesson_item_count(
+                cur,
+                lesson_name=row[1],
+                display_name=row[2],
+                topic=row[3],
+                difficulty=row[4],
+            )
             lessons.append(
                 {
                     "lesson_id": row[0],
                     "lesson_name": row[1],
                     "display_name": row[2],
-                    "course_name": row[3],
                     "topic": row[3],
                     "difficulty": row[4],
                     "is_active": row[5],
+                    "item_count": item_count,
                 }
             )
 
@@ -174,6 +275,7 @@ def create_math_lesson(
             "topic": row[4],
             "difficulty": row[5],
             "is_active": row[6],
+            "item_count": 0,
         }
     except Exception:
         conn.rollback()
