@@ -1030,17 +1030,29 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
         raise HTTPException(status_code=403, detail="Not authorized")
 
     raw_email = str(payload.get("email", "")).strip().lower()
+    raw_member_id = str(payload.get("member_id", "")).strip()
     raw_apps = payload.get("apps", [])
 
-    if not raw_email:
-        raise HTTPException(status_code=400, detail="Email is required")
-
-    if not isinstance(raw_apps, list):
+    if isinstance(raw_apps, dict):
+        raw_apps = list(raw_apps.values())
+    elif isinstance(raw_apps, str):
+        raw_apps = [raw_apps]
+    elif not isinstance(raw_apps, list):
         raise HTTPException(status_code=400, detail="Apps must be a list")
 
-    normalized_email = raw_email
+    if not raw_email and not raw_member_id:
+        raise HTTPException(status_code=400, detail="Email or member_id is required")
+
     valid_codes = get_valid_app_codes()
-    normalized_apps = sorted({str(app).strip().lower() for app in raw_apps if str(app).strip()})
+    normalized_apps = sorted(
+        {
+            str(
+                app.get("app_code") if isinstance(app, dict) else app
+            ).strip().lower()
+            for app in raw_apps
+            if str(app.get("app_code") if isinstance(app, dict) else app).strip()
+        }
+    )
     invalid_codes = [app for app in normalized_apps if app not in valid_codes]
     if invalid_codes:
         raise HTTPException(status_code=400, detail=f"Invalid apps: {', '.join(invalid_codes)}")
@@ -1053,10 +1065,12 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
             """
             SELECT id, email
             FROM kiaro_membership.members
-            WHERE LOWER(email) = LOWER(%s)
+            WHERE (%s <> '' AND id::text = %s)
+               OR (%s <> '' AND LOWER(email) = LOWER(%s))
+            ORDER BY id
             LIMIT 1
             """,
-            (normalized_email,),
+            (raw_member_id, raw_member_id, raw_email, raw_email),
         )
         member = cur.fetchone()
         if not member:
