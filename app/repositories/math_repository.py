@@ -22,7 +22,7 @@ def get_math_lessons_list():
 
     try:
         cur.execute(
-            """
+            f"""
             SELECT
                 id,
                 lesson_name,
@@ -75,7 +75,7 @@ def _map_question_rows(rows) -> list[dict]:
 
 def _get_lesson_details(cur, lesson_id: int):
     cur.execute(
-        """
+        f"""
         SELECT
             id,
             lesson_name,

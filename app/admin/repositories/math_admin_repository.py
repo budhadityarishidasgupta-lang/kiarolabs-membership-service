@@ -203,7 +203,7 @@ def list_math_lessons():
 
     try:
         cur.execute(
-            """
+            f"""
             SELECT
                 id,
                 lesson_name,
