@@ -314,24 +314,7 @@ def list_math_lesson_question_answers(lesson_id: int):
 
                 rows = _fetch(" OR ".join(keyword_clauses), tuple(keyword_params))
 
-        questions = []
-        for row in rows:
-            options_map = {
-                "A": row[3],
-                "B": row[4],
-                "C": row[5],
-                "D": row[6],
-                "E": row[7],
-            }
-            correct_option = row[2]
-            questions.append(
-                {
-                    "question_id": row[0],
-                    "stem": row[1],
-                    "correct_option": correct_option,
-                    "correct_answer": options_map.get(correct_option) or "",
-                }
-            )
+        questions = [_format_math_question_admin_payload(row) for row in rows]
 
         return {
             "lesson_id": lesson["lesson_id"],
@@ -342,6 +325,24 @@ def list_math_lesson_question_answers(lesson_id: int):
     finally:
         cur.close()
         conn.close()
+
+
+def _format_math_question_admin_payload(row):
+    options_map = {
+        "A": row[3] or "",
+        "B": row[4] or "",
+        "C": row[5] or "",
+        "D": row[6] or "",
+        "E": row[7] or "",
+    }
+    correct_option = row[2] or "A"
+    return {
+        "question_id": row[0],
+        "stem": row[1],
+        "correct_option": correct_option,
+        "correct_answer": options_map.get(correct_option) or "",
+        "options": options_map,
+    }
 
 
 def update_math_question_correct_answer(question_id: int, correct_answer: str):
@@ -382,19 +383,73 @@ def update_math_question_correct_answer(question_id: int, correct_answer: str):
         if not row:
             return None
 
-        options_map = {
-            "A": row[3],
-            "B": row[4],
-            "C": row[5],
-            "D": row[6],
-            "E": row[7],
+        return _format_math_question_admin_payload(row)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def update_math_question_content(
+    question_id: int,
+    *,
+    option_a: str | None,
+    option_b: str | None,
+    option_c: str | None,
+    option_d: str | None,
+    option_e: str | None,
+    correct_option: str,
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        normalized_correct_option = (correct_option or "").strip().upper()
+        if normalized_correct_option not in {"A", "B", "C", "D", "E"}:
+            raise ValueError("correct_option must be one of A, B, C, D or E")
+
+        normalized_options = {
+            "A": (option_a or "").strip(),
+            "B": (option_b or "").strip(),
+            "C": (option_c or "").strip(),
+            "D": (option_d or "").strip(),
+            "E": (option_e or "").strip(),
         }
-        return {
-            "question_id": row[0],
-            "stem": row[1],
-            "correct_option": row[2],
-            "correct_answer": options_map.get(row[2]) or "",
-        }
+
+        if not normalized_options[normalized_correct_option]:
+            raise ValueError("The selected correct option must have an answer value")
+
+        cur.execute(
+            """
+            UPDATE math_questions
+            SET
+                option_a = %s,
+                option_b = %s,
+                option_c = %s,
+                option_d = %s,
+                option_e = %s,
+                correct_option = %s
+            WHERE id = %s
+            RETURNING id, stem, correct_option, option_a, option_b, option_c, option_d, option_e
+            """,
+            (
+                normalized_options["A"] or None,
+                normalized_options["B"] or None,
+                normalized_options["C"] or None,
+                normalized_options["D"] or None,
+                normalized_options["E"] or None,
+                normalized_correct_option,
+                question_id,
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return None
+
+        return _format_math_question_admin_payload(row)
     except Exception:
         conn.rollback()
         raise

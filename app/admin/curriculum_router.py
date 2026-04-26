@@ -10,6 +10,7 @@ from app.admin.repositories.math_admin_repository import (
     list_math_lesson_question_answers,
     list_math_courses,
     list_math_lessons,
+    update_math_question_content,
     update_math_question_correct_answer,
 )
 from app.admin.repositories.spelling_admin_repository import (
@@ -54,6 +55,15 @@ class UpdateMathCorrectAnswerRequest(BaseModel):
 
 class UpdateLessonContentAnswerRequest(BaseModel):
     answer: str
+
+
+class UpdateMathQuestionContentRequest(BaseModel):
+    option_a: str | None = None
+    option_b: str | None = None
+    option_c: str | None = None
+    option_d: str | None = None
+    option_e: str | None = None
+    correct_option: str
 
 
 def _normalize_module(module: str) -> str:
@@ -227,6 +237,8 @@ def get_module_lesson_content(module: str, lesson_id: int, _user=Depends(require
                     "item_id": question["question_id"],
                     "prompt": question["stem"],
                     "answer": question["correct_answer"],
+                    "options": question["options"],
+                    "correct_option": question["correct_option"],
                 }
                 for question in maths_data.get("questions", [])
             ],
@@ -239,6 +251,38 @@ def get_module_lesson_content(module: str, lesson_id: int, _user=Depends(require
     if not data:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
+    return {"status": "ok", "data": data}
+
+
+@router.patch("/maths/content/{item_id}")
+def patch_maths_question_content(
+    item_id: int,
+    payload: UpdateMathQuestionContentRequest,
+    _user=Depends(require_admin),
+):
+    try:
+        updated = update_math_question_content(
+            item_id,
+            option_a=payload.option_a,
+            option_b=payload.option_b,
+            option_c=payload.option_c,
+            option_d=payload.option_d,
+            option_e=payload.option_e,
+            correct_option=payload.correct_option,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    data = {
+        "item_id": updated["question_id"],
+        "prompt": updated["stem"],
+        "answer": updated["correct_answer"],
+        "options": updated["options"],
+        "correct_option": updated["correct_option"],
+    }
     return {"status": "ok", "data": data}
 
 
