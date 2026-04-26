@@ -84,6 +84,57 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class AdminUserAppsUpdateRequest(BaseModel):
+    email: EmailStr
+    apps: list[str]
+
+
+AVAILABLE_APP_CATALOG = [
+    {
+        "app_code": "general",
+        "label": "WordSprint",
+        "description": "Core word learning access",
+        "group": "core",
+    },
+    {
+        "app_code": "spelling",
+        "label": "SpellingSprint",
+        "description": "Spelling lesson access",
+        "group": "core",
+    },
+    {
+        "app_code": "math",
+        "label": "MathSprint",
+        "description": "Maths lesson access",
+        "group": "core",
+    },
+    {
+        "app_code": "practice",
+        "label": "Printable Papers",
+        "description": "Printable practice paper access",
+        "group": "products",
+    },
+    {
+        "app_code": "mock",
+        "label": "Mock Exams",
+        "description": "Mock exam access",
+        "group": "products",
+    },
+    {
+        "app_code": "comprehension",
+        "label": "ComprehensionSprint",
+        "description": "Comprehension passage access",
+        "group": "products",
+    },
+    {
+        "app_code": "nvr",
+        "label": "NVRSprint",
+        "description": "NVR access",
+        "group": "future",
+    },
+]
+
+
 # =========================
 # Helpers
 # =========================
@@ -134,6 +185,14 @@ def derive_subscription_state(subscription_status: str | None, subscription_end)
         return True, "cancelled"
 
     return False, subscription_status or "inactive"
+
+
+def get_available_app_catalog():
+    return AVAILABLE_APP_CATALOG
+
+
+def get_valid_app_codes():
+    return {item["app_code"] for item in AVAILABLE_APP_CATALOG}
 
 
 # =========================
@@ -851,6 +910,7 @@ def get_all_users(user=Depends(get_current_user)):
 
             result.append(
                 {
+                    "member_id": str(r[0]),
                     "email": r[1],
                     "role": r[2] if r[2] else "student",
                     "account_type": r[3],
@@ -860,6 +920,113 @@ def get_all_users(user=Depends(get_current_user)):
             )
 
         return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/admin/app-catalog")
+def get_admin_app_catalog(user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return {"apps": get_available_app_catalog()}
+
+
+@app.get("/admin/user-apps")
+def get_admin_user_apps(email: str, user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT m.id, m.email, COALESCE(array_agg(ma.app_code ORDER BY ma.app_code), '{}') AS apps
+            FROM kiaro_membership.members m
+            LEFT JOIN kiaro_membership.member_apps ma
+              ON ma.member_id = m.id
+            WHERE LOWER(m.email) = LOWER(%s)
+            GROUP BY m.id, m.email
+            LIMIT 1
+            """,
+            (email,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        return {
+            "email": row[1],
+            "member_id": row[0],
+            "apps": row[2] or [],
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/admin/set-user-apps")
+def set_admin_user_apps(payload: AdminUserAppsUpdateRequest, user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    normalized_email = payload.email.strip().lower()
+    valid_codes = get_valid_app_codes()
+    normalized_apps = sorted({str(app).strip().lower() for app in payload.apps if str(app).strip()})
+    invalid_codes = [app for app in normalized_apps if app not in valid_codes]
+    if invalid_codes:
+        raise HTTPException(status_code=400, detail=f"Invalid apps: {', '.join(invalid_codes)}")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT id, email
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            LIMIT 1
+            """,
+            (normalized_email,),
+        )
+        member = cur.fetchone()
+        if not member:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        member_id = member[0]
+
+        cur.execute(
+            """
+            DELETE FROM kiaro_membership.member_apps
+            WHERE member_id = %s
+            """,
+            (member_id,),
+        )
+
+        for app_code in normalized_apps:
+            cur.execute(
+                """
+                INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+                VALUES (%s, %s)
+                """,
+                (member_id, app_code),
+            )
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "email": member[1],
+            "member_id": member_id,
+            "apps": normalized_apps,
+        }
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cur.close()
         conn.close()
