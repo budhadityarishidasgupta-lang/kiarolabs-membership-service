@@ -939,7 +939,7 @@ def get_all_users(user=Depends(get_current_user)):
                 COALESCE(u.role, 'student') as role,
                 m.account_type,
                 m.created_at,
-                COALESCE(array_agg(ma.app_code), '{}') as apps
+                COALESCE(array_agg(ma.app_code) FILTER (WHERE ma.app_code IS NOT NULL), '{}') as apps
             FROM kiaro_membership.members m
             LEFT JOIN users u
                 ON LOWER(u.email) = LOWER(m.email)
@@ -955,7 +955,7 @@ def get_all_users(user=Depends(get_current_user)):
         result = []
         for r in rows:
             account_type = r[3]
-            apps = r[5] or []
+            apps = [app for app in (r[5] or []) if app]
 
             expected_apps = []
 
@@ -971,7 +971,7 @@ def get_all_users(user=Depends(get_current_user)):
                     "role": r[2] if r[2] else "student",
                     "account_type": r[3],
                     "created_at": str(r[4]),
-                    "apps": r[5] if r[5] else [],
+                    "apps": apps,
                 }
             )
 
@@ -1000,7 +1000,7 @@ def get_admin_user_apps(email: str, user=Depends(get_current_user)):
     try:
         cur.execute(
             """
-            SELECT m.id, m.email, COALESCE(array_agg(ma.app_code ORDER BY ma.app_code), '{}') AS apps
+            SELECT m.id, m.email, COALESCE(array_agg(ma.app_code ORDER BY ma.app_code) FILTER (WHERE ma.app_code IS NOT NULL), '{}') AS apps
             FROM kiaro_membership.members m
             LEFT JOIN kiaro_membership.member_apps ma
               ON ma.member_id = m.id
@@ -1017,7 +1017,7 @@ def get_admin_user_apps(email: str, user=Depends(get_current_user)):
         return {
             "email": row[1],
             "member_id": row[0],
-            "apps": row[2] or [],
+            "apps": [app for app in (row[2] or []) if app],
         }
     finally:
         cur.close()
@@ -1046,11 +1046,13 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
     valid_codes = get_valid_app_codes()
     normalized_apps = sorted(
         {
-            str(
-                app.get("app_code") if isinstance(app, dict) else app
-            ).strip().lower()
-            for app in raw_apps
-            if str(app.get("app_code") if isinstance(app, dict) else app).strip()
+            app_code
+            for app_code in (
+                str(app.get("app_code") if isinstance(app, dict) else app).strip().lower()
+                for app in raw_apps
+                if (app.get("app_code") if isinstance(app, dict) else app) is not None
+            )
+            if app_code and app_code not in {"none", "null"}
         }
     )
     invalid_codes = [app for app in normalized_apps if app not in valid_codes]
