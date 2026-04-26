@@ -1,7 +1,7 @@
 import os
 import re
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Body
 #from fastapi.security import OAuth2PasswordBearer
 from app.auth import get_current_user
 from pydantic import BaseModel, EmailStr
@@ -915,6 +915,13 @@ def dashboard_insights(user=Depends(get_current_user)):
         conn.close()
 
 
+@app.get("/progress/weekly-improvement")
+def legacy_weekly_improvement(user=Depends(get_current_user)):
+    from app.practice.router import get_weekly_improvement
+
+    return get_weekly_improvement(user)
+
+
 @app.get("/admin/users")
 def get_all_users(user=Depends(get_current_user)):
     if user.get("role") != "admin":
@@ -1018,13 +1025,22 @@ def get_admin_user_apps(email: str, user=Depends(get_current_user)):
 
 
 @app.post("/admin/set-user-apps")
-def set_admin_user_apps(payload: AdminUserAppsUpdateRequest, user=Depends(get_current_user)):
+def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    normalized_email = payload.email.strip().lower()
+    raw_email = str(payload.get("email", "")).strip().lower()
+    raw_apps = payload.get("apps", [])
+
+    if not raw_email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    if not isinstance(raw_apps, list):
+        raise HTTPException(status_code=400, detail="Apps must be a list")
+
+    normalized_email = raw_email
     valid_codes = get_valid_app_codes()
-    normalized_apps = sorted({str(app).strip().lower() for app in payload.apps if str(app).strip()})
+    normalized_apps = sorted({str(app).strip().lower() for app in raw_apps if str(app).strip()})
     invalid_codes = [app for app in normalized_apps if app not in valid_codes]
     if invalid_codes:
         raise HTTPException(status_code=400, detail=f"Invalid apps: {', '.join(invalid_codes)}")
