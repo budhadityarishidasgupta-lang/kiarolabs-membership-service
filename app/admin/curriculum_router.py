@@ -5,6 +5,7 @@ from app.admin.ingestion_router import require_admin
 from app.admin.repositories.math_admin_repository import (
     create_math_lesson,
     delete_math_lesson,
+    delete_e2e_math_lessons,
     get_math_overview,
     list_math_lesson_question_answers,
     list_math_courses,
@@ -178,6 +179,11 @@ def delete_maths_lesson(lesson_id: int, _user=Depends(require_admin)):
     if not data:
         raise HTTPException(status_code=404, detail="Lesson not found")
     return {"status": "ok", "data": data}
+
+
+@router.delete("/maths/test-fixtures")
+def delete_maths_test_fixtures(_user=Depends(require_admin)):
+    return {"status": "ok", "data": delete_e2e_math_lessons()}
 
 
 @router.get("/maths/lessons/{lesson_id}/questions")

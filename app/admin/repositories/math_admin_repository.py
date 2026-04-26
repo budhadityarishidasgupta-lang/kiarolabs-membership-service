@@ -5,6 +5,24 @@ from app.database import get_connection
 from app.repositories.math_repository import _get_lesson_details, get_math_question_record
 
 
+_TEST_FIXTURE_RE = re.compile(r"^\s*e2e\b", re.IGNORECASE)
+
+
+def _is_test_fixture_text(value: str | None) -> bool:
+    return bool(value and _TEST_FIXTURE_RE.search(value))
+
+
+def _math_lesson_visibility_sql(table_alias: str = "") -> str:
+    prefix = f"{table_alias}." if table_alias else ""
+    return (
+        f"NOT ("
+        f"COALESCE({prefix}lesson_name, '') ~* '^\\s*e2e\\b' OR "
+        f"COALESCE({prefix}display_name, '') ~* '^\\s*e2e\\b' OR "
+        f"COALESCE({prefix}topic, '') ~* '^\\s*e2e\\b'"
+        f")"
+    )
+
+
 def _clean_optional_text(value: str | None, max_length: int = 50) -> str | None:
     cleaned = (value or "").strip()
     if not cleaned:
@@ -150,7 +168,13 @@ def get_math_overview():
     cur = conn.cursor()
 
     try:
-        cur.execute("SELECT COUNT(*) FROM math_lessons")
+        cur.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM math_lessons
+            WHERE {_math_lesson_visibility_sql()}
+            """
+        )
         lesson_count = cur.fetchone()[0]
 
         cur.execute("SELECT COUNT(*) FROM math_questions")
@@ -188,6 +212,7 @@ def list_math_lessons():
                 COALESCE(difficulty, 'unspecified') AS difficulty,
                 COALESCE(is_active, TRUE) AS is_active
             FROM math_lessons
+            WHERE {_math_lesson_visibility_sql()}
             ORDER BY id ASC
             """
         )
@@ -395,6 +420,12 @@ def create_math_lesson(
         cleaned_difficulty = _clean_optional_text(difficulty, max_length=50)
         if not cleaned_lesson_name:
             raise ValueError("lesson_name is required")
+        if (
+            _is_test_fixture_text(cleaned_lesson_name)
+            or _is_test_fixture_text(cleaned_display_name)
+            or _is_test_fixture_text(cleaned_topic)
+        ):
+            raise ValueError("Reserved test fixture names are not allowed in production lessons")
         lesson_code = _generate_unique_math_lesson_code(
             cur,
             lesson_name=cleaned_lesson_name,
@@ -466,6 +497,34 @@ def delete_math_lesson(lesson_id: int):
             "lesson_code": row[1],
             "display_name": row[2],
             "deleted": True,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def delete_e2e_math_lessons():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            DELETE FROM math_lessons
+            WHERE COALESCE(lesson_name, '') ~* '^\\s*e2e\\b'
+               OR COALESCE(display_name, '') ~* '^\\s*e2e\\b'
+               OR COALESCE(topic, '') ~* '^\\s*e2e\\b'
+            RETURNING id
+            """
+        )
+        rows = cur.fetchall()
+        conn.commit()
+        return {
+            "deleted_count": len(rows),
+            "lesson_ids": [row[0] for row in rows],
         }
     except Exception:
         conn.rollback()

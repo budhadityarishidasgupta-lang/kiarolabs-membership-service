@@ -5,6 +5,17 @@ from app.database import get_connection
 from app.repositories.math_stats_repository import ensure_math_stats_table, update_math_stats_from_attempt
 
 
+def _math_lesson_visibility_sql(table_alias: str = "") -> str:
+    prefix = f"{table_alias}." if table_alias else ""
+    return (
+        f"NOT ("
+        f"COALESCE({prefix}lesson_name, '') ~* '^\\s*e2e\\b' OR "
+        f"COALESCE({prefix}display_name, '') ~* '^\\s*e2e\\b' OR "
+        f"COALESCE({prefix}topic, '') ~* '^\\s*e2e\\b'"
+        f")"
+    )
+
+
 def get_math_lessons_list():
     conn = get_connection()
     cur = conn.cursor()
@@ -20,6 +31,7 @@ def get_math_lessons_list():
                 difficulty
             FROM math_lessons
             WHERE is_active = TRUE
+              AND {_math_lesson_visibility_sql()}
             ORDER BY id;
             """
         )
@@ -72,6 +84,7 @@ def _get_lesson_details(cur, lesson_id: int):
             difficulty
         FROM math_lessons
         WHERE id = %s
+          AND {_math_lesson_visibility_sql()}
         LIMIT 1
         """,
         (lesson_id,),
