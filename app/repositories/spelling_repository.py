@@ -35,7 +35,7 @@ def get_spelling_micro_challenge_data(word_id: int):
 def get_resume_word_id(user_id, lesson_id, conn):
     """
     Returns next word_id based on last correct attempt.
-    Uses spelling_lesson_words (correct namespaced table).
+    Uses spelling_lesson_items as the source-of-truth lesson mapping.
     """
 
     query = """
@@ -48,12 +48,15 @@ def get_resume_word_id(user_id, lesson_id, conn):
             ORDER BY created_at DESC
             LIMIT 1
         )
-        SELECT slw.word_id
-        FROM spelling_lesson_words slw
+        SELECT li.word_id
+        FROM spelling_lesson_items li
+        JOIN spelling_lessons l
+          ON l.lesson_id = li.lesson_id
         JOIN last_correct lc ON TRUE
-        WHERE slw.lesson_id = %s
-          AND slw.word_id > lc.word_id
-        ORDER BY slw.word_id ASC
+        WHERE li.lesson_id = %s
+          AND l.is_active = TRUE
+          AND li.word_id > lc.word_id
+        ORDER BY li.word_id ASC
         LIMIT 1
     """
 
@@ -101,7 +104,7 @@ def get_lesson_id_for_word(word_id: int, conn=None):
         cur.execute(
             """
             SELECT lesson_id
-            FROM spelling_lesson_words
+            FROM spelling_lesson_items
             WHERE word_id = %s
             ORDER BY lesson_id ASC
             LIMIT 1
@@ -197,10 +200,13 @@ def get_next_unmastered_word(user_id, lesson_id, conn):
     """
 
     query = """
-        SELECT slw.word_id
-        FROM spelling_lesson_words slw
-        WHERE slw.lesson_id = %s
-          AND slw.word_id NOT IN (
+        SELECT li.word_id
+        FROM spelling_lesson_items li
+        JOIN spelling_lessons l
+          ON l.lesson_id = li.lesson_id
+        WHERE li.lesson_id = %s
+          AND l.is_active = TRUE
+          AND li.word_id NOT IN (
               SELECT word_id
               FROM spelling_attempts
               WHERE user_id = %s
@@ -209,7 +215,7 @@ def get_next_unmastered_word(user_id, lesson_id, conn):
               HAVING COUNT(*) FILTER (WHERE correct = TRUE) >= 2
                  AND COUNT(*) FILTER (WHERE correct = FALSE) = 0
           )
-        ORDER BY slw.word_id ASC
+        ORDER BY li.word_id ASC
         LIMIT 1
     """
 
@@ -233,20 +239,23 @@ def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:
             COALESCE(s.wrong_count, 0) AS times_wrong,
             COALESCE(s.accuracy, 0) AS accuracy,
             s.last_attempt_at
-        FROM spelling_lesson_words lw
+        FROM spelling_lesson_items li
+        JOIN spelling_lessons l
+            ON l.lesson_id = li.lesson_id
         JOIN spelling_words w
-            ON lw.word_id = w.word_id
+            ON li.word_id = w.word_id
         LEFT JOIN spelling_word_stats s
             ON s.word_id = w.word_id
            AND s.user_id = %s
-        WHERE lw.lesson_id = %s
+        WHERE li.lesson_id = %s
+          AND l.is_active = TRUE
         ORDER BY w.word_id ASC
         """,
         (user_id, lesson_id),
     )
 
     rows = cur.fetchall()
-    return [
+    words = [
         {
             "word_id": row[0],
             "word": row[1],
@@ -261,6 +270,8 @@ def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:
         }
         for row in rows
     ]
+    deduped_words = list({item["word_id"]: item for item in words}.values())
+    return deduped_words
 
 
 def _get_latest_word_id(cur, user_id: int, lesson_id: int):
@@ -268,10 +279,13 @@ def _get_latest_word_id(cur, user_id: int, lesson_id: int):
         """
         SELECT sa.word_id
         FROM spelling_attempts sa
-        JOIN spelling_lesson_words lw
-            ON lw.word_id = sa.word_id
+        JOIN spelling_lesson_items li
+            ON li.word_id = sa.word_id
+        JOIN spelling_lessons l
+            ON l.lesson_id = li.lesson_id
         WHERE sa.user_id = %s
-          AND lw.lesson_id = %s
+          AND li.lesson_id = %s
+          AND l.is_active = TRUE
         ORDER BY sa.created_at DESC
         LIMIT 1
         """,

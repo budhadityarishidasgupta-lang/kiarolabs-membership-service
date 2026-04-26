@@ -12,9 +12,11 @@ def run_spelling_test(user_id: int, lesson_id: int):
     # Step 1: Fetch words
     cur.execute("""
         SELECT w.word_id, w.word
-        FROM spelling_lesson_words lw
-        JOIN spelling_words w ON w.word_id = lw.word_id
-        WHERE lw.lesson_id = %s
+        FROM spelling_lesson_items li
+        JOIN spelling_lessons l ON l.lesson_id = li.lesson_id
+        JOIN spelling_words w ON w.word_id = li.word_id
+        WHERE li.lesson_id = %s
+          AND l.is_active = TRUE
         LIMIT 10
     """, (lesson_id,))
 

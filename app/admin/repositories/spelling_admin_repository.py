@@ -28,10 +28,10 @@ def get_spelling_overview():
 
         cur.execute(
             """
-            SELECT COUNT(DISTINCT lw.word_id)
-            FROM spelling_lesson_words lw
+            SELECT COUNT(DISTINCT li.word_id)
+            FROM spelling_lesson_items li
             JOIN spelling_lessons l
-                ON l.lesson_id = lw.lesson_id
+                ON l.lesson_id = li.lesson_id
             WHERE COALESCE(l.is_active, TRUE) = TRUE
             """
         )
@@ -134,12 +134,12 @@ def list_spelling_lessons(course_id: int | None = None):
                 COALESCE(l.display_name, l.lesson_name) AS display_name,
                 COALESCE(l.sort_order, 0) AS sort_order,
                 COALESCE(l.is_active, TRUE) AS is_active,
-                COUNT(DISTINCT lw.word_id) AS item_count
+                COUNT(DISTINCT li.word_id) AS item_count
             FROM spelling_lessons l
             JOIN spelling_courses c
                 ON c.course_id = l.course_id
-            LEFT JOIN spelling_lesson_words lw
-                ON lw.lesson_id = l.lesson_id
+            LEFT JOIN spelling_lesson_items li
+                ON li.lesson_id = l.lesson_id
             {where_sql}
             GROUP BY
                 l.lesson_id,
@@ -263,7 +263,7 @@ def update_spelling_lesson(
         cur.execute(
             """
             SELECT COUNT(DISTINCT word_id)
-            FROM spelling_lesson_words
+            FROM spelling_lesson_items
             WHERE lesson_id = %s
             """,
             (lesson_id,),
@@ -316,10 +316,13 @@ def list_spelling_lesson_content(lesson_id: int):
                 w.word_id,
                 COALESCE(w.example_sentence, '') AS prompt,
                 w.word
-            FROM spelling_lesson_words lw
+            FROM spelling_lesson_items li
+            JOIN spelling_lessons l
+                ON l.lesson_id = li.lesson_id
             JOIN spelling_words w
-                ON w.word_id = lw.word_id
-            WHERE lw.lesson_id = %s
+                ON w.word_id = li.word_id
+            WHERE li.lesson_id = %s
+              AND COALESCE(l.is_active, TRUE) = TRUE
             ORDER BY w.word_id ASC
             """,
             (lesson_id,),

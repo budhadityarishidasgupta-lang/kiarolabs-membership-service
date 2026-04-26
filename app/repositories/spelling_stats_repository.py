@@ -8,20 +8,23 @@ def get_spelling_weak_items(user_id: int, lesson_id: int) -> list[dict]:
     try:
         cur.execute(
             """
-            SELECT
-                w.word_id,
-                COALESCE(s.attempts_count, 0) AS times_seen,
+        SELECT
+            w.word_id,
+            COALESCE(s.attempts_count, 0) AS times_seen,
                 COALESCE(s.correct_count, 0) AS times_correct,
                 COALESCE(s.wrong_count, 0) AS times_wrong,
                 COALESCE(s.accuracy, 0) AS accuracy,
                 s.last_attempt_at
-            FROM spelling_lesson_words lw
+            FROM spelling_lesson_items li
+            JOIN spelling_lessons l
+                ON l.lesson_id = li.lesson_id
             JOIN spelling_words w
-                ON lw.word_id = w.word_id
+                ON li.word_id = w.word_id
             JOIN spelling_word_stats s
                 ON s.word_id = w.word_id
                AND s.user_id = %s
-            WHERE lw.lesson_id = %s
+            WHERE li.lesson_id = %s
+              AND l.is_active = true
               AND s.attempts_count >= 2
               AND s.accuracy < 0.7
             ORDER BY s.accuracy ASC, s.last_attempt_at ASC NULLS FIRST, w.word_id ASC
@@ -182,4 +185,3 @@ def update_spelling_pattern_stats(user_id: int, patterns: list[str], correct: bo
     finally:
         cur.close()
         conn.close()
-

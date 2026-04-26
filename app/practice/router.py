@@ -155,11 +155,14 @@ def _get_module_resume(cur, module: str, user_id: int):
     if module_key == "spelling":
         cur.execute(
             """
-            SELECT lw.lesson_id, sa.word_id
+            SELECT li.lesson_id, sa.word_id
             FROM spelling_attempts sa
-            LEFT JOIN spelling_lesson_words lw
-                ON lw.word_id = sa.word_id
+            LEFT JOIN spelling_lesson_items li
+                ON li.word_id = sa.word_id
+            LEFT JOIN spelling_lessons l
+                ON l.lesson_id = li.lesson_id
             WHERE sa.user_id = %s
+              AND (l.lesson_id IS NULL OR l.is_active = TRUE)
             ORDER BY sa.created_at DESC
             LIMIT 1
             """,

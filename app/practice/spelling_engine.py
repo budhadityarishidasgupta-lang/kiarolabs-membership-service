@@ -115,6 +115,7 @@ def compute_priority_score(is_weak, is_mastered, is_slow):
 
 def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None = None):
     try:
+        print("Lesson ID:", lesson_id)
         conn = get_connection()
         try:
             # STEP 10: Weak word prioritization
@@ -205,6 +206,8 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 mastered = False
 
             if not item:
+                print("Word Count:", 0)
+                print("Sample Words:", [])
                 return {
                     "word_id": None,
                     "word_audio": "",
@@ -239,6 +242,33 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             patterns = [weak_pattern] if weak_pattern else None
             question_id = str(uuid.uuid4())
             session_id = session_id or str(uuid.uuid4())
+
+            if lesson_id == 870:
+                sample_words = []
+                try:
+                    debug_cur = conn.cursor()
+                    try:
+                        debug_cur.execute(
+                            """
+                            SELECT DISTINCT w.word
+                            FROM spelling_lesson_items li
+                            JOIN spelling_lessons l
+                              ON l.lesson_id = li.lesson_id
+                            JOIN spelling_words w
+                              ON w.word_id = li.word_id
+                            WHERE li.lesson_id = %s
+                              AND l.is_active = TRUE
+                            ORDER BY w.word_id ASC
+                            """,
+                            (lesson_id,),
+                        )
+                        sample_words = [row[0] for row in debug_cur.fetchall()]
+                    finally:
+                        debug_cur.close()
+                except Exception:
+                    sample_words = []
+                print("Word Count:", len(sample_words))
+                print("Sample Words:", sample_words[:5])
 
             return {
                 "question_id": question_id,
