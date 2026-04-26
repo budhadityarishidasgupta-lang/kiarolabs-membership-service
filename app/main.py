@@ -187,6 +187,43 @@ def derive_subscription_state(subscription_status: str | None, subscription_end)
     return False, subscription_status or "inactive"
 
 
+def _get_table_columns(cur, table_name: str) -> set[str]:
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s
+        """,
+        (table_name,),
+    )
+    return {row[0] for row in cur.fetchall()}
+
+
+def _fetch_attempt_accuracy(cur, table_name: str, user_id: int, *, user_columns: list[str], correct_columns: list[str]):
+    columns = _get_table_columns(cur, table_name)
+    matched_user_columns = [column for column in user_columns if column in columns]
+    matched_correct_column = next((column for column in correct_columns if column in columns), None)
+
+    if not matched_user_columns or not matched_correct_column:
+        return 0, 0.0
+
+    where_clause = " OR ".join(f"{column} = %s" for column in matched_user_columns)
+    params = tuple(user_id for _ in matched_user_columns)
+
+    cur.execute(
+        f"""
+        SELECT
+            COUNT(*),
+            COALESCE(AVG(CASE WHEN {matched_correct_column} THEN 1 ELSE 0 END) * 100, 0)
+        FROM {table_name}
+        WHERE {where_clause}
+        """,
+        params,
+    )
+    attempts, accuracy = cur.fetchone()
+    return attempts or 0, round(accuracy or 0, 2)
+
+
 def get_available_app_catalog():
     return AVAILABLE_APP_CATALOG
 
@@ -527,31 +564,37 @@ def dashboard(user=Depends(get_current_user)):
         rows = cur.fetchall()
         apps = [r[0] for r in rows] if rows else []
 
-    # -------------------------
-    # SPELLING STATS
-    # -------------------------
-    cur.execute("""
-        SELECT COUNT(*), SUM(CASE WHEN correct THEN 1 ELSE 0 END)
-        FROM spelling_attempts
-        WHERE user_id = %s
-    """, (user_id,))
-    s_total, s_correct = cur.fetchone()
-    s_total = s_total or 0
-    s_correct = s_correct or 0
-    s_acc = (s_correct / s_total * 100) if s_total > 0 else 0
+    s_total, s_acc = _fetch_attempt_accuracy(
+        cur,
+        "spelling_attempts",
+        user_id,
+        user_columns=["user_id"],
+        correct_columns=["correct"],
+    )
 
-    # -------------------------
-    # WORD STATS
-    # -------------------------
-    cur.execute("""
-        SELECT COUNT(*), SUM(CASE WHEN correct THEN 1 ELSE 0 END)
-        FROM words_attempts
-        WHERE user_id = %s
-    """, (user_id,))
-    w_total, w_correct = cur.fetchone()
-    w_total = w_total or 0
-    w_correct = w_correct or 0
-    w_acc = (w_correct / w_total * 100) if w_total > 0 else 0
+    w_total, w_acc = _fetch_attempt_accuracy(
+        cur,
+        "words_attempts",
+        user_id,
+        user_columns=["user_id"],
+        correct_columns=["correct"],
+    )
+
+    m_total, m_acc = _fetch_attempt_accuracy(
+        cur,
+        "math_attempts",
+        user_id,
+        user_columns=["student_id", "user_id"],
+        correct_columns=["is_correct", "correct"],
+    )
+
+    c_total, c_acc = _fetch_attempt_accuracy(
+        cur,
+        "comprehension_attempts",
+        user_id,
+        user_columns=["user_id"],
+        correct_columns=["correct"],
+    )
 
     cur.close()
     conn.close()
@@ -572,6 +615,8 @@ def dashboard(user=Depends(get_current_user)):
             "unlocked": True if is_legacy else ("general" in apps)
         },
         "math": {
+            "attempts": m_total,
+            "accuracy": round(m_acc, 2),
             "unlocked": True if is_legacy else ("math" in apps)
         },
 
@@ -588,6 +633,8 @@ def dashboard(user=Depends(get_current_user)):
             "unlocked": "nvr" in apps
         },
         "comprehension": {
+            "attempts": c_total,
+            "accuracy": round(c_acc, 2),
             "unlocked": "comprehension" in apps
         }
     }
@@ -597,10 +644,12 @@ def dashboard(user=Depends(get_current_user)):
     # -------------------------
     metrics = {
         "spelling": s_acc,
-        "words": w_acc
+        "words": w_acc,
+        "math": m_acc,
+        "comprehension": c_acc,
     }
 
-    if s_total == 0 and w_total == 0:
+    if s_total == 0 and w_total == 0 and m_total == 0 and c_total == 0:
         strongest = None
         weakest = None
     else:

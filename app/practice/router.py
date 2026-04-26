@@ -94,6 +94,51 @@ def _raise_not_found(detail: str):
     raise HTTPException(status_code=404, detail=detail)
 
 
+def _get_table_columns(cur, table_name: str) -> set[str]:
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s
+        """,
+        (table_name,),
+    )
+    return {row[0] for row in cur.fetchall()}
+
+
+def _window_attempt_totals(cur, table_name: str, *, user_columns: list[str], correct_columns: list[str], user_id: int, days_back_start: int, days_back_end: int | None = None):
+    columns = _get_table_columns(cur, table_name)
+    matched_user_columns = [column for column in user_columns if column in columns]
+    matched_correct_column = next((column for column in correct_columns if column in columns), None)
+
+    if not matched_user_columns or not matched_correct_column:
+        return 0, 0
+
+    where_clause = " OR ".join(f"{column} = %s" for column in matched_user_columns)
+    params = [user_id for _ in matched_user_columns]
+
+    time_clause = "created_at >= NOW() - (%s || ' days')::interval"
+    params.append(days_back_start)
+
+    if days_back_end is not None:
+        time_clause += " AND created_at < NOW() - (%s || ' days')::interval"
+        params.append(days_back_end)
+
+    cur.execute(
+        f"""
+        SELECT
+            COUNT(*),
+            COUNT(*) FILTER (WHERE {matched_correct_column} = TRUE)
+        FROM {table_name}
+        WHERE ({where_clause})
+          AND {time_clause}
+        """,
+        tuple(params),
+    )
+    attempts, correct = cur.fetchone()
+    return attempts or 0, correct or 0
+
+
 def _safe_execute(label: str, func, *args, **kwargs):
     try:
         return func(*args, **kwargs)
@@ -765,32 +810,47 @@ def get_weekly_improvement(user=Depends(get_current_user)):
     user_id = user["user_id"]
 
     try:
-        # Current 7 days
-        cur.execute("""
-            SELECT
-                COUNT(*) FILTER (WHERE correct = true) * 1.0 / NULLIF(COUNT(*),0)
-            FROM spelling_attempts
-            WHERE user_id = %s
-            AND created_at >= NOW() - INTERVAL '7 days'
-        """, (user_id,))
+        current_attempts = 0
+        current_correct = 0
+        previous_attempts = 0
+        previous_correct = 0
 
-        current = cur.fetchone()[0] or 0
+        table_configs = [
+            ("spelling_attempts", ["user_id"], ["correct"]),
+            ("words_attempts", ["user_id"], ["correct"]),
+            ("math_attempts", ["student_id", "user_id"], ["is_correct", "correct"]),
+            ("comprehension_attempts", ["user_id"], ["correct"]),
+        ]
 
-        # Previous 7 days
-        cur.execute("""
-            SELECT
-                COUNT(*) FILTER (WHERE correct = true) * 1.0 / NULLIF(COUNT(*),0)
-            FROM spelling_attempts
-            WHERE user_id = %s
-            AND created_at >= NOW() - INTERVAL '14 days'
-            AND created_at < NOW() - INTERVAL '7 days'
-        """, (user_id,))
+        for table_name, user_columns, correct_columns in table_configs:
+            attempts, correct = _window_attempt_totals(
+                cur,
+                table_name,
+                user_columns=user_columns,
+                correct_columns=correct_columns,
+                user_id=user_id,
+                days_back_start=7,
+            )
+            current_attempts += attempts
+            current_correct += correct
 
-        previous = cur.fetchone()[0] or 0
+            attempts, correct = _window_attempt_totals(
+                cur,
+                table_name,
+                user_columns=user_columns,
+                correct_columns=correct_columns,
+                user_id=user_id,
+                days_back_start=14,
+                days_back_end=7,
+            )
+            previous_attempts += attempts
+            previous_correct += correct
     finally:
         cur.close()
         conn.close()
 
+    current = (current_correct / current_attempts) if current_attempts else 0
+    previous = (previous_correct / previous_attempts) if previous_attempts else 0
     improvement = current - previous
 
     return {
