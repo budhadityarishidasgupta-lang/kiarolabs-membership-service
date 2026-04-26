@@ -219,6 +219,76 @@ def create_spelling_lesson(
         conn.close()
 
 
+def update_spelling_lesson(
+    lesson_id: int,
+    *,
+    lesson_name: str,
+    display_name: str | None = None,
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cleaned_lesson_name = (lesson_name or "").strip()
+        cleaned_display_name = (display_name or "").strip() or None
+
+        if not cleaned_lesson_name:
+            raise ValueError("lesson_name is required")
+
+        cur.execute(
+            """
+            UPDATE spelling_lessons
+            SET lesson_name = %s,
+                display_name = %s
+            WHERE lesson_id = %s
+            RETURNING lesson_id, course_id, lesson_name, COALESCE(display_name, lesson_name), COALESCE(sort_order, 0), COALESCE(is_active, TRUE)
+            """,
+            (cleaned_lesson_name, cleaned_display_name, lesson_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return None
+
+        cur.execute(
+            """
+            SELECT course_name
+            FROM spelling_courses
+            WHERE course_id = %s
+            """,
+            (row[1],),
+        )
+        course_row = cur.fetchone()
+
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT word_id)
+            FROM spelling_lesson_words
+            WHERE lesson_id = %s
+            """,
+            (lesson_id,),
+        )
+        item_count = cur.fetchone()[0]
+
+        conn.commit()
+        return {
+            "lesson_id": row[0],
+            "course_id": row[1],
+            "course_name": course_row[0] if course_row else None,
+            "lesson_name": row[2],
+            "display_name": row[3],
+            "sort_order": row[4],
+            "is_active": row[5],
+            "item_count": item_count,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def list_spelling_lesson_content(lesson_id: int):
     conn = get_connection()
     cur = conn.cursor()

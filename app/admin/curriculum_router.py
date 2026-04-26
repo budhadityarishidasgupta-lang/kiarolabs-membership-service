@@ -10,6 +10,7 @@ from app.admin.repositories.math_admin_repository import (
     list_math_lesson_question_answers,
     list_math_courses,
     list_math_lessons,
+    update_math_lesson,
     update_math_question_content,
     update_math_question_correct_answer,
 )
@@ -20,6 +21,7 @@ from app.admin.repositories.spelling_admin_repository import (
     list_spelling_lesson_content,
     list_spelling_courses,
     list_spelling_lessons,
+    update_spelling_lesson,
     update_spelling_content_answer,
 )
 from app.admin.repositories.words_admin_repository import (
@@ -29,6 +31,7 @@ from app.admin.repositories.words_admin_repository import (
     list_words_lesson_content,
     list_words_courses,
     list_words_lessons,
+    update_words_lesson,
     update_words_content_answer,
 )
 
@@ -64,6 +67,11 @@ class UpdateMathQuestionContentRequest(BaseModel):
     option_d: str | None = None
     option_e: str | None = None
     correct_option: str
+
+
+class UpdateLessonRequest(BaseModel):
+    lesson_name: str
+    display_name: str | None = None
 
 
 def _normalize_module(module: str) -> str:
@@ -179,6 +187,48 @@ def create_module_lesson(module: str, payload: CreateLessonRequest, _user=Depend
             difficulty=payload.difficulty,
             is_active=payload.is_active,
         )
+
+    return {"status": "ok", "data": data}
+
+
+@router.patch("/{module}/lessons/{lesson_id}")
+def update_module_lesson(
+    module: str,
+    lesson_id: int,
+    payload: UpdateLessonRequest,
+    _user=Depends(require_admin),
+):
+    normalized = _normalize_module(module)
+    lesson_name = payload.lesson_name.strip()
+    display_name = payload.display_name
+
+    if not lesson_name:
+        raise HTTPException(status_code=400, detail="Lesson name is required")
+
+    try:
+        if normalized == "words":
+            data = update_words_lesson(
+                lesson_id,
+                lesson_name=lesson_name,
+                display_name=display_name,
+            )
+        elif normalized == "spelling":
+            data = update_spelling_lesson(
+                lesson_id,
+                lesson_name=lesson_name,
+                display_name=display_name,
+            )
+        else:
+            data = update_math_lesson(
+                lesson_id,
+                lesson_name=lesson_name,
+                display_name=display_name,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Lesson not found")
 
     return {"status": "ok", "data": data}
 

@@ -254,6 +254,76 @@ def create_words_lesson(course_id: int, lesson_name: str):
         conn.close()
 
 
+def update_words_lesson(
+    lesson_id: int,
+    *,
+    lesson_name: str,
+    display_name: str | None = None,
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        next_title = ((display_name or "").strip() or (lesson_name or "").strip())
+        if not next_title:
+            raise ValueError("lesson_name is required")
+
+        lessons_have_is_active = _table_has_column(cur, "public", "lessons", "is_active")
+        is_active_select = "COALESCE(is_active, TRUE)" if lessons_have_is_active else "TRUE"
+
+        cur.execute(
+            f"""
+            UPDATE public.lessons
+            SET title = %s
+            WHERE lesson_id = %s
+            RETURNING lesson_id, course_id, title, COALESCE(sort_order, 0), {is_active_select}
+            """,
+            (next_title, lesson_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return None
+
+        cur.execute(
+            """
+            SELECT title
+            FROM public.courses
+            WHERE course_id = %s
+            """,
+            (row[1],),
+        )
+        course_row = cur.fetchone()
+
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT word_id)
+            FROM public.lesson_words
+            WHERE lesson_id = %s
+            """,
+            (lesson_id,),
+        )
+        item_count = cur.fetchone()[0]
+
+        conn.commit()
+        return {
+            "lesson_id": row[0],
+            "course_id": row[1],
+            "course_name": course_row[0] if course_row else None,
+            "lesson_name": row[2],
+            "display_name": row[2],
+            "sort_order": row[3],
+            "is_active": row[4],
+            "item_count": item_count,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def list_words_lesson_content(lesson_id: int):
     conn = get_connection()
     cur = conn.cursor()

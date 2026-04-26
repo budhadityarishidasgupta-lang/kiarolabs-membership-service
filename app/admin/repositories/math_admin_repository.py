@@ -530,6 +530,70 @@ def create_math_lesson(
         conn.close()
 
 
+def update_math_lesson(
+    lesson_id: int,
+    *,
+    lesson_name: str,
+    display_name: str | None = None,
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cleaned_lesson_name = _clean_optional_text(lesson_name, max_length=50)
+        cleaned_display_name = _clean_optional_text(display_name, max_length=50)
+
+        if not cleaned_lesson_name:
+            raise ValueError("lesson_name is required")
+
+        if _is_test_fixture_text(cleaned_lesson_name) or _is_test_fixture_text(cleaned_display_name):
+            raise ValueError("Reserved test fixture names are not allowed in production lessons")
+
+        cur.execute(
+            """
+            UPDATE math_lessons
+            SET lesson_name = %s,
+                display_name = %s
+            WHERE id = %s
+            RETURNING
+                id,
+                lesson_name,
+                COALESCE(display_name, lesson_name) AS display_name,
+                COALESCE(topic, 'General') AS topic,
+                COALESCE(difficulty, 'unspecified') AS difficulty,
+                COALESCE(is_active, TRUE) AS is_active
+            """,
+            (cleaned_lesson_name, cleaned_display_name, lesson_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return None
+
+        conn.commit()
+        return {
+            "lesson_id": row[0],
+            "lesson_name": row[1],
+            "display_name": row[2],
+            "topic": row[3],
+            "difficulty": row[4],
+            "is_active": row[5],
+            "item_count": _get_math_lesson_item_count(
+                cur,
+                lesson_name=row[1],
+                display_name=row[2],
+                topic=row[3],
+                difficulty=row[4],
+            ),
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def delete_math_lesson(lesson_id: int):
     conn = get_connection()
     cur = conn.cursor()
