@@ -16,6 +16,7 @@ from app.admin.curriculum_router import router as admin_curriculum_router
 from app.practice.router import admin_router as practice_admin_router
 from app.practice.router import router as practice_router
 from app.practice.math_test_engine import init_math_submission_tables
+from app.ingestion.verbal_reasoning.service import init_verbal_reasoning_printable_tables
 from typing import Optional
 from app.comprehension.router import router as comprehension_router
 from app.auth_reset import init_password_reset_tables, router as auth_reset_router
@@ -56,6 +57,12 @@ def startup_event():
         print("math submission tables initialized")
     except Exception as e:
         print("math submission init failed:", e)
+
+    try:
+        init_verbal_reasoning_printable_tables()
+        print("verbal reasoning printable tables initialized")
+    except Exception as e:
+        print("verbal reasoning printable init failed:", e)
 
 # =========================
 # CORS

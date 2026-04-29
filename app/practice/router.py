@@ -267,6 +267,10 @@ class RetryIncorrectRequest(BaseModel):
     incorrect_questions: list[int]
 
 
+def _normalize_printable_answer(answer):
+    return str(answer or "").strip().lower()
+
+
 # -----------------------------
 # Course / Lesson Discovery
 # -----------------------------
@@ -427,6 +431,150 @@ def math_retry_incorrect(req: RetryIncorrectRequest, user=Depends(get_current_us
                 {
                     "question_number": row[0],
                     "question_text": row[1],
+                }
+                for row in rows
+            ]
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/verbal-reasoning/submit")
+def verbal_reasoning_submit(payload: dict, user=Depends(get_current_user)):
+    _require_user_id(user)
+    paper_code = _require_payload_param(payload, "paper_code")
+    answers = _require_payload_param(payload, "answers")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT 1
+            FROM verbal_reasoning_printable_papers
+            WHERE paper_code = %s
+              AND is_active = TRUE
+            """,
+            (paper_code,),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=400, detail="Invalid paper")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM verbal_reasoning_printable_questions
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        question_count = cur.fetchone()[0]
+        if question_count == 0:
+            raise HTTPException(status_code=400, detail="Paper questions not available")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM verbal_reasoning_printable_answer_keys
+            WHERE paper_code = %s
+            """,
+            (paper_code,),
+        )
+        answer_count = cur.fetchone()[0]
+        if answer_count != question_count:
+            raise HTTPException(status_code=400, detail="Paper is not ready for submission")
+
+        cur.execute(
+            """
+            SELECT question_number, correct_answer
+            FROM verbal_reasoning_printable_answer_keys
+            WHERE paper_code = %s
+            ORDER BY question_number
+            """,
+            (paper_code,),
+        )
+        rows = cur.fetchall()
+
+        user_answers = answers or []
+        total = question_count
+        if len(user_answers) != total:
+            raise HTTPException(status_code=400, detail="All questions must be answered")
+
+        results = []
+        score = 0
+
+        for index, row in enumerate(rows):
+            question_number = row[0]
+            correct_answer = _normalize_printable_answer(row[1])
+            user_answer = _normalize_printable_answer(user_answers[index] if index < len(user_answers) else "")
+            is_correct = user_answer == correct_answer
+            if is_correct:
+                score += 1
+            results.append(
+                {
+                    "question_number": question_number,
+                    "user_answer": user_answer,
+                    "correct_answer": row[1],
+                    "is_correct": is_correct,
+                }
+            )
+
+        return {
+            "score": score,
+            "total": total,
+            "percentage": (score * 100 / total) if total else 0,
+            "answered_questions": len(user_answers),
+            "breakdown": results,
+            "paper_code": paper_code,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/verbal-reasoning/retry-incorrect")
+def verbal_reasoning_retry_incorrect(req: RetryIncorrectRequest, user=Depends(get_current_user)):
+    _require_user_id(user)
+
+    if not req.incorrect_questions:
+        return {
+            "questions": [],
+            "message": "No incorrect questions",
+        }
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT
+                question_number,
+                question_text,
+                option_a,
+                option_b,
+                option_c,
+                option_d,
+                option_e
+            FROM verbal_reasoning_printable_questions
+            WHERE paper_code = %s
+              AND question_number = ANY(%s)
+            ORDER BY question_number
+            """,
+            (req.paper_code, req.incorrect_questions),
+        )
+        rows = cur.fetchall()
+        return {
+            "questions": [
+                {
+                    "question_number": row[0],
+                    "question_text": row[1],
+                    "option_a": row[2],
+                    "option_b": row[3],
+                    "option_c": row[4],
+                    "option_d": row[5],
+                    "option_e": row[6],
                 }
                 for row in rows
             ]
