@@ -579,23 +579,29 @@ def get_verbal_reasoning_printable_questions_meta(paper_code: str):
         cur.execute(
             """
             SELECT
-                COUNT(DISTINCT q.question_number) AS question_count,
-                COUNT(DISTINCT a.question_number) AS answer_count
-            FROM verbal_reasoning_printable_questions q
-            LEFT JOIN verbal_reasoning_printable_answer_keys a
-                ON a.paper_code = q.paper_code
-               AND a.question_number = q.question_number
-            WHERE q.paper_code = %s
+                COALESCE((
+                    SELECT COUNT(DISTINCT q.question_number)
+                    FROM verbal_reasoning_printable_questions q
+                    WHERE q.paper_code = %s
+                ), 0) AS question_count,
+                COALESCE((
+                    SELECT COUNT(DISTINCT a.question_number)
+                    FROM verbal_reasoning_printable_answer_keys a
+                    WHERE a.paper_code = %s
+                ), 0) AS answer_count
             """,
-            (paper_code,),
+            (paper_code, paper_code),
         )
         row = cur.fetchone()
+        question_count = row[0] or 0
+        answer_count = row[1] or 0
+        effective_count = max(question_count, answer_count)
         return {
             "paper_code": paper_code,
-            "question_count": row[0] or 0,
-            "answer_count": row[1] or 0,
-            "answers_count": row[1] or 0,
-            "ready": (row[0] or 0) > 0 and (row[0] or 0) == (row[1] or 0),
+            "question_count": effective_count,
+            "answer_count": answer_count,
+            "answers_count": answer_count,
+            "ready": effective_count > 0 and effective_count == answer_count,
         }
     finally:
         cur.close()
@@ -625,6 +631,29 @@ def get_verbal_reasoning_printable_questions(paper_code: str):
             (paper_code,),
         )
         rows = cur.fetchall()
+        if not rows:
+            cur.execute(
+                """
+                SELECT question_number
+                FROM verbal_reasoning_printable_answer_keys
+                WHERE paper_code = %s
+                ORDER BY question_number
+                """,
+                (paper_code,),
+            )
+            answer_rows = cur.fetchall()
+            rows = [
+                (
+                    row[0],
+                    f"Question {row[0]}",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                for row in answer_rows
+            ]
         return {
             "paper_code": paper_code,
             "questions": [
