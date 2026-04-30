@@ -16,7 +16,10 @@ from app.ingestion.verbal_reasoning.parser import (
     convert_vr_pdf_to_review_rows,
     review_rows_to_csv,
 )
-from app.ingestion.verbal_reasoning.service import import_verbal_reasoning_pdf_as_draft
+from app.ingestion.verbal_reasoning.service import (
+    import_verbal_reasoning_pdf_as_draft,
+    upload_verbal_reasoning_answer_csv,
+)
 
 
 router = APIRouter(prefix="/admin/ingestion", tags=["admin-ingestion"])
@@ -875,6 +878,18 @@ def upload_verbal_reasoning_csv(payload: AnswerKeyRequest, current_user=Depends(
     finally:
         cur.close()
         conn.close()
+
+
+@router.post("/verbal-reasoning/upload-answer-csv")
+def upload_verbal_reasoning_answer_key_csv(
+    paper_code: str = Form(""),
+    file: UploadFile = File(...),
+    _user=Depends(require_admin),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="CSV file required")
+
+    return upload_verbal_reasoning_answer_csv(file, paper_code or None)
 
 
 @router.get("/verbal-reasoning/answer-key")
