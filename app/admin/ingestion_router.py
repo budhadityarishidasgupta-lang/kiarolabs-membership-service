@@ -126,6 +126,145 @@ def _validate_answer_key_payload(cur, paper_code: str, answers: list[str]):
     return normalized_answers
 
 
+def _upload_math_answer_csv(file: UploadFile, selected_paper_code: str | None = None) -> dict:
+    try:
+        content = file.file.read().decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
+
+    reader = csv.DictReader(io.StringIO(content))
+    required_fields = {"paper_code", "question_number", "correct_answer"}
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no header row")
+
+    headers = {field.strip() for field in reader.fieldnames if field}
+    missing = sorted(required_fields - headers)
+    if missing:
+        raise HTTPException(status_code=400, detail=f"CSV missing required columns: {', '.join(missing)}")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    rows_processed = 0
+    inserted = 0
+    updated = 0
+    unchanged = 0
+    seen_pairs: dict[tuple[str, int], str] = {}
+
+    try:
+        for idx, row in enumerate(reader, start=2):
+            clean = {
+                (key.strip() if key else key): (value.strip() if isinstance(value, str) else value)
+                for key, value in row.items()
+            }
+
+            paper_code = str(clean.get("paper_code") or "").strip().lower()
+            question_number_raw = str(clean.get("question_number") or "").strip()
+            correct_answer = str(clean.get("correct_answer") or "").strip().upper()
+
+            if not paper_code or not question_number_raw or not correct_answer:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Row {idx}: paper_code, question_number and correct_answer are required",
+                )
+
+            if selected_paper_code and paper_code != selected_paper_code.strip().lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Row {idx}: paper_code {paper_code} does not match selected paper {selected_paper_code}",
+                )
+
+            try:
+                question_number = int(question_number_raw)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Row {idx}: question_number must be an integer",
+                ) from exc
+
+            if question_number <= 0:
+                raise HTTPException(status_code=400, detail=f"Row {idx}: question_number must be positive")
+
+            if not _paper_exists(cur, paper_code):
+                raise HTTPException(status_code=400, detail=f"Row {idx}: invalid paper_code {paper_code}")
+
+            pair = (paper_code, question_number)
+            previous = seen_pairs.get(pair)
+            if previous is not None and previous != correct_answer:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Row {idx}: conflicting duplicate answer for {paper_code} Q{question_number}",
+                )
+            if previous is not None:
+                continue
+            seen_pairs[pair] = correct_answer
+
+            cur.execute(
+                """
+                INSERT INTO math_printable_questions
+                (paper_code, question_number, question_text)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (paper_code, question_number) DO NOTHING
+                """,
+                (paper_code, question_number, f"Question {question_number}"),
+            )
+
+            cur.execute(
+                """
+                SELECT correct_answer
+                FROM math_printable_answer_keys
+                WHERE paper_code = %s
+                  AND question_number = %s
+                """,
+                (paper_code, question_number),
+            )
+            existing = cur.fetchone()
+
+            if not existing:
+                cur.execute(
+                    """
+                    INSERT INTO math_printable_answer_keys
+                    (paper_code, question_number, correct_answer)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (paper_code, question_number, correct_answer),
+                )
+                inserted += 1
+            elif (existing[0] or "").strip() == correct_answer:
+                unchanged += 1
+            else:
+                cur.execute(
+                    """
+                    UPDATE math_printable_answer_keys
+                    SET correct_answer = %s
+                    WHERE paper_code = %s
+                      AND question_number = %s
+                    """,
+                    (correct_answer, paper_code, question_number),
+                )
+                updated += 1
+
+            rows_processed += 1
+
+        if rows_processed == 0:
+            raise HTTPException(status_code=400, detail="CSV contains no valid answer rows")
+
+        conn.commit()
+        return {
+            "status": "uploaded",
+            "paper_code": selected_paper_code,
+            "rows": rows_processed,
+            "answers_inserted": inserted,
+            "answers_updated": updated,
+            "answers_unchanged": unchanged,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def _vr_paper_exists(cur, paper_code: str) -> bool:
     cur.execute(
         """
@@ -499,6 +638,18 @@ def save_answer_key(payload: AnswerKeyRequest, current_user=Depends(get_current_
     finally:
         cur.close()
         conn.close()
+
+
+@router.post("/maths/upload-answer-csv")
+def upload_maths_answer_key_csv(
+    paper_code: str = Form(""),
+    file: UploadFile = File(...),
+    _user=Depends(require_admin),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="CSV file required")
+
+    return _upload_math_answer_csv(file, paper_code or None)
 
 
 @router.get("/maths/answer-key")
