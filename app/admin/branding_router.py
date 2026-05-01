@@ -17,14 +17,10 @@ def require_admin(user=Depends(get_current_user)):
 
 @router.post("/generate")
 async def generate_branding_material(
-    paper_code: str = Form(...),
+    paper_code: str = Form(""),
     title: str = Form(...),
     subtitle: str = Form(""),
-    logo_url: str = Form(""),
-    footer_text: str = Form(""),
-    branding_theme: str = Form("default"),
     source_pdf: UploadFile = File(...),
-    logo_file: UploadFile | None = File(default=None),
     _user=Depends(require_admin),
 ):
     if not source_pdf.filename or not source_pdf.filename.lower().endswith(".pdf"):
@@ -34,9 +30,9 @@ async def generate_branding_material(
         "paper_code": paper_code.strip(),
         "title": title.strip(),
         "subtitle": subtitle.strip(),
-        "logo_url": logo_url.strip(),
-        "footer_text": footer_text.strip(),
-        "branding_theme": branding_theme.strip() or "default",
+        "logo_url": "",
+        "footer_text": "",
+        "branding_theme": "default",
     }
 
     try:
@@ -47,15 +43,7 @@ async def generate_branding_material(
                 await source_pdf.read(),
                 source_pdf.content_type or "application/pdf",
             ),
-            logo_file=(
-                (
-                    logo_file.filename,
-                    await logo_file.read(),
-                    logo_file.content_type or "application/octet-stream",
-                )
-                if logo_file and logo_file.filename
-                else None
-            ),
+            logo_file=None,
         )
         return result
     except httpx.HTTPStatusError as exc:
