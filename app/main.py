@@ -21,6 +21,7 @@ from app.ingestion.verbal_reasoning.service import init_verbal_reasoning_printab
 from typing import Optional
 from app.comprehension.router import router as comprehension_router
 from app.auth_reset import init_password_reset_tables, router as auth_reset_router
+from app.practice.synonym_engine import get_synonym_attempt_summary
 
 
 # =========================
@@ -355,6 +356,56 @@ def _fetch_comprehension_completion(cur, user_id: int):
     )
     completed_lessons = cur.fetchone()[0] or 0
     return completed_lessons, total_lessons, _safe_completion_percent(completed_lessons, total_lessons)
+
+
+def _fetch_legacy_dashboard_attempts(cur, user_id: int):
+    cur.execute(
+        """
+        SELECT
+            COUNT(*) as attempts,
+            COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
+        FROM spelling_attempts
+        WHERE user_id = %s
+        """,
+        (user_id,),
+    )
+    spelling_row = cur.fetchone() or (0, 0)
+    spelling_attempts = spelling_row[0] or 0
+    spelling_accuracy = round(spelling_row[1] or 0, 2)
+
+    words_summary = get_synonym_attempt_summary(user_id)
+
+    math_attempts, math_accuracy = _fetch_attempt_accuracy(
+        cur,
+        "math_attempts",
+        user_id,
+        user_columns=["student_id", "user_id"],
+        correct_columns=["is_correct", "correct"],
+    )
+
+    cur.execute(
+        """
+        SELECT
+            COUNT(*) as attempts,
+            COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
+        FROM comprehension_attempts
+        WHERE user_id = %s
+        """,
+        (user_id,),
+    )
+    comprehension_row = cur.fetchone() or (0, 0)
+    comprehension_attempts = comprehension_row[0] or 0
+    comprehension_accuracy = round(comprehension_row[1] or 0, 2)
+
+    return {
+        "spelling": {"attempts": spelling_attempts, "accuracy": spelling_accuracy},
+        "words": {
+            "attempts": words_summary.get("attempts", 0) or 0,
+            "accuracy": round(words_summary.get("accuracy", 0) or 0, 2),
+        },
+        "math": {"attempts": math_attempts or 0, "accuracy": round(math_accuracy or 0, 2)},
+        "comprehension": {"attempts": comprehension_attempts, "accuracy": comprehension_accuracy},
+    }
 
 
 def get_available_app_catalog():
@@ -697,37 +748,15 @@ def dashboard(user=Depends(get_current_user)):
         rows = cur.fetchall()
         apps = [r[0] for r in rows] if rows else []
 
-    s_total, s_acc = _fetch_attempt_accuracy(
-        cur,
-        "spelling_attempts",
-        user_id,
-        user_columns=["user_id"],
-        correct_columns=["correct"],
-    )
-
-    w_total, w_acc = _fetch_attempt_accuracy(
-        cur,
-        "words_attempts",
-        user_id,
-        user_columns=["user_id"],
-        correct_columns=["correct"],
-    )
-
-    m_total, m_acc = _fetch_attempt_accuracy(
-        cur,
-        "math_attempts",
-        user_id,
-        user_columns=["student_id", "user_id"],
-        correct_columns=["is_correct", "correct"],
-    )
-
-    c_total, c_acc = _fetch_attempt_accuracy(
-        cur,
-        "comprehension_attempts",
-        user_id,
-        user_columns=["user_id"],
-        correct_columns=["correct"],
-    )
+    legacy_attempts = _fetch_legacy_dashboard_attempts(cur, user_id)
+    s_total = legacy_attempts["spelling"]["attempts"]
+    s_acc = legacy_attempts["spelling"]["accuracy"]
+    w_total = legacy_attempts["words"]["attempts"]
+    w_acc = legacy_attempts["words"]["accuracy"]
+    m_total = legacy_attempts["math"]["attempts"]
+    m_acc = legacy_attempts["math"]["accuracy"]
+    c_total = legacy_attempts["comprehension"]["attempts"]
+    c_acc = legacy_attempts["comprehension"]["accuracy"]
 
     s_completed, s_lessons_total, s_completion = _fetch_spelling_completion(cur, user_id)
     w_completed, w_lessons_total, w_completion = _fetch_words_completion(cur, user_id)
