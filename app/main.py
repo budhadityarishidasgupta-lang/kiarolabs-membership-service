@@ -123,6 +123,30 @@ AVAILABLE_APP_CATALOG = [
         "group": "products",
     },
     {
+        "app_code": "vr_printables",
+        "label": "VR Printables",
+        "description": "Verbal reasoning printable access",
+        "group": "products",
+    },
+    {
+        "app_code": "vr_single_paper",
+        "label": "VR Single Paper",
+        "description": "Single verbal reasoning paper access",
+        "group": "products",
+    },
+    {
+        "app_code": "vr_starter_pack",
+        "label": "VR Starter Pack",
+        "description": "Starter pack verbal reasoning access",
+        "group": "products",
+    },
+    {
+        "app_code": "vr_complete_pack",
+        "label": "VR Complete Pack",
+        "description": "Complete verbal reasoning pack access",
+        "group": "products",
+    },
+    {
         "app_code": "mock",
         "label": "Mock Exams",
         "description": "Mock exam access",
@@ -630,7 +654,10 @@ def dashboard(user=Depends(get_current_user)):
 
         # Monetised products (NEVER legacy unlocked)
         "practice_papers": {
-            "unlocked": "practice" in apps
+            "unlocked": "practice" in apps or any(code in apps for code in ("vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
+        },
+        "vr_printables": {
+            "unlocked": any(code in apps for code in ("practice", "vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
         },
         "mock_exams": {
             "unlocked": "mock" in apps

@@ -2,177 +2,67 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 
 from fastapi import HTTPException, UploadFile
 
 from app.database import get_connection
 from app.ingestion.verbal_reasoning.parser import VrReviewRow, convert_vr_pdf_to_review_rows
-from app.repositories.vr_repository import insert_vr_answers_bulk, insert_vr_questions_bulk
+from app.repositories.vr_repository import (
+    bulk_upsert_vr_answers,
+    bulk_upsert_vr_questions,
+    create_or_update_vr_paper,
+    init_vr_tables,
+    normalize_vr_paper_code,
+)
 
-
-DEFAULT_VR_PAPERS = [
-    ("vr-01", "Verbal Reasoning Practice Paper 01", 1),
-    ("vr-02", "Verbal Reasoning Practice Paper 02", 2),
-    ("vr-03", "Verbal Reasoning Practice Paper 03", 3),
-    ("vr-04", "Verbal Reasoning Practice Paper 04", 4),
-    ("vr-05", "Verbal Reasoning Practice Paper 05", 5),
-    ("vr-06", "Verbal Reasoning Practice Paper 06", 6),
-    ("vr-07", "Verbal Reasoning Practice Paper 07", 7),
-    ("vr-08", "Verbal Reasoning Practice Paper 08", 8),
-    ("vr-09", "Verbal Reasoning Practice Paper 09", 9),
-    ("vr-10", "Verbal Reasoning Practice Paper 10", 10),
-]
+VR_ANSWER_PATTERN = re.compile(r"^[A-E](?:/[A-E])*$")
 
 
 def init_verbal_reasoning_printable_tables():
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS verbal_reasoning_printable_papers (
-                paper_code TEXT PRIMARY KEY,
-                paper_name TEXT NOT NULL,
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """
-        )
-
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS verbal_reasoning_printable_questions (
-                paper_code TEXT NOT NULL REFERENCES verbal_reasoning_printable_papers(paper_code) ON DELETE CASCADE,
-                question_number INTEGER NOT NULL,
-                section_title TEXT,
-                question_type TEXT,
-                question_text TEXT NOT NULL,
-                option_a TEXT,
-                option_b TEXT,
-                option_c TEXT,
-                option_d TEXT,
-                option_e TEXT,
-                source_block TEXT,
-                notes TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (paper_code, question_number)
-            )
-            """
-        )
-
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS verbal_reasoning_printable_answer_keys (
-                paper_code TEXT NOT NULL REFERENCES verbal_reasoning_printable_papers(paper_code) ON DELETE CASCADE,
-                question_number INTEGER NOT NULL,
-                correct_answer TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (paper_code, question_number)
-            )
-            """
-        )
-
-        cur.executemany(
-            """
-            INSERT INTO verbal_reasoning_printable_papers (paper_code, paper_name, sort_order)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (paper_code) DO UPDATE
-            SET paper_name = EXCLUDED.paper_name,
-                sort_order = EXCLUDED.sort_order,
-                updated_at = NOW()
-            """,
-            DEFAULT_VR_PAPERS,
-        )
-
-        conn.commit()
-    finally:
-        cur.close()
-        conn.close()
+    init_vr_tables()
 
 
 def import_verbal_reasoning_pdf_as_draft(pdf_path: str, paper_code: str | None = None) -> dict:
     rows = convert_vr_pdf_to_review_rows(pdf_path, paper_code)
     if not rows:
-        return {"paper_code": paper_code or "vr-01", "questions_imported": 0, "answers_deleted": 0}
+        return {"paper_code": paper_code or "VR-P1", "questions_imported": 0, "answers_deleted": 0}
 
     resolved_paper_code = rows[0].paper_code
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        cur.execute(
-            """
-            DELETE FROM verbal_reasoning_printable_answer_keys
-            WHERE paper_code = %s
-            """,
-            (resolved_paper_code,),
+        create_or_update_vr_paper(
+            paper_code=resolved_paper_code,
+            title=f"Verbal Reasoning Practice Paper {resolved_paper_code.split('P')[-1].zfill(2)}",
+            description="Imported verbal reasoning printable paper.",
+            answer_key_uploaded=False,
+            conn=conn,
         )
-        answers_deleted = cur.rowcount
-
+        question_rows = []
         for row in rows:
-            notes = row.notes
-            if row.review_flags:
-                notes = f"{row.notes} Flags: {row.review_flags}"
-
-            cur.execute(
-                """
-                INSERT INTO verbal_reasoning_printable_questions
-                (
-                    paper_code,
-                    question_number,
-                    section_title,
-                    question_type,
-                    question_text,
-                    option_a,
-                    option_b,
-                    option_c,
-                    option_d,
-                    option_e,
-                    source_block,
-                    notes,
-                    updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (paper_code, question_number)
-                DO UPDATE SET
-                    section_title = EXCLUDED.section_title,
-                    question_type = EXCLUDED.question_type,
-                    question_text = EXCLUDED.question_text,
-                    option_a = EXCLUDED.option_a,
-                    option_b = EXCLUDED.option_b,
-                    option_c = EXCLUDED.option_c,
-                    option_d = EXCLUDED.option_d,
-                    option_e = EXCLUDED.option_e,
-                    source_block = EXCLUDED.source_block,
-                    notes = EXCLUDED.notes,
-                    updated_at = NOW()
-                """,
-                (
-                    resolved_paper_code,
-                    row.question_number,
-                    row.section_title,
-                    row.question_type,
-                    row.question_text,
-                    row.option_a or None,
-                    row.option_b or None,
-                    row.option_c or None,
-                    row.option_d or None,
-                    row.option_e or None,
-                    row.source_block,
-                    notes,
-                ),
+            question_rows.append(
+                {
+                    "paper_code": resolved_paper_code,
+                    "question_number": row.question_number,
+                    "question_type": row.question_type,
+                    "question_text": row.question_text,
+                    "option_a": row.option_a or None,
+                    "option_b": row.option_b or None,
+                    "option_c": row.option_c or None,
+                    "option_d": row.option_d or None,
+                    "option_e": row.option_e or None,
+                }
             )
+        stats = bulk_upsert_vr_questions(question_rows, conn=conn)
 
         conn.commit()
         return {
             "paper_code": resolved_paper_code,
             "questions_imported": len(rows),
-            "answers_deleted": answers_deleted,
+            "answers_deleted": 0,
+            "questions_updated": stats["updated"],
         }
     except Exception:
         conn.rollback()
@@ -204,6 +94,7 @@ def upload_verbal_reasoning_answer_csv(file: UploadFile, selected_paper_code: st
     question_rows = []
     answer_rows = []
     seen_pairs: dict[tuple[str, int], str] = {}
+    row_errors: list[dict] = []
 
     try:
         for idx, row in enumerate(reader, start=2):
@@ -212,54 +103,61 @@ def upload_verbal_reasoning_answer_csv(file: UploadFile, selected_paper_code: st
                 for key, value in row.items()
             }
 
-            paper_code = str(clean.get("paper_code") or "").strip().lower()
+            paper_code = normalize_vr_paper_code(str(clean.get("paper_code") or "").strip())
             question_number_raw = str(clean.get("question_number") or "").strip()
             correct_answer = str(clean.get("correct_answer") or "").strip().upper()
 
             if not paper_code or not question_number_raw or not correct_answer:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Row {idx}: paper_code, question_number and correct_answer are required",
+                row_errors.append(
+                    {"row": idx, "detail": "paper_code, question_number and correct_answer are required"}
                 )
+                continue
 
-            if selected_paper_code and paper_code != selected_paper_code.strip().lower():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Row {idx}: paper_code {paper_code} does not match selected paper {selected_paper_code}",
+            if selected_paper_code and paper_code != normalize_vr_paper_code(selected_paper_code.strip()):
+                row_errors.append(
+                    {"row": idx, "detail": f"paper_code {paper_code} does not match selected paper {selected_paper_code}"}
                 )
+                continue
 
             try:
                 question_number = int(question_number_raw)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Row {idx}: question_number must be an integer",
-                ) from exc
+            except ValueError:
+                row_errors.append({"row": idx, "detail": "question_number must be an integer"})
+                continue
 
-            if question_number <= 0:
-                raise HTTPException(status_code=400, detail=f"Row {idx}: question_number must be positive")
+            if question_number < 1 or question_number > 80:
+                row_errors.append({"row": idx, "detail": "question_number must be between 1 and 80"})
+                continue
 
             if len(correct_answer) > 32:
-                raise HTTPException(status_code=400, detail=f"Row {idx}: correct_answer is too long")
+                row_errors.append({"row": idx, "detail": "correct_answer is too long"})
+                continue
+
+            if not VR_ANSWER_PATTERN.match(correct_answer):
+                row_errors.append(
+                    {"row": idx, "detail": "correct_answer must be A-E or slash-separated multi-answer format"}
+                )
+                continue
 
             cur.execute(
                 """
                 SELECT 1
-                FROM verbal_reasoning_printable_papers
+                FROM vr_papers
                 WHERE paper_code = %s
                 """,
                 (paper_code,),
             )
             if cur.fetchone() is None:
-                raise HTTPException(status_code=400, detail=f"Row {idx}: invalid paper_code {paper_code}")
+                row_errors.append({"row": idx, "detail": f"invalid paper_code {paper_code}"})
+                continue
 
             pair = (paper_code, question_number)
             previous = seen_pairs.get(pair)
             if previous is not None and previous != correct_answer:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Row {idx}: conflicting duplicate answer for {paper_code} Q{question_number}",
+                row_errors.append(
+                    {"row": idx, "detail": f"conflicting duplicate answer for {paper_code} Q{question_number}"}
                 )
+                continue
             if previous is not None:
                 continue
             seen_pairs[pair] = correct_answer
@@ -281,18 +179,28 @@ def upload_verbal_reasoning_answer_csv(file: UploadFile, selected_paper_code: st
             )
 
         if not answer_rows:
-            raise HTTPException(status_code=400, detail="CSV contains no valid answer rows")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "CSV contains no valid answer rows",
+                    "rows_failed": len(row_errors),
+                    "errors": row_errors,
+                },
+            )
 
-        question_stats = insert_vr_questions_bulk(question_rows, conn=conn)
-        answer_stats = insert_vr_answers_bulk(answer_rows, conn=conn)
+        question_stats = bulk_upsert_vr_questions(question_rows, conn=conn)
+        answer_stats = bulk_upsert_vr_answers(answer_rows, conn=conn)
         conn.commit()
 
         resolved_paper_codes = sorted({row["paper_code"] for row in answer_rows})
         return {
-            "status": "uploaded",
+            "status": "success",
             "paper_code": resolved_paper_codes[0] if len(resolved_paper_codes) == 1 else None,
             "paper_codes": resolved_paper_codes,
             "rows": len(answer_rows),
+            "rows_processed": len(answer_rows),
+            "rows_failed": len(row_errors),
+            "errors": row_errors,
             "questions_inserted": question_stats["inserted"],
             "questions_existing": question_stats["existing"],
             "answers_inserted": answer_stats["inserted"],

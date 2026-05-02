@@ -20,6 +20,17 @@ from app.ingestion.verbal_reasoning.service import (
     import_verbal_reasoning_pdf_as_draft,
     upload_verbal_reasoning_answer_csv,
 )
+from app.repositories.vr_repository import (
+    bulk_upsert_vr_answers,
+    bulk_upsert_vr_questions,
+    create_or_update_vr_paper,
+    delete_vr_paper_content,
+    get_active_vr_papers,
+    get_vr_answers_for_paper,
+    get_vr_paper_meta,
+    get_vr_questions_for_paper,
+    normalize_vr_paper_code,
+)
 
 
 router = APIRouter(prefix="/admin/ingestion", tags=["admin-ingestion"])
@@ -269,43 +280,31 @@ def _vr_paper_exists(cur, paper_code: str) -> bool:
     cur.execute(
         """
         SELECT 1
-        FROM verbal_reasoning_printable_papers
+        FROM vr_papers
         WHERE paper_code = %s
         """,
-        (paper_code,),
+        (normalize_vr_paper_code(paper_code),),
     )
     return cur.fetchone() is not None
 
 
 def _vr_question_count(cur, paper_code: str) -> int:
-    cur.execute(
-        """
-        SELECT COUNT(*)
-        FROM verbal_reasoning_printable_questions
-        WHERE paper_code = %s
-        """,
-        (paper_code,),
-    )
-    return cur.fetchone()[0]
+    meta = get_vr_paper_meta(paper_code, conn=cur.connection)
+    return int((meta or {}).get("questions_count") or 0)
 
 
 def _vr_answer_count(cur, paper_code: str) -> int:
-    cur.execute(
-        """
-        SELECT COUNT(*)
-        FROM verbal_reasoning_printable_answer_keys
-        WHERE paper_code = %s
-        """,
-        (paper_code,),
-    )
-    return cur.fetchone()[0]
+    meta = get_vr_paper_meta(paper_code, conn=cur.connection)
+    return int((meta or {}).get("answers_count") or 0)
 
 
 def _validate_vr_answer_key_payload(cur, paper_code: str, answers: list[str]):
-    if not _vr_paper_exists(cur, paper_code):
+    normalized_code = normalize_vr_paper_code(paper_code)
+
+    if not _vr_paper_exists(cur, normalized_code):
         raise HTTPException(status_code=400, detail="Invalid paper_code")
 
-    question_count = _vr_question_count(cur, paper_code)
+    question_count = _vr_question_count(cur, normalized_code)
     if question_count == 0:
         raise HTTPException(status_code=400, detail="Upload questions before saving answers")
 
@@ -319,7 +318,7 @@ def _validate_vr_answer_key_payload(cur, paper_code: str, answers: list[str]):
     if any(not answer for answer in normalized_answers):
         raise HTTPException(status_code=400, detail="Answers must not be empty")
 
-    return normalized_answers
+    return normalized_code, normalized_answers
 
 
 @printable_router.get("/practice/math/printable/papers")
@@ -683,146 +682,45 @@ def get_answer_key(paper_code: str, current_user=Depends(get_current_user)):
 
 @printable_router.get("/practice/verbal-reasoning/printable/papers")
 def get_verbal_reasoning_papers():
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            """
-            SELECT
-                p.paper_code,
-                p.paper_name,
-                COUNT(DISTINCT q.question_number) AS questions_count,
-                COUNT(DISTINCT a.question_number) AS answers_count
-            FROM verbal_reasoning_printable_papers p
-            LEFT JOIN verbal_reasoning_printable_questions q
-                ON q.paper_code = p.paper_code
-            LEFT JOIN verbal_reasoning_printable_answer_keys a
-                ON a.paper_code = p.paper_code
-            WHERE p.is_active = TRUE
-            GROUP BY p.paper_code, p.paper_name, p.sort_order
-            ORDER BY p.sort_order
-            """
-        )
-
-        rows = cur.fetchall()
-        return [
-            {
-                "paper_code": row[0],
-                "paper_name": row[1],
-                "questions_count": row[2],
-                "answers_count": row[3],
-                "ready": row[2] > 0 and row[3] == row[2],
-            }
-            for row in rows
-        ]
-    finally:
-        cur.close()
-        conn.close()
+    papers = get_active_vr_papers()
+    return [
+        {
+            "paper_code": paper["paper_code"],
+            "paper_name": paper["title"],
+            "title": paper["title"],
+            "description": paper["description"],
+            "pdf_url": paper["pdf_url"],
+            "questions_count": paper["questions_count"],
+            "answers_count": paper["answers_count"],
+            "ready": paper["ready"],
+        }
+        for paper in papers
+    ]
 
 
 @printable_router.get("/practice/verbal-reasoning/printable/questions/meta")
 def get_verbal_reasoning_printable_questions_meta(paper_code: str):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            """
-            SELECT
-                COALESCE((
-                    SELECT COUNT(DISTINCT q.question_number)
-                    FROM verbal_reasoning_printable_questions q
-                    WHERE q.paper_code = %s
-                ), 0) AS question_count,
-                COALESCE((
-                    SELECT COUNT(DISTINCT a.question_number)
-                    FROM verbal_reasoning_printable_answer_keys a
-                    WHERE a.paper_code = %s
-                ), 0) AS answer_count
-            """,
-            (paper_code, paper_code),
-        )
-        row = cur.fetchone()
-        question_count = row[0] or 0
-        answer_count = row[1] or 0
-        effective_count = max(question_count, answer_count)
-        return {
-            "paper_code": paper_code,
-            "question_count": effective_count,
-            "answer_count": answer_count,
-            "answers_count": answer_count,
-            "ready": effective_count > 0 and effective_count == answer_count,
-        }
-    finally:
-        cur.close()
-        conn.close()
+    meta = get_vr_paper_meta(paper_code)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    effective_count = max(meta["questions_count"], meta["answers_count"])
+    return {
+        "paper_code": meta["paper_code"],
+        "question_count": effective_count,
+        "questions_count": meta["questions_count"],
+        "answer_count": meta["answers_count"],
+        "answers_count": meta["answers_count"],
+        "ready": effective_count > 0 and effective_count == meta["answers_count"],
+    }
 
 
 @printable_router.get("/practice/verbal-reasoning/printable/questions")
 def get_verbal_reasoning_printable_questions(paper_code: str):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            """
-            SELECT
-                question_number,
-                question_text,
-                option_a,
-                option_b,
-                option_c,
-                option_d,
-                option_e
-            FROM verbal_reasoning_printable_questions
-            WHERE paper_code = %s
-            ORDER BY question_number
-            """,
-            (paper_code,),
-        )
-        rows = cur.fetchall()
-        if not rows:
-            cur.execute(
-                """
-                SELECT question_number
-                FROM verbal_reasoning_printable_answer_keys
-                WHERE paper_code = %s
-                ORDER BY question_number
-                """,
-                (paper_code,),
-            )
-            answer_rows = cur.fetchall()
-            rows = [
-                (
-                    row[0],
-                    f"Question {row[0]}",
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                for row in answer_rows
-            ]
-        return {
-            "paper_code": paper_code,
-            "questions": [
-                {
-                    "question_number": row[0],
-                    "question_text": row[1],
-                    "option_a": row[2],
-                    "option_b": row[3],
-                    "option_c": row[4],
-                    "option_d": row[5],
-                    "option_e": row[6],
-                }
-                for row in rows
-            ],
-        }
-    finally:
-        cur.close()
-        conn.close()
+    questions = get_vr_questions_for_paper(paper_code)
+    return {
+        "paper_code": normalize_vr_paper_code(paper_code),
+        "questions": questions,
+    }
 
 
 @printable_router.get("/admin/verbal-reasoning/printable/questions")
@@ -832,33 +730,10 @@ def get_admin_verbal_reasoning_printable_questions(paper_code: str, _user=Depend
 
 @printable_router.get("/admin/verbal-reasoning/printable/answers")
 def get_admin_verbal_reasoning_printable_answers(paper_code: str, _user=Depends(require_admin)):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            """
-            SELECT question_number, correct_answer
-            FROM verbal_reasoning_printable_answer_keys
-            WHERE paper_code = %s
-            ORDER BY question_number
-            """,
-            (paper_code,),
-        )
-        rows = cur.fetchall()
-        return {
-            "paper_code": paper_code,
-            "answers": [
-                {
-                    "question_number": row[0],
-                    "correct_answer": row[1],
-                }
-                for row in rows
-            ],
-        }
-    finally:
-        cur.close()
-        conn.close()
+    return {
+        "paper_code": normalize_vr_paper_code(paper_code),
+        "answers": get_vr_answers_for_paper(paper_code),
+    }
 
 
 @printable_router.post("/admin/verbal-reasoning/printable/answers/update")
@@ -868,32 +743,32 @@ def update_admin_verbal_reasoning_printable_answers(
 ):
     conn = get_connection()
     cur = conn.cursor()
-
     try:
-        normalized_answers = _validate_vr_answer_key_payload(
+        normalized_code, normalized_answers = _validate_vr_answer_key_payload(
             cur,
             payload.paper_code,
             [answer.correct_answer for answer in payload.answers],
         )
-
-        for answer, normalized_answer in zip(payload.answers, normalized_answers):
-            cur.execute(
-                """
-                INSERT INTO verbal_reasoning_printable_answer_keys
-                (paper_code, question_number, correct_answer, updated_at)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (paper_code, question_number)
-                DO UPDATE SET correct_answer = EXCLUDED.correct_answer,
-                              updated_at = NOW()
-                """,
-                (payload.paper_code, answer.question_number, normalized_answer),
-            )
-
+        stats = bulk_upsert_vr_answers(
+            [
+                {
+                    "paper_code": normalized_code,
+                    "question_number": answer.question_number,
+                    "correct_answer": normalized_answer,
+                    "answer_source": "admin_manual",
+                }
+                for answer, normalized_answer in zip(payload.answers, normalized_answers)
+            ],
+            conn=conn,
+        )
         conn.commit()
         return {
             "status": "success",
-            "paper_code": payload.paper_code,
+            "paper_code": normalized_code,
             "answers_saved": len(payload.answers),
+            "answers_inserted": stats["inserted"],
+            "answers_updated": stats["updated"],
+            "answers_unchanged": stats["unchanged"],
         }
     except Exception:
         conn.rollback()
@@ -910,38 +785,32 @@ def update_admin_verbal_reasoning_printable_questions(
 ):
     conn = get_connection()
     cur = conn.cursor()
-
     try:
-        for question in payload.questions:
-            cur.execute(
-                """
-                UPDATE verbal_reasoning_printable_questions
-                SET question_text = %s,
-                    option_a = %s,
-                    option_b = %s,
-                    option_c = %s,
-                    option_d = %s,
-                    option_e = %s,
-                    updated_at = NOW()
-                WHERE paper_code = %s
-                  AND question_number = %s
-                """,
-                (
-                    question.question_text.strip(),
-                    question.option_a,
-                    question.option_b,
-                    question.option_c,
-                    question.option_d,
-                    question.option_e,
-                    payload.paper_code,
-                    question.question_number,
-                ),
-            )
+        normalized_code = normalize_vr_paper_code(payload.paper_code)
+        stats = bulk_upsert_vr_questions(
+            [
+                {
+                    "paper_code": normalized_code,
+                    "question_number": question.question_number,
+                    "question_text": question.question_text.strip(),
+                    "option_a": question.option_a,
+                    "option_b": question.option_b,
+                    "option_c": question.option_c,
+                    "option_d": question.option_d,
+                    "option_e": question.option_e,
+                }
+                for question in payload.questions
+            ],
+            conn=conn,
+        )
         conn.commit()
         return {
             "status": "success",
-            "paper_code": payload.paper_code,
+            "paper_code": normalized_code,
             "questions_saved": len(payload.questions),
+            "questions_inserted": stats["inserted"],
+            "questions_updated": stats["updated"],
+            "questions_existing": stats["existing"],
         }
     except Exception:
         conn.rollback()
@@ -957,76 +826,47 @@ def delete_admin_verbal_reasoning_printable_content(
     _user=Depends(require_admin),
 ):
     conn = get_connection()
-    cur = conn.cursor()
-
     try:
-        cur.execute(
-            """
-            DELETE FROM verbal_reasoning_printable_questions
-            WHERE paper_code = %s
-            """,
-            (payload.paper_code,),
-        )
-        questions_deleted = cur.rowcount
-
-        cur.execute(
-            """
-            DELETE FROM verbal_reasoning_printable_answer_keys
-            WHERE paper_code = %s
-            """,
-            (payload.paper_code,),
-        )
-        answers_deleted = cur.rowcount
-
+        result = delete_vr_paper_content(payload.paper_code, conn=conn)
         conn.commit()
-        return {
-            "status": "deleted",
-            "paper_code": payload.paper_code,
-            "questions_deleted": questions_deleted,
-            "answers_deleted": answers_deleted,
-        }
+        return {"status": "deleted", **result}
     except Exception:
         conn.rollback()
         raise
     finally:
-        cur.close()
         conn.close()
 
 
 @printable_router.get("/admin/verbal-reasoning/printable/validate")
 def validate_admin_verbal_reasoning_printable_paper(paper_code: str, _user=Depends(require_admin)):
-    conn = get_connection()
-    cur = conn.cursor()
+    meta = get_vr_paper_meta(paper_code)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Paper not found")
 
-    try:
-        q_count = _vr_question_count(cur, paper_code)
-        a_count = _vr_answer_count(cur, paper_code)
-        issues = []
+    q_count = meta["questions_count"]
+    a_count = meta["answers_count"]
+    issues = []
+    if q_count == 0:
+        issues.append("Questions not uploaded")
+    if a_count == 0:
+        issues.append("Answer key missing")
+    if q_count > 0 and a_count > 0 and q_count != a_count:
+        issues.append("Answer count does not match question count")
 
-        if q_count == 0:
-            issues.append("Questions not uploaded")
-        if a_count == 0:
-            issues.append("Answer key missing")
-        if q_count > 0 and a_count > 0 and q_count != a_count:
-            issues.append("Answer count does not match question count")
-
-        has_complete_answer_key = q_count > 0 and a_count == q_count
-        ready = q_count > 0 and has_complete_answer_key
-        return {
-            "paper_code": paper_code,
-            "questions_count": q_count,
-            "answers_count": a_count,
-            "has_questions": q_count > 0,
-            "has_complete_answer_key": has_complete_answer_key,
-            "ready": ready,
-            "issues": issues,
-            "questions": q_count,
-            "answers": a_count,
-            "valid": ready,
-        }
-    finally:
-        cur.close()
-        conn.close()
+    has_complete_answer_key = q_count > 0 and a_count == q_count
+    ready = q_count > 0 and has_complete_answer_key
+    return {
+        "paper_code": meta["paper_code"],
+        "questions_count": q_count,
+        "answers_count": a_count,
+        "has_questions": q_count > 0,
+        "has_complete_answer_key": has_complete_answer_key,
+        "ready": ready,
+        "issues": issues,
+        "questions": q_count,
+        "answers": a_count,
+        "valid": ready,
+    }
 
 
 @router.post("/verbal-reasoning/upload-csv")
@@ -1034,27 +874,31 @@ def upload_verbal_reasoning_csv(payload: AnswerKeyRequest, current_user=Depends(
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    paper_code = payload.paper_code
-    answers = payload.answers
     conn = get_connection()
     cur = conn.cursor()
-
     try:
-        normalized_answers = _validate_vr_answer_key_payload(cur, paper_code, answers)
-        for i, ans in enumerate(normalized_answers, start=1):
-            cur.execute(
-                """
-                INSERT INTO verbal_reasoning_printable_answer_keys
-                (paper_code, question_number, correct_answer, updated_at)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (paper_code, question_number)
-                DO UPDATE SET correct_answer = EXCLUDED.correct_answer,
-                              updated_at = NOW()
-                """,
-                (paper_code, i, ans),
-            )
+        normalized_code, normalized_answers = _validate_vr_answer_key_payload(cur, payload.paper_code, payload.answers)
+        stats = bulk_upsert_vr_answers(
+            [
+                {
+                    "paper_code": normalized_code,
+                    "question_number": index,
+                    "correct_answer": ans,
+                    "answer_source": "admin_manual",
+                }
+                for index, ans in enumerate(normalized_answers, start=1)
+            ],
+            conn=conn,
+        )
         conn.commit()
-        return {"status": "success", "paper_code": paper_code, "answers_saved": len(answers)}
+        return {
+            "status": "success",
+            "paper_code": normalized_code,
+            "answers_saved": len(normalized_answers),
+            "answers_inserted": stats["inserted"],
+            "answers_updated": stats["updated"],
+            "answers_unchanged": stats["unchanged"],
+        }
     finally:
         cur.close()
         conn.close()
@@ -1072,28 +916,42 @@ def upload_verbal_reasoning_answer_key_csv(
     return upload_verbal_reasoning_answer_csv(file, paper_code or None)
 
 
+@router.post("/admin/vr/upload-answer-key")
+def upload_admin_vr_answer_key(
+    paper_code: str = Form(""),
+    file: UploadFile = File(...),
+    _user=Depends(require_admin),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="CSV file required")
+    return upload_verbal_reasoning_answer_csv(file, paper_code or None)
+
+
+@router.get("/admin/vr/papers")
+def get_admin_vr_papers(_user=Depends(require_admin)):
+    return get_verbal_reasoning_papers()
+
+
+@router.get("/admin/vr/answer-key")
+def get_admin_vr_answer_key_alias(paper_code: str, _user=Depends(require_admin)):
+    answers = get_vr_answers_for_paper(paper_code)
+    return {
+        "paper_code": normalize_vr_paper_code(paper_code),
+        "rows_processed": len(answers),
+        "answers": answers,
+    }
+
+
 @router.get("/verbal-reasoning/answer-key")
 def get_verbal_reasoning_answer_key(paper_code: str, current_user=Depends(get_current_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT correct_answer
-            FROM verbal_reasoning_printable_answer_keys
-            WHERE paper_code = %s
-            ORDER BY question_number
-            """,
-            (paper_code,),
-        )
-        rows = cur.fetchall()
-        return {"paper_code": paper_code, "answers": [row[0] for row in rows]}
-    finally:
-        cur.close()
-        conn.close()
+    answers = get_vr_answers_for_paper(paper_code)
+    return {
+        "paper_code": normalize_vr_paper_code(paper_code),
+        "answers": [row["correct_answer"] for row in answers],
+    }
 
 
 @router.post("/verbal-reasoning/upload-reviewed-csv")
@@ -1132,7 +990,7 @@ def upload_verbal_reasoning_reviewed_csv(
                 if clean.get("review_status") and clean["review_status"].strip().lower() != "approved":
                     continue
 
-                paper_code = clean.get("paper_code")
+                paper_code = normalize_vr_paper_code(clean.get("paper_code"))
                 question_number = clean.get("question_number")
                 question_text = clean.get("question_text")
                 correct_answer = clean.get("correct_answer")
@@ -1147,65 +1005,33 @@ def upload_verbal_reasoning_reviewed_csv(
                 if not _vr_paper_exists(cur, paper_code):
                     raise HTTPException(status_code=400, detail=f"Row {idx}: invalid paper_code {paper_code}")
 
-                cur.execute(
-                    """
-                    INSERT INTO verbal_reasoning_printable_questions
-                    (
-                        paper_code,
-                        question_number,
-                        section_title,
-                        question_type,
-                        question_text,
-                        option_a,
-                        option_b,
-                        option_c,
-                        option_d,
-                        option_e,
-                        source_block,
-                        notes,
-                        updated_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (paper_code, question_number)
-                    DO UPDATE SET
-                        section_title = EXCLUDED.section_title,
-                        question_type = EXCLUDED.question_type,
-                        question_text = EXCLUDED.question_text,
-                        option_a = EXCLUDED.option_a,
-                        option_b = EXCLUDED.option_b,
-                        option_c = EXCLUDED.option_c,
-                        option_d = EXCLUDED.option_d,
-                        option_e = EXCLUDED.option_e,
-                        source_block = EXCLUDED.source_block,
-                        notes = EXCLUDED.notes,
-                        updated_at = NOW()
-                    """,
-                    (
-                        paper_code,
-                        question_number_int,
-                        clean.get("section_title"),
-                        clean.get("question_type"),
-                        question_text,
-                        clean.get("option_a"),
-                        clean.get("option_b"),
-                        clean.get("option_c"),
-                        clean.get("option_d"),
-                        clean.get("option_e"),
-                        clean.get("source_block"),
-                        clean.get("notes"),
-                    ),
+                bulk_upsert_vr_questions(
+                    [
+                        {
+                            "paper_code": paper_code,
+                            "question_number": question_number_int,
+                            "question_type": clean.get("question_type"),
+                            "question_text": question_text,
+                            "option_a": clean.get("option_a"),
+                            "option_b": clean.get("option_b"),
+                            "option_c": clean.get("option_c"),
+                            "option_d": clean.get("option_d"),
+                            "option_e": clean.get("option_e"),
+                        }
+                    ],
+                    conn=conn,
                 )
 
-                cur.execute(
-                    """
-                    INSERT INTO verbal_reasoning_printable_answer_keys
-                    (paper_code, question_number, correct_answer, updated_at)
-                    VALUES (%s, %s, %s, NOW())
-                    ON CONFLICT (paper_code, question_number)
-                    DO UPDATE SET correct_answer = EXCLUDED.correct_answer,
-                                  updated_at = NOW()
-                    """,
-                    (paper_code, question_number_int, correct_answer),
+                bulk_upsert_vr_answers(
+                    [
+                        {
+                            "paper_code": paper_code,
+                            "question_number": question_number_int,
+                            "correct_answer": correct_answer,
+                            "answer_source": "reviewed_csv",
+                        }
+                    ],
+                    conn=conn,
                 )
                 rows_uploaded += 1
 

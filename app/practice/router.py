@@ -57,6 +57,14 @@ from app.comprehension.repository import (
     insert_passage,
     insert_question
 )
+from app.repositories.vr_repository import (
+    get_active_vr_papers,
+    get_vr_answers_for_paper,
+    get_vr_questions_for_paper,
+    normalize_vr_paper_code,
+    record_vr_attempt_batch,
+    user_has_vr_access,
+)
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 admin_router = APIRouter(tags=["admin"])
@@ -271,6 +279,10 @@ def _normalize_printable_answer(answer):
     return str(answer or "").strip().lower()
 
 
+def _normalize_vr_submission_answer(answer):
+    return str(answer or "").strip().upper()
+
+
 # -----------------------------
 # Course / Lesson Discovery
 # -----------------------------
@@ -440,98 +452,133 @@ def math_retry_incorrect(req: RetryIncorrectRequest, user=Depends(get_current_us
         conn.close()
 
 
+@router.get("/vr/papers")
+def get_vr_papers(user=Depends(get_current_user)):
+    accessible = user_has_vr_access(
+        user_email=user.get("sub", ""),
+        user_role=user.get("role"),
+    )
+    papers = get_active_vr_papers()
+    return [
+        {
+            "paper_code": paper["paper_code"],
+            "title": paper["title"],
+            "description": paper["description"],
+            "pdf_url": paper["pdf_url"],
+            "question_count": paper["questions_count"],
+            "questions_count": paper["questions_count"],
+            "answer_count": paper["answers_count"],
+            "answers_count": paper["answers_count"],
+            "ready": paper["ready"],
+            "unlocked": accessible,
+        }
+        for paper in papers
+    ]
+
+
+@router.get("/vr/questions")
+def get_vr_question_numbers(paper_code: str, user=Depends(get_current_user)):
+    if not user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role")):
+        raise HTTPException(status_code=403, detail="VR printable access required")
+
+    questions = get_vr_questions_for_paper(paper_code)
+    if not questions:
+        raise HTTPException(status_code=404, detail="Paper questions not available")
+
+    return {
+        "paper_code": normalize_vr_paper_code(paper_code),
+        "questions": [int(question["question_number"]) for question in questions],
+    }
+
+
+@router.post("/vr/submit")
+def submit_vr_answers(payload: dict, user=Depends(get_current_user)):
+    user_id = _require_user_id(user)
+    paper_code = normalize_vr_paper_code(_require_payload_param(payload, "paper_code"))
+    answers_payload = _require_payload_param(payload, "answers")
+
+    if not user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role")):
+        raise HTTPException(status_code=403, detail="VR printable access required")
+
+    stored_answers = get_vr_answers_for_paper(paper_code)
+    if not stored_answers:
+        raise HTTPException(status_code=400, detail="Paper is not ready for submission")
+
+    question_numbers = [int(item["question_number"]) for item in stored_answers]
+    question_count = len(question_numbers)
+
+    if isinstance(answers_payload, list) and answers_payload and isinstance(answers_payload[0], dict):
+        submitted_map: dict[int, str] = {}
+        for item in answers_payload:
+            try:
+                question_number = int(item.get("question_number"))
+            except Exception:
+                raise HTTPException(status_code=400, detail="Each answer must include a valid question_number")
+            submitted_map[question_number] = _normalize_vr_submission_answer(item.get("student_answer"))
+    elif isinstance(answers_payload, list):
+        if len(answers_payload) != question_count:
+            raise HTTPException(status_code=400, detail="All questions must be answered")
+        submitted_map = {
+            question_number: _normalize_vr_submission_answer(answers_payload[index])
+            for index, question_number in enumerate(question_numbers)
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Answers must be a list")
+
+    missing = [q for q in question_numbers if not submitted_map.get(q)]
+    if missing:
+        raise HTTPException(status_code=400, detail="All questions must be answered")
+
+    results = []
+    batch_rows = []
+    score = 0
+    for answer in stored_answers:
+        question_number = int(answer["question_number"])
+        correct_answer = _normalize_vr_submission_answer(answer["correct_answer"])
+        student_answer = submitted_map.get(question_number, "")
+        is_correct = student_answer == correct_answer
+        if is_correct:
+            score += 1
+        batch_rows.append(
+            {
+                "question_number": question_number,
+                "student_answer": student_answer,
+                "is_correct": is_correct,
+            }
+        )
+        results.append(
+            {
+                "question_number": question_number,
+                "user_answer": student_answer,
+                "correct_answer": answer["correct_answer"],
+                "is_correct": is_correct,
+                "correct": is_correct,
+            }
+        )
+
+    record_vr_attempt_batch(
+        user_id=user_id,
+        paper_code=paper_code,
+        answers=batch_rows,
+    )
+
+    percentage = round((score * 100.0 / question_count), 2) if question_count else 0.0
+    return {
+        "paper_code": paper_code,
+        "score": score,
+        "total": question_count,
+        "total_questions": question_count,
+        "answered": question_count,
+        "answered_questions": question_count,
+        "correct": score,
+        "percentage": percentage,
+        "breakdown": results,
+    }
+
+
 @router.post("/verbal-reasoning/submit")
 def verbal_reasoning_submit(payload: dict, user=Depends(get_current_user)):
-    _require_user_id(user)
-    paper_code = _require_payload_param(payload, "paper_code")
-    answers = _require_payload_param(payload, "answers")
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            """
-            SELECT 1
-            FROM verbal_reasoning_printable_papers
-            WHERE paper_code = %s
-              AND is_active = TRUE
-            """,
-            (paper_code,),
-        )
-        if not cur.fetchone():
-            raise HTTPException(status_code=400, detail="Invalid paper")
-
-        cur.execute(
-            """
-            SELECT COUNT(*)
-            FROM verbal_reasoning_printable_questions
-            WHERE paper_code = %s
-            """,
-            (paper_code,),
-        )
-        question_count = cur.fetchone()[0]
-        if question_count == 0:
-            raise HTTPException(status_code=400, detail="Paper questions not available")
-
-        cur.execute(
-            """
-            SELECT COUNT(*)
-            FROM verbal_reasoning_printable_answer_keys
-            WHERE paper_code = %s
-            """,
-            (paper_code,),
-        )
-        answer_count = cur.fetchone()[0]
-        if answer_count != question_count:
-            raise HTTPException(status_code=400, detail="Paper is not ready for submission")
-
-        cur.execute(
-            """
-            SELECT question_number, correct_answer
-            FROM verbal_reasoning_printable_answer_keys
-            WHERE paper_code = %s
-            ORDER BY question_number
-            """,
-            (paper_code,),
-        )
-        rows = cur.fetchall()
-
-        user_answers = answers or []
-        total = question_count
-        if len(user_answers) != total:
-            raise HTTPException(status_code=400, detail="All questions must be answered")
-
-        results = []
-        score = 0
-
-        for index, row in enumerate(rows):
-            question_number = row[0]
-            correct_answer = _normalize_printable_answer(row[1])
-            user_answer = _normalize_printable_answer(user_answers[index] if index < len(user_answers) else "")
-            is_correct = user_answer == correct_answer
-            if is_correct:
-                score += 1
-            results.append(
-                {
-                    "question_number": question_number,
-                    "user_answer": user_answer,
-                    "correct_answer": row[1],
-                    "is_correct": is_correct,
-                }
-            )
-
-        return {
-            "score": score,
-            "total": total,
-            "percentage": (score * 100 / total) if total else 0,
-            "answered_questions": len(user_answers),
-            "breakdown": results,
-            "paper_code": paper_code,
-        }
-    finally:
-        cur.close()
-        conn.close()
+    return submit_vr_answers(payload, user)
 
 
 @router.post("/verbal-reasoning/retry-incorrect")
@@ -544,44 +591,15 @@ def verbal_reasoning_retry_incorrect(req: RetryIncorrectRequest, user=Depends(ge
             "message": "No incorrect questions",
         }
 
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT
-                question_number,
-                question_text,
-                option_a,
-                option_b,
-                option_c,
-                option_d,
-                option_e
-            FROM verbal_reasoning_printable_questions
-            WHERE paper_code = %s
-              AND question_number = ANY(%s)
-            ORDER BY question_number
-            """,
-            (req.paper_code, req.incorrect_questions),
-        )
-        rows = cur.fetchall()
-        return {
-            "questions": [
-                {
-                    "question_number": row[0],
-                    "question_text": row[1],
-                    "option_a": row[2],
-                    "option_b": row[3],
-                    "option_c": row[4],
-                    "option_d": row[5],
-                    "option_e": row[6],
-                }
-                for row in rows
-            ]
-        }
-    finally:
-        cur.close()
-        conn.close()
+    questions = get_vr_questions_for_paper(req.paper_code)
+    allowed = set(req.incorrect_questions)
+    return {
+        "questions": [
+            question
+            for question in questions
+            if int(question["question_number"]) in allowed
+        ]
+    }
 
 
 @router.get("/math/history")
