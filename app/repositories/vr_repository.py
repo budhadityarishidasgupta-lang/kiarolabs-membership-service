@@ -38,7 +38,8 @@ class VrPaperMeta:
 
     @property
     def ready(self) -> bool:
-        return self.questions_count > 0 and self.answers_count == self.questions_count
+        effective_count = max(self.questions_count, self.answers_count)
+        return effective_count > 0 and self.answers_count == effective_count
 
 
 def init_vr_tables(conn=None) -> None:
@@ -363,7 +364,8 @@ def get_active_vr_papers(*, conn=None) -> list[dict]:
                 "sort_order": row[8],
                 "questions_count": row[9],
                 "answers_count": row[10],
-                "ready": row[9] > 0 and row[10] == row[9],
+                "effective_question_count": max(row[9], row[10]),
+                "ready": max(row[9], row[10]) > 0 and row[10] == max(row[9], row[10]),
             }
             for row in rows
         ]
@@ -421,7 +423,8 @@ def get_vr_paper_meta(paper_code: str, *, conn=None) -> dict | None:
             "sort_order": row[6],
             "questions_count": row[7],
             "answers_count": row[8],
-            "ready": row[7] > 0 and row[7] == row[8],
+            "effective_question_count": max(row[7], row[8]),
+            "ready": max(row[7], row[8]) > 0 and max(row[7], row[8]) == row[8],
         }
     finally:
         cur.close()
