@@ -256,6 +256,107 @@ def _fetch_attempt_accuracy(cur, table_name: str, user_id: int, *, user_columns:
     return attempts or 0, round(accuracy or 0, 2)
 
 
+def _safe_completion_percent(completed_lessons: int, total_lessons: int) -> int:
+    if total_lessons <= 0:
+        return 0
+    return max(0, min(100, round((completed_lessons / total_lessons) * 100)))
+
+
+def _fetch_spelling_completion(cur, user_id: int):
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM spelling_lessons
+        WHERE COALESCE(is_active, TRUE) = TRUE
+        """
+    )
+    total_lessons = cur.fetchone()[0] or 0
+
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT sa.lesson_id)
+        FROM spelling_attempts sa
+        JOIN spelling_lessons l
+          ON l.lesson_id = sa.lesson_id
+        WHERE sa.user_id = %s
+          AND sa.lesson_id IS NOT NULL
+          AND COALESCE(l.is_active, TRUE) = TRUE
+        """,
+        (user_id,),
+    )
+    completed_lessons = cur.fetchone()[0] or 0
+    return completed_lessons, total_lessons, _safe_completion_percent(completed_lessons, total_lessons)
+
+
+def _fetch_words_completion(cur, user_id: int):
+    words_lessons_columns = _get_table_columns(cur, "words_lessons")
+    has_words_is_active = "is_active" in words_lessons_columns
+    total_where = "WHERE COALESCE(is_active, TRUE) = TRUE" if has_words_is_active else ""
+    completed_where = "AND COALESCE(l.is_active, TRUE) = TRUE" if has_words_is_active else ""
+
+    cur.execute(f"SELECT COUNT(*) FROM words_lessons {total_where}")
+    total_lessons = cur.fetchone()[0] or 0
+
+    cur.execute(
+        f"""
+        SELECT COUNT(DISTINCT lw.lesson_id)
+        FROM words_attempts wa
+        JOIN words_lesson_words lw
+          ON lw.word_id = wa.word_id
+        JOIN words_lessons l
+          ON l.id = lw.lesson_id
+        WHERE wa.user_id = %s
+        {completed_where}
+        """,
+        (user_id,),
+    )
+    completed_lessons = cur.fetchone()[0] or 0
+    return completed_lessons, total_lessons, _safe_completion_percent(completed_lessons, total_lessons)
+
+
+def _fetch_math_completion(cur, user_id: int):
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM math_lessons
+        WHERE COALESCE(is_active, TRUE) = TRUE
+        """
+    )
+    total_lessons = cur.fetchone()[0] or 0
+
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT ma.lesson_id)
+        FROM math_attempts ma
+        JOIN math_lessons ml
+          ON ml.lesson_id = ma.lesson_id
+        WHERE ma.user_id = %s
+          AND ma.lesson_id IS NOT NULL
+          AND COALESCE(ml.is_active, TRUE) = TRUE
+        """,
+        (user_id,),
+    )
+    completed_lessons = cur.fetchone()[0] or 0
+    return completed_lessons, total_lessons, _safe_completion_percent(completed_lessons, total_lessons)
+
+
+def _fetch_comprehension_completion(cur, user_id: int):
+    cur.execute("SELECT COUNT(*) FROM comprehension_passages")
+    total_lessons = cur.fetchone()[0] or 0
+
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT passage_id)
+        FROM comprehension_attempts
+        WHERE user_id = %s
+          AND passage_id IS NOT NULL
+        """,
+        (user_id,),
+    )
+    completed_lessons = cur.fetchone()[0] or 0
+    return completed_lessons, total_lessons, _safe_completion_percent(completed_lessons, total_lessons)
+
+
 def get_available_app_catalog():
     return AVAILABLE_APP_CATALOG
 
@@ -628,6 +729,11 @@ def dashboard(user=Depends(get_current_user)):
         correct_columns=["correct"],
     )
 
+    s_completed, s_lessons_total, s_completion = _fetch_spelling_completion(cur, user_id)
+    w_completed, w_lessons_total, w_completion = _fetch_words_completion(cur, user_id)
+    m_completed, m_lessons_total, m_completion = _fetch_math_completion(cur, user_id)
+    c_completed, c_lessons_total, c_completion = _fetch_comprehension_completion(cur, user_id)
+
     cur.close()
     conn.close()
 
@@ -639,16 +745,25 @@ def dashboard(user=Depends(get_current_user)):
         "spelling": {
             "attempts": s_total,
             "accuracy": round(s_acc, 2),
+            "completed_lessons": s_completed,
+            "total_lessons": s_lessons_total,
+            "completion_percent": s_completion,
             "unlocked": True if is_legacy else ("spelling" in apps or "general" in apps)
         },
         "words": {
             "attempts": w_total,
             "accuracy": round(w_acc, 2),
+            "completed_lessons": w_completed,
+            "total_lessons": w_lessons_total,
+            "completion_percent": w_completion,
             "unlocked": True if is_legacy else ("general" in apps)
         },
         "math": {
             "attempts": m_total,
             "accuracy": round(m_acc, 2),
+            "completed_lessons": m_completed,
+            "total_lessons": m_lessons_total,
+            "completion_percent": m_completion,
             "unlocked": True if is_legacy else ("math" in apps)
         },
 
@@ -670,6 +785,9 @@ def dashboard(user=Depends(get_current_user)):
         "comprehension": {
             "attempts": c_total,
             "accuracy": round(c_acc, 2),
+            "completed_lessons": c_completed,
+            "total_lessons": c_lessons_total,
+            "completion_percent": c_completion,
             "unlocked": "comprehension" in apps
         }
     }
