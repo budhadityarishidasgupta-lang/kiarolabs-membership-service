@@ -1420,8 +1420,8 @@ def get_dashboard_stats(user):
             COUNT(*) as attempts,
             COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
             FROM math_attempts
-            WHERE user_id = %s
-            """, (user_id,))
+            WHERE student_id = %s OR user_id = %s
+            """, (user_id, user_id))
 
             row = cursor.fetchone()
 
@@ -1573,10 +1573,10 @@ def get_resume_learning(user=Depends(get_current_user)):
             cur.execute("""
                 SELECT question_id
                 FROM math_attempts
-                WHERE user_id = %s
+                WHERE student_id = %s OR user_id = %s
                 ORDER BY created_at DESC
                 LIMIT 1
-            """, (user_id,))
+            """, (user_id, user_id))
             row = cur.fetchone()
 
             if row:

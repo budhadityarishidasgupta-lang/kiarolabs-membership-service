@@ -331,11 +331,11 @@ def _fetch_math_completion(cur, user_id: int):
         FROM math_attempts ma
         JOIN math_lessons ml
           ON ml.lesson_id = ma.lesson_id
-        WHERE ma.user_id = %s
+        WHERE (ma.student_id = %s OR ma.user_id = %s)
           AND ma.lesson_id IS NOT NULL
           AND COALESCE(ml.is_active, TRUE) = TRUE
         """,
-        (user_id,),
+        (user_id, user_id),
     )
     completed_lessons = cur.fetchone()[0] or 0
     return completed_lessons, total_lessons, _safe_completion_percent(completed_lessons, total_lessons)
