@@ -88,6 +88,28 @@ def _require_user_id(user):
     return user_id
 
 
+def _resolve_learning_user_id(cur, user) -> int | None:
+    """Resolve the same learning user_id across practice and dashboard endpoints."""
+    user_id = user.get("user_id")
+    email = user.get("sub")
+
+    if user_id:
+        cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+        if cur.fetchone():
+            return user_id
+
+    if email:
+        cur.execute(
+            "SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)",
+            (email,),
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
+
+    return None
+
+
 def _require_payload_param(payload: dict, name: str):
     if not isinstance(payload, dict):
         _missing_param(name)
@@ -952,11 +974,17 @@ def get_engagement(user=Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
 
+    user_id = _resolve_learning_user_id(cur, user)
+    if not user_id:
+        cur.close()
+        conn.close()
+        return {"xp": 0, "streak": 0}
+
     cur.execute("""
         SELECT total_xp, current_streak
         FROM user_engagement
         WHERE user_id = %s
-    """, (user["user_id"],))
+    """, (user_id,))
 
     row = cur.fetchone()
 
@@ -1351,7 +1379,8 @@ def session_next(user=Depends(get_current_user)):
 # Dashboard
 # -----------------------------
 
-def get_dashboard_stats(user_email):
+def get_dashboard_stats(user):
+    user_email = user.get("sub")
     progress = get_synonym_progress(user_email)
     modules = {
         "spelling": {"unlocked": True, "attempts": 0, "accuracy": 0},
@@ -1367,11 +1396,7 @@ def get_dashboard_stats(user_email):
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-        SELECT user_id FROM users WHERE email = %s
-        """, (user_email,))
-        user_row = cursor.fetchone()
-        user_id = user_row[0] if user_row else None
+        user_id = _resolve_learning_user_id(cursor, user)
 
         if user_id:
             cursor.execute("""
@@ -1504,7 +1529,7 @@ def dashboard(user=Depends(get_current_user)):
     Returns student progress summary
     across learning modules.
     """
-    return get_dashboard_stats(user["sub"])
+    return get_dashboard_stats(user)
 
 @router.get("/resume")
 def get_resume_learning(user=Depends(get_current_user)):

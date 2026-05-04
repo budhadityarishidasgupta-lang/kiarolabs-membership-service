@@ -952,6 +952,7 @@ def dashboard_insights(user=Depends(get_current_user)):
 
         streak = {
             "current": current_streak,
+            "current_streak": current_streak,
             "longest": longest_streak,
             "last_active": activity_days[0] if activity_days else None,
             "active_days_last_7": sum(
