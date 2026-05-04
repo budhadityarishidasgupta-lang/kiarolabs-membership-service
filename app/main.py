@@ -852,11 +852,73 @@ def dashboard_insights(user=Depends(get_current_user)):
                 "learning_path": [],
                 "streak": {
                     "current": 0,
+                    "current_streak": 0,
                     "longest": 0,
                     "last_active": None,
-                    "active_days_last_7": 0,
+                    "active_days_last_7": [False] * 7,
                 },
             }
+
+        def _collect_activity_days(query: str, params: tuple, collected_days: set):
+            cur.execute(query, params)
+            for activity_day, in cur.fetchall():
+                if not activity_day:
+                    continue
+                collected_days.add(activity_day.date() if hasattr(activity_day, "date") else activity_day)
+
+        practice_activity_days = set()
+
+        _collect_activity_days(
+            """
+            SELECT DISTINCT DATE(created_at)
+            FROM spelling_attempts
+            WHERE user_id = %s
+            """,
+            (user_id,),
+            practice_activity_days,
+        )
+
+        words_table = None
+        words_columns = _get_table_columns(cur, "synonym_attempts")
+        if words_columns:
+            words_table = "synonym_attempts"
+        else:
+            words_columns = _get_table_columns(cur, "words_attempts")
+            if words_columns:
+                words_table = "words_attempts"
+
+        if words_table:
+            words_timestamp_column = "created_at" if "created_at" in words_columns else "submitted_at" if "submitted_at" in words_columns else None
+            if words_timestamp_column:
+                _collect_activity_days(
+                    f"""
+                    SELECT DISTINCT DATE({words_timestamp_column})
+                    FROM {words_table}
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                    practice_activity_days,
+                )
+
+        _collect_activity_days(
+            """
+            SELECT DISTINCT DATE(created_at)
+            FROM math_attempts
+            WHERE student_id = %s OR user_id = %s
+            """,
+            (user_id, user_id),
+            practice_activity_days,
+        )
+
+        _collect_activity_days(
+            """
+            SELECT DISTINCT DATE(created_at)
+            FROM comprehension_attempts
+            WHERE user_id = %s
+            """,
+            (user_id,),
+            practice_activity_days,
+        )
 
         cur.execute(
             """
@@ -889,22 +951,8 @@ def dashboard_insights(user=Depends(get_current_user)):
         )
         attempts = cur.fetchall()
 
-        cur.execute(
-            f"""
-            SELECT DISTINCT DATE(created_at)
-            FROM {attempts_table}
-            WHERE user_id = %s
-            ORDER BY DATE(created_at) DESC
-            """,
-            (user_id,),
-        )
-        activity_days = [
-            row[0].date() if hasattr(row[0], "date") else row[0]
-            for row in cur.fetchall()
-            if row[0]
-        ]
-
         today = datetime.utcnow().date()
+        activity_days = sorted(practice_activity_days, reverse=True)
         current_streak = 0
 
         for i, day in enumerate(activity_days):
@@ -938,9 +986,10 @@ def dashboard_insights(user=Depends(get_current_user)):
             "current_streak": current_streak,
             "longest": longest_streak,
             "last_active": activity_days[0] if activity_days else None,
-            "active_days_last_7": sum(
-                1 for day in activity_days if today - timedelta(days=6) <= day <= today
-            ),
+            "active_days_last_7": [
+                (today - timedelta(days=offset)) in practice_activity_days
+                for offset in range(6, -1, -1)
+            ],
         }
 
         if not attempts:
