@@ -194,6 +194,43 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             if scored_candidates:
                 scored_candidates.sort(key=lambda entry: entry[0], reverse=True)
                 best_score, item, selected_strategy, selected_timing_stats, mastered = scored_candidates[0]
+
+                latest_attempted_word_id = None
+                anti_repeat_cur = conn.cursor()
+                try:
+                    anti_repeat_cur.execute(
+                        """
+                        SELECT word_id
+                        FROM spelling_attempts
+                        WHERE user_id = %s
+                          AND lesson_id = %s
+                        ORDER BY created_at DESC, attempt_id DESC
+                        LIMIT 1
+                        """,
+                        (user_id, lesson_id),
+                    )
+                    row = anti_repeat_cur.fetchone()
+                    if row:
+                        latest_attempted_word_id = row[0]
+                finally:
+                    anti_repeat_cur.close()
+
+                selected_word_id = item["word_id"] if "word_id" in item else item["id"]
+                if latest_attempted_word_id and selected_word_id == latest_attempted_word_id:
+                    alternative = next(
+                        (
+                            candidate
+                            for candidate in scored_candidates[1:]
+                            if (
+                                candidate[1]["word_id"]
+                                if "word_id" in candidate[1]
+                                else candidate[1]["id"]
+                            ) != latest_attempted_word_id
+                        ),
+                        None,
+                    )
+                    if alternative:
+                        best_score, item, selected_strategy, selected_timing_stats, mastered = alternative
             else:
                 item = get_spelling_next_item(user_id, lesson_id)
                 selected_strategy = "fallback"
