@@ -854,17 +854,18 @@ def get_spelling_courses(user=Depends(get_current_user)):
                 c.course_name,
                 l.lesson_id,
                 COALESCE(l.display_name, l.lesson_name) AS lesson_name,
-                l.sort_order
+                COALESCE(l.sort_order, 0) AS lesson_order
             FROM spelling_courses c
             JOIN spelling_lessons l
                 ON l.course_id = c.course_id
-            WHERE l.is_active = true
-            AND l.lesson_id IN (
-                866,867,868,869,
-                847,848,849,
-                857,858,860,870
-            )
-            ORDER BY c.course_id, l.sort_order
+            WHERE COALESCE(l.is_active, TRUE) = TRUE
+              AND c.course_id IN (1, 9)
+              AND EXISTS (
+                  SELECT 1
+                  FROM spelling_lesson_items li
+                  WHERE li.lesson_id = l.lesson_id
+              )
+            ORDER BY c.course_id, COALESCE(l.sort_order, 0), l.lesson_id
         """)
 
         rows = cur.fetchall()
