@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from itertools import zip_longest
 
 from app.database import get_connection
 from app.repositories.spelling_stats_repository import update_spelling_stats_from_attempt
@@ -326,6 +327,20 @@ def _sort_last_seen(value):
     return value if value is not None else datetime.min
 
 
+def _count_wrong_letters(submitted_text: str, correct_word: str) -> int:
+    submitted = (submitted_text or "").strip().lower()
+    correct = (correct_word or "").strip().lower()
+
+    if not submitted or not correct:
+        return 0
+
+    return sum(
+        1
+        for submitted_char, correct_char in zip_longest(submitted, correct, fillvalue="")
+        if submitted_char != correct_char
+    )
+
+
 def get_spelling_next_item(user_id: int, lesson_id: int):
     conn = get_connection()
     cur = conn.cursor()
@@ -403,8 +418,13 @@ def record_spelling_attempt(
 
     try:
         time_taken = max(int(response_ms or 0), 0)
-        blanks_count = 0
-        wrong_letters_count = 0
+        correct_word = ""
+        word_details = get_spelling_word_details(word_id, conn=conn)
+        if word_details:
+            correct_word = word_details["word"]
+
+        blanks_count = (submitted_text or "").count("_")
+        wrong_letters_count = 0 if correct else _count_wrong_letters(submitted_text, correct_word)
         created_at = datetime.now(timezone.utc)
         course_id = 0
         member_id = None
