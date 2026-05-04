@@ -11,7 +11,7 @@ import csv
 import io
 import random
 
-from app.auth import get_current_user
+from app.auth import get_current_user, resolve_verified_learning_user_id
 from app.database import get_connection
 
 # Engines
@@ -90,24 +90,7 @@ def _require_user_id(user):
 
 def _resolve_learning_user_id(cur, user) -> int | None:
     """Resolve the same learning user_id across practice and dashboard endpoints."""
-    user_id = user.get("user_id")
-    email = user.get("sub")
-
-    if user_id:
-        cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-        if cur.fetchone():
-            return user_id
-
-    if email:
-        cur.execute(
-            "SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)",
-            (email,),
-        )
-        row = cur.fetchone()
-        if row:
-            return row[0]
-
-    return None
+    return resolve_verified_learning_user_id(cur, user)
 
 
 def _require_payload_param(payload: dict, name: str):
@@ -1005,9 +988,15 @@ def get_weekly_improvement(user=Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
 
-    user_id = user["user_id"]
-
     try:
+        user_id = _resolve_learning_user_id(cur, user)
+        if not user_id:
+            return {
+                "current_accuracy": 0.0,
+                "previous_accuracy": 0.0,
+                "improvement": 0.0,
+            }
+
         current_attempts = 0
         current_correct = 0
         previous_attempts = 0
@@ -1533,8 +1522,6 @@ def dashboard(user=Depends(get_current_user)):
 
 @router.get("/resume")
 def get_resume_learning(user=Depends(get_current_user)):
-    user_id = user["user_id"]
-
     conn = get_connection()
     cur = conn.cursor()
 
@@ -1546,6 +1533,9 @@ def get_resume_learning(user=Depends(get_current_user)):
     }
 
     try:
+        user_id = _resolve_learning_user_id(cur, user)
+        if not user_id:
+            return result
 
         # SPELLING
         try:

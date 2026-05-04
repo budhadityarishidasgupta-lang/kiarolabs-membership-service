@@ -3,7 +3,7 @@ import re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request, HTTPException, Depends, Body
 #from fastapi.security import OAuth2PasswordBearer
-from app.auth import get_current_user
+from app.auth import get_current_user, resolve_verified_learning_user_id
 from pydantic import BaseModel, EmailStr
 from app.database import get_connection
 from app.database_init_words import init_words_tables
@@ -674,43 +674,27 @@ def dashboard(user=Depends(get_current_user)):
     # -------------------------
     # SAFE USER RESOLUTION
     # -------------------------
-    user_id = user.get("user_id")
+    user_id = resolve_verified_learning_user_id(cur, user)
     member_id = user.get("member_id")
-    email = user.get("sub")
-
-    # Validate user_id belongs to users table
-    if user_id:
-        cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-        if not cur.fetchone():
-            user_id = None
-
-    # Fallback via email
     if not user_id:
-        cur.execute(
-            "SELECT user_id FROM users WHERE LOWER(email) = LOWER(%s)",
-            (email,)
-        )
-        row = cur.fetchone()
-        if not row:
-            cur.close()
-            conn.close()
-            return {
-                "role": user.get("role", "student"),
-                "modules": {
-                    "spelling": {"attempts": 0, "accuracy": 0, "unlocked": False},
-                    "words": {"attempts": 0, "accuracy": 0, "unlocked": False},
-                    "math": {"unlocked": False},
-                    "practice_papers": {"unlocked": False},
-                    "mock_exams": {"unlocked": False},
-                    "nvr": {"unlocked": False},
-                    "comprehension": {"unlocked": False}
-                },
-                "insights": {
-                    "strongest": None,
-                    "weakest": None
-                }
+        cur.close()
+        conn.close()
+        return {
+            "role": user.get("role", "student"),
+            "modules": {
+                "spelling": {"attempts": 0, "accuracy": 0, "unlocked": False},
+                "words": {"attempts": 0, "accuracy": 0, "unlocked": False},
+                "math": {"unlocked": False},
+                "practice_papers": {"unlocked": False},
+                "mock_exams": {"unlocked": False},
+                "nvr": {"unlocked": False},
+                "comprehension": {"unlocked": False}
+            },
+            "insights": {
+                "strongest": None,
+                "weakest": None
             }
-        user_id = row[0]
+        }
 
     # -------------------------
     # LEGACY USER CHECK
@@ -850,31 +834,30 @@ def dashboard(user=Depends(get_current_user)):
 
 @app.get("/dashboard/insights")
 def dashboard_insights(user=Depends(get_current_user)):
-    user_id = user.get("user_id")
-
-    if not user_id:
-        return {
-            "summary": {
-                "average_score": 0,
-                "best_score": 0,
-                "total_tests": 0,
-            },
-            "recent_attempts": [],
-            "weak_areas": [],
-            "recommended_action": None,
-            "learning_path": [],
-            "streak": {
-                "current": 0,
-                "longest": 0,
-                "last_active": None,
-                "active_days_last_7": 0,
-            },
-        }
-
     conn = get_connection()
     cur = conn.cursor()
 
     try:
+        user_id = resolve_verified_learning_user_id(cur, user)
+        if not user_id:
+            return {
+                "summary": {
+                    "average_score": 0,
+                    "best_score": 0,
+                    "total_tests": 0,
+                },
+                "recent_attempts": [],
+                "weak_areas": [],
+                "recommended_action": None,
+                "learning_path": [],
+                "streak": {
+                    "current": 0,
+                    "longest": 0,
+                    "last_active": None,
+                    "active_days_last_7": 0,
+                },
+            }
+
         cur.execute(
             """
             SELECT column_name
