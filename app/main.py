@@ -294,14 +294,23 @@ def _fetch_words_completion(cur, user_id: int):
     has_words_is_active = "is_active" in words_lessons_columns
     total_where = "WHERE COALESCE(is_active, TRUE) = TRUE" if has_words_is_active else ""
     completed_where = "AND COALESCE(l.is_active, TRUE) = TRUE" if has_words_is_active else ""
+    attempt_table = None
+
+    if _get_table_columns(cur, "synonym_attempts"):
+        attempt_table = "synonym_attempts"
+    elif _get_table_columns(cur, "words_attempts"):
+        attempt_table = "words_attempts"
 
     cur.execute(f"SELECT COUNT(*) FROM words_lessons {total_where}")
     total_lessons = cur.fetchone()[0] or 0
 
+    if not attempt_table:
+        return 0, total_lessons, _safe_completion_percent(0, total_lessons)
+
     cur.execute(
         f"""
         SELECT COUNT(DISTINCT lw.lesson_id)
-        FROM words_attempts wa
+        FROM {attempt_table} wa
         JOIN words_lesson_words lw
           ON lw.word_id = wa.word_id
         JOIN words_lessons l
