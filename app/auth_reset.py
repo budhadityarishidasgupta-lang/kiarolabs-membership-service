@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from app.auth import get_current_user
 from app.database import get_connection
@@ -35,8 +35,11 @@ class DirectResetPasswordPayload(BaseModel):
 
 
 class AdminResetPasswordPayload(BaseModel):
-    user_id: int
-    new_password: str
+    user_id: int = Field(alias="userId")
+    new_password: str = Field(alias="newPassword")
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 def init_password_reset_tables():
