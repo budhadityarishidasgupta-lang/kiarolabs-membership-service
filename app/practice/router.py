@@ -970,16 +970,138 @@ def get_engagement(user=Depends(get_current_user)):
     """, (user_id,))
 
     row = cur.fetchone()
+    if row and ((row[0] or 0) > 0 or (row[1] or 0) > 0):
+        cur.close()
+        conn.close()
+        return {
+            "xp": row[0],
+            "streak": row[1]
+        }
 
-    cur.close()
-    conn.close()
+    def _maybe_add_activity_dates(query: str, params: tuple, collected_dates: set):
+        try:
+            cur.execute(query, params)
+            for activity_day, in cur.fetchall():
+                if activity_day:
+                    collected_dates.add(activity_day)
+        except Exception:
+            logger.exception("Failed to derive engagement activity dates")
 
-    if not row:
-        return {"xp": 0, "streak": 0}
+    total_attempts = 0
+    activity_days: set = set()
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM spelling_attempts
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        total_attempts += cur.fetchone()[0] or 0
+        _maybe_add_activity_dates(
+            """
+            SELECT DISTINCT DATE(created_at)
+            FROM spelling_attempts
+            WHERE user_id = %s
+            """,
+            (user_id,),
+            activity_days,
+        )
+
+        words_table = None
+        words_columns = _get_table_columns(cur, "synonym_attempts")
+        if words_columns:
+            words_table = "synonym_attempts"
+        else:
+            words_columns = _get_table_columns(cur, "words_attempts")
+            if words_columns:
+                words_table = "words_attempts"
+
+        if words_table:
+            timestamp_column = "created_at" if "created_at" in words_columns else "submitted_at" if "submitted_at" in words_columns else None
+
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM {words_table}
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            total_attempts += cur.fetchone()[0] or 0
+
+            if timestamp_column:
+                _maybe_add_activity_dates(
+                    f"""
+                    SELECT DISTINCT DATE({timestamp_column})
+                    FROM {words_table}
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                    activity_days,
+                )
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM math_attempts
+            WHERE student_id = %s OR user_id = %s
+            """,
+            (user_id, user_id),
+        )
+        total_attempts += cur.fetchone()[0] or 0
+        _maybe_add_activity_dates(
+            """
+            SELECT DISTINCT DATE(created_at)
+            FROM math_attempts
+            WHERE student_id = %s OR user_id = %s
+            """,
+            (user_id, user_id),
+            activity_days,
+        )
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM comprehension_attempts
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        total_attempts += cur.fetchone()[0] or 0
+        _maybe_add_activity_dates(
+            """
+            SELECT DISTINCT DATE(created_at)
+            FROM comprehension_attempts
+            WHERE user_id = %s
+            """,
+            (user_id,),
+            activity_days,
+        )
+    finally:
+        cur.close()
+        conn.close()
+
+    sorted_days = sorted(activity_days, reverse=True)
+    today = datetime.utcnow().date()
+    current_streak = 0
+
+    for index, day in enumerate(sorted_days):
+        if index == 0:
+            if day == today or day == today - timedelta(days=1):
+                current_streak = 1
+            else:
+                break
+        elif sorted_days[index - 1] - day == timedelta(days=1):
+            current_streak += 1
+        else:
+            break
 
     return {
-        "xp": row[0],
-        "streak": row[1]
+        "xp": total_attempts * 10,
+        "streak": current_streak,
     }
 
 
