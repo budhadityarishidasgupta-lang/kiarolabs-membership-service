@@ -75,19 +75,39 @@ def get_weak_word_id(user_id, lesson_id, conn):
     """
 
     query = """
-        SELECT word_id
-        FROM spelling_attempts
-        WHERE user_id = %s
-          AND lesson_id = %s
-        GROUP BY word_id
-        HAVING SUM(CASE WHEN correct = FALSE THEN 1 ELSE 0 END) >
-               SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)
-        ORDER BY MAX(created_at) DESC
+        WITH latest_attempt AS (
+            SELECT word_id
+            FROM spelling_attempts
+            WHERE user_id = %s
+              AND lesson_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        ),
+        weak_words AS (
+            SELECT
+                word_id,
+                (
+                    SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)::float /
+                    COUNT(*)
+                ) AS accuracy,
+                MAX(created_at) AS last_attempt_at
+            FROM spelling_attempts
+            WHERE user_id = %s
+              AND lesson_id = %s
+            GROUP BY word_id
+            HAVING SUM(CASE WHEN correct = FALSE THEN 1 ELSE 0 END) >
+                   SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)
+        )
+        SELECT ww.word_id
+        FROM weak_words ww
+        LEFT JOIN latest_attempt la ON TRUE
+        WHERE la.word_id IS NULL OR ww.word_id <> la.word_id
+        ORDER BY ww.accuracy ASC, ww.last_attempt_at ASC
         LIMIT 1
     """
 
     with conn.cursor() as cur:
-        cur.execute(query, (user_id, lesson_id))
+        cur.execute(query, (user_id, lesson_id, user_id, lesson_id))
         result = cur.fetchone()
 
     return result[0] if result else None
