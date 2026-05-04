@@ -119,6 +119,10 @@ def _get_table_columns(cur, table_name: str) -> set[str]:
     return {row[0] for row in cur.fetchall()}
 
 
+def _first_matching_column(columns: set[str], candidates: list[str]) -> str | None:
+    return next((candidate for candidate in candidates if candidate in columns), None)
+
+
 def _window_attempt_totals(cur, table_name: str, *, user_columns: list[str], correct_columns: list[str], user_id: int, days_back_start: int, days_back_end: int | None = None):
     columns = _get_table_columns(cur, table_name)
     matched_user_columns = [column for column in user_columns if column in columns]
@@ -963,13 +967,16 @@ def get_engagement(user=Depends(get_current_user)):
         conn.close()
         return {"xp": 0, "streak": 0}
 
-    cur.execute("""
-        SELECT total_xp, current_streak
-        FROM user_engagement
-        WHERE user_id = %s
-    """, (user_id,))
-
-    row = cur.fetchone()
+    try:
+        cur.execute("""
+            SELECT total_xp, current_streak
+            FROM user_engagement
+            WHERE user_id = %s
+        """, (user_id,))
+        row = cur.fetchone()
+    except Exception:
+        logger.exception("Failed to read user_engagement for engagement endpoint")
+        row = None
     if row and ((row[0] or 0) > 0 or (row[1] or 0) > 0):
         cur.close()
         conn.close()
@@ -987,27 +994,52 @@ def get_engagement(user=Depends(get_current_user)):
         except Exception:
             logger.exception("Failed to derive engagement activity dates")
 
+    def _maybe_add_attempts(table_name: str, *, user_candidates: list[str], timestamp_candidates: list[str]) -> int:
+        columns = _get_table_columns(cur, table_name)
+        matched_user_columns = [column for column in user_candidates if column in columns]
+        timestamp_column = _first_matching_column(columns, timestamp_candidates)
+
+        if not matched_user_columns:
+            return 0
+
+        where_clause = " OR ".join(f"{column} = %s" for column in matched_user_columns)
+        params = tuple(user_id for _ in matched_user_columns)
+
+        try:
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM {table_name}
+                WHERE {where_clause}
+                """,
+                params,
+            )
+            attempts = cur.fetchone()[0] or 0
+        except Exception:
+            logger.exception("Failed to derive engagement attempts from %s", table_name)
+            return 0
+
+        if timestamp_column:
+            _maybe_add_activity_dates(
+                f"""
+                SELECT DISTINCT DATE({timestamp_column})
+                FROM {table_name}
+                WHERE {where_clause}
+                """,
+                params,
+                activity_days,
+            )
+
+        return attempts
+
     total_attempts = 0
     activity_days: set = set()
 
     try:
-        cur.execute(
-            """
-            SELECT COUNT(*)
-            FROM spelling_attempts
-            WHERE user_id = %s
-            """,
-            (user_id,),
-        )
-        total_attempts += cur.fetchone()[0] or 0
-        _maybe_add_activity_dates(
-            """
-            SELECT DISTINCT DATE(created_at)
-            FROM spelling_attempts
-            WHERE user_id = %s
-            """,
-            (user_id,),
-            activity_days,
+        total_attempts += _maybe_add_attempts(
+            "spelling_attempts",
+            user_candidates=["user_id"],
+            timestamp_candidates=["created_at", "submitted_at"],
         )
 
         words_table = None
@@ -1020,65 +1052,22 @@ def get_engagement(user=Depends(get_current_user)):
                 words_table = "words_attempts"
 
         if words_table:
-            timestamp_column = "created_at" if "created_at" in words_columns else "submitted_at" if "submitted_at" in words_columns else None
-
-            cur.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM {words_table}
-                WHERE user_id = %s
-                """,
-                (user_id,),
+            total_attempts += _maybe_add_attempts(
+                words_table,
+                user_candidates=["user_id"],
+                timestamp_candidates=["created_at", "submitted_at"],
             )
-            total_attempts += cur.fetchone()[0] or 0
 
-            if timestamp_column:
-                _maybe_add_activity_dates(
-                    f"""
-                    SELECT DISTINCT DATE({timestamp_column})
-                    FROM {words_table}
-                    WHERE user_id = %s
-                    """,
-                    (user_id,),
-                    activity_days,
-                )
-
-        cur.execute(
-            """
-            SELECT COUNT(*)
-            FROM math_attempts
-            WHERE student_id = %s OR user_id = %s
-            """,
-            (user_id, user_id),
-        )
-        total_attempts += cur.fetchone()[0] or 0
-        _maybe_add_activity_dates(
-            """
-            SELECT DISTINCT DATE(created_at)
-            FROM math_attempts
-            WHERE student_id = %s OR user_id = %s
-            """,
-            (user_id, user_id),
-            activity_days,
+        total_attempts += _maybe_add_attempts(
+            "math_attempts",
+            user_candidates=["student_id", "user_id"],
+            timestamp_candidates=["created_at", "submitted_at"],
         )
 
-        cur.execute(
-            """
-            SELECT COUNT(*)
-            FROM comprehension_attempts
-            WHERE user_id = %s
-            """,
-            (user_id,),
-        )
-        total_attempts += cur.fetchone()[0] or 0
-        _maybe_add_activity_dates(
-            """
-            SELECT DISTINCT DATE(created_at)
-            FROM comprehension_attempts
-            WHERE user_id = %s
-            """,
-            (user_id,),
-            activity_days,
+        total_attempts += _maybe_add_attempts(
+            "comprehension_attempts",
+            user_candidates=["user_id"],
+            timestamp_candidates=["created_at", "submitted_at"],
         )
     finally:
         cur.close()
@@ -1537,15 +1526,26 @@ def get_dashboard_stats(user):
                 "accuracy": synonym_summary["accuracy"],
             }
 
-            cursor.execute("""
-            SELECT
-            COUNT(*) as attempts,
-            COALESCE(AVG(CASE WHEN correct THEN 1 ELSE 0 END) * 100, 0)
-            FROM math_attempts
-            WHERE student_id = %s OR user_id = %s
-            """, (user_id, user_id))
+            math_attempt_columns = _get_table_columns(cursor, "math_attempts")
+            math_user_columns = [column for column in ("student_id", "user_id") if column in math_attempt_columns]
+            math_correct_column = _first_matching_column(math_attempt_columns, ["correct", "is_correct"])
 
-            row = cursor.fetchone()
+            if math_user_columns and math_correct_column:
+                math_where_clause = " OR ".join(f"{column} = %s" for column in math_user_columns)
+                math_params = tuple(user_id for _ in math_user_columns)
+                cursor.execute(
+                    f"""
+                    SELECT
+                    COUNT(*) as attempts,
+                    COALESCE(AVG(CASE WHEN {math_correct_column} THEN 1 ELSE 0 END) * 100, 0)
+                    FROM math_attempts
+                    WHERE {math_where_clause}
+                    """,
+                    math_params,
+                )
+                row = cursor.fetchone()
+            else:
+                row = (0, 0)
 
             modules["maths"] = {
                 "unlocked": True,
@@ -1692,14 +1692,26 @@ def get_resume_learning(user=Depends(get_current_user)):
 
         # MATHSPRINT
         try:
-            cur.execute("""
-                SELECT question_id
-                FROM math_attempts
-                WHERE student_id = %s OR user_id = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (user_id, user_id))
-            row = cur.fetchone()
+            math_attempt_columns = _get_table_columns(cur, "math_attempts")
+            math_user_columns = [column for column in ("student_id", "user_id") if column in math_attempt_columns]
+            math_timestamp_column = _first_matching_column(math_attempt_columns, ["created_at", "submitted_at"])
+
+            if math_user_columns and math_timestamp_column and "question_id" in math_attempt_columns:
+                math_where_clause = " OR ".join(f"{column} = %s" for column in math_user_columns)
+                math_params = tuple(user_id for _ in math_user_columns)
+                cur.execute(
+                    f"""
+                        SELECT question_id
+                        FROM math_attempts
+                        WHERE {math_where_clause}
+                        ORDER BY {math_timestamp_column} DESC
+                        LIMIT 1
+                    """,
+                    math_params,
+                )
+                row = cur.fetchone()
+            else:
+                row = None
 
             if row:
                 result["maths"] = {

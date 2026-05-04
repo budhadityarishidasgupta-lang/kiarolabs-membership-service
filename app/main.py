@@ -263,6 +263,10 @@ def _safe_completion_percent(completed_lessons: int, total_lessons: int) -> int:
     return max(0, min(100, round((completed_lessons / total_lessons) * 100)))
 
 
+def _first_matching_column(columns: set[str], candidates: list[str]) -> str | None:
+    return next((candidate for candidate in candidates if candidate in columns), None)
+
+
 def _fetch_spelling_completion(cur, user_id: int):
     cur.execute(
         """
@@ -325,26 +329,47 @@ def _fetch_words_completion(cur, user_id: int):
 
 
 def _fetch_math_completion(cur, user_id: int):
+    math_lessons_columns = _get_table_columns(cur, "math_lessons")
+    math_attempts_columns = _get_table_columns(cur, "math_attempts")
+    lesson_pk_column = _first_matching_column(math_lessons_columns, ["lesson_id", "id"])
+    has_is_active = "is_active" in math_lessons_columns
+    user_columns = [column for column in ("student_id", "user_id") if column in math_attempts_columns]
+
+    if not math_lessons_columns:
+        return 0, 0, 0
+
     cur.execute(
-        """
+        f"""
         SELECT COUNT(*)
         FROM math_lessons
-        WHERE COALESCE(is_active, TRUE) = TRUE
+        {"WHERE COALESCE(is_active, TRUE) = TRUE" if has_is_active else ""}
         """
     )
     total_lessons = cur.fetchone()[0] or 0
 
+    if "lesson_id" not in math_attempts_columns or not user_columns:
+        return 0, total_lessons, _safe_completion_percent(0, total_lessons)
+
+    where_clause = " OR ".join(f"ma.{column} = %s" for column in user_columns)
+    params = tuple(user_id for _ in user_columns)
+
+    if lesson_pk_column:
+        join_clause = f"JOIN math_lessons ml ON ml.{lesson_pk_column} = ma.lesson_id"
+        active_clause = "AND COALESCE(ml.is_active, TRUE) = TRUE" if has_is_active else ""
+    else:
+        join_clause = ""
+        active_clause = ""
+
     cur.execute(
-        """
+        f"""
         SELECT COUNT(DISTINCT ma.lesson_id)
         FROM math_attempts ma
-        JOIN math_lessons ml
-          ON ml.lesson_id = ma.lesson_id
-        WHERE (ma.student_id = %s OR ma.user_id = %s)
+        {join_clause}
+        WHERE ({where_clause})
           AND ma.lesson_id IS NOT NULL
-          AND COALESCE(ml.is_active, TRUE) = TRUE
+          {active_clause}
         """,
-        (user_id, user_id),
+        params,
     )
     completed_lessons = cur.fetchone()[0] or 0
     return completed_lessons, total_lessons, _safe_completion_percent(completed_lessons, total_lessons)
@@ -868,23 +893,40 @@ def dashboard_insights(user=Depends(get_current_user)):
                 },
             }
 
-        def _collect_activity_days(query: str, params: tuple, collected_days: set):
-            cur.execute(query, params)
-            for activity_day, in cur.fetchall():
-                if not activity_day:
-                    continue
-                collected_days.add(activity_day.date() if hasattr(activity_day, "date") else activity_day)
+        def _collect_activity_days(table_name: str, *, user_candidates: list[str], timestamp_candidates: list[str], collected_days: set):
+            columns = _get_table_columns(cur, table_name)
+            timestamp_column = _first_matching_column(columns, timestamp_candidates)
+            matched_user_columns = [column for column in user_candidates if column in columns]
+
+            if not timestamp_column or not matched_user_columns:
+                return
+
+            where_clause = " OR ".join(f"{column} = %s" for column in matched_user_columns)
+            params = tuple(user_id for _ in matched_user_columns)
+
+            try:
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT DATE({timestamp_column})
+                    FROM {table_name}
+                    WHERE {where_clause}
+                    """,
+                    params,
+                )
+                for activity_day, in cur.fetchall():
+                    if not activity_day:
+                        continue
+                    collected_days.add(activity_day.date() if hasattr(activity_day, "date") else activity_day)
+            except Exception as exc:
+                print(f"dashboard_insights practice streak query failed for {table_name}: {exc}")
 
         practice_activity_days = set()
 
         _collect_activity_days(
-            """
-            SELECT DISTINCT DATE(created_at)
-            FROM spelling_attempts
-            WHERE user_id = %s
-            """,
-            (user_id,),
-            practice_activity_days,
+            "spelling_attempts",
+            user_candidates=["user_id"],
+            timestamp_candidates=["created_at", "submitted_at"],
+            collected_days=practice_activity_days,
         )
 
         words_table = None
@@ -897,68 +939,65 @@ def dashboard_insights(user=Depends(get_current_user)):
                 words_table = "words_attempts"
 
         if words_table:
-            words_timestamp_column = "created_at" if "created_at" in words_columns else "submitted_at" if "submitted_at" in words_columns else None
-            if words_timestamp_column:
-                _collect_activity_days(
+            _collect_activity_days(
+                words_table,
+                user_candidates=["user_id"],
+                timestamp_candidates=["created_at", "submitted_at"],
+                collected_days=practice_activity_days,
+            )
+
+        _collect_activity_days(
+            "math_attempts",
+            user_candidates=["student_id", "user_id"],
+            timestamp_candidates=["created_at", "submitted_at"],
+            collected_days=practice_activity_days,
+        )
+
+        _collect_activity_days(
+            "comprehension_attempts",
+            user_candidates=["user_id"],
+            timestamp_candidates=["created_at", "submitted_at"],
+            collected_days=practice_activity_days,
+        )
+
+        math_attempt_columns = _get_table_columns(cur, "math_attempts")
+        has_paper_attempts = {"user_id", "paper_code", "score", "total", "created_at"}.issubset(math_attempt_columns)
+        math_submission_columns = _get_table_columns(cur, "math_submission_attempts")
+        attempts_table = "math_attempts" if has_paper_attempts else "math_submission_attempts" if math_submission_columns else None
+
+        math_test_paper_columns = _get_table_columns(cur, "math_test_papers")
+        ordered_mock_papers = []
+        if math_test_paper_columns:
+            try:
+                is_active_clause = "WHERE is_active = TRUE" if "is_active" in math_test_paper_columns else ""
+                sort_column = "sort_order" if "sort_order" in math_test_paper_columns else "paper_code"
+                cur.execute(
                     f"""
-                    SELECT DISTINCT DATE({words_timestamp_column})
-                    FROM {words_table}
+                    SELECT paper_code
+                    FROM math_test_papers
+                    {is_active_clause}
+                    ORDER BY {sort_column} ASC
+                    """
+                )
+                ordered_mock_papers = [row[0] for row in cur.fetchall()]
+            except Exception as exc:
+                print(f"dashboard_insights mock paper lookup failed: {exc}")
+
+        attempts = []
+        if attempts_table:
+            try:
+                cur.execute(
+                    f"""
+                    SELECT paper_code, score, total, created_at
+                    FROM {attempts_table}
                     WHERE user_id = %s
                     """,
                     (user_id,),
-                    practice_activity_days,
                 )
-
-        _collect_activity_days(
-            """
-            SELECT DISTINCT DATE(created_at)
-            FROM math_attempts
-            WHERE student_id = %s OR user_id = %s
-            """,
-            (user_id, user_id),
-            practice_activity_days,
-        )
-
-        _collect_activity_days(
-            """
-            SELECT DISTINCT DATE(created_at)
-            FROM comprehension_attempts
-            WHERE user_id = %s
-            """,
-            (user_id,),
-            practice_activity_days,
-        )
-
-        cur.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'math_attempts'
-            """
-        )
-        math_attempt_columns = {row[0] for row in cur.fetchall()}
-        has_paper_attempts = {"user_id", "paper_code", "score", "total", "created_at"}.issubset(math_attempt_columns)
-        attempts_table = "math_attempts" if has_paper_attempts else "math_submission_attempts"
-
-        cur.execute(
-            """
-            SELECT paper_code
-            FROM math_test_papers
-            WHERE is_active = TRUE
-            ORDER BY sort_order ASC
-            """
-        )
-        ordered_mock_papers = [row[0] for row in cur.fetchall()]
-
-        cur.execute(
-            f"""
-            SELECT paper_code, score, total, created_at
-            FROM {attempts_table}
-            WHERE user_id = %s
-            """,
-            (user_id,),
-        )
-        attempts = cur.fetchall()
+                attempts = cur.fetchall()
+            except Exception as exc:
+                print(f"dashboard_insights attempt query failed for {attempts_table}: {exc}")
+                attempts = []
 
         today = datetime.utcnow().date()
         activity_days = sorted(practice_activity_days, reverse=True)
@@ -1032,17 +1071,22 @@ def dashboard_insights(user=Depends(get_current_user)):
         average_score = (sum(percentages) / len(percentages)) if percentages else 0
         best_score = max(percentages) if percentages else 0
 
-        cur.execute(
-            f"""
-            SELECT paper_code, score, total, created_at
-            FROM {attempts_table}
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT 5
-            """,
-            (user_id,),
-        )
-        recent_rows = cur.fetchall()
+        recent_rows = []
+        try:
+            cur.execute(
+                f"""
+                SELECT paper_code, score, total, created_at
+                FROM {attempts_table}
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                (user_id,),
+            )
+            recent_rows = cur.fetchall()
+        except Exception as exc:
+            print(f"dashboard_insights recent attempts query failed for {attempts_table}: {exc}")
+
         recent_attempts = [
             {
                 "paper_code": paper_code,
@@ -1052,19 +1096,24 @@ def dashboard_insights(user=Depends(get_current_user)):
             for paper_code, score, total, created_at in recent_rows
         ]
 
-        cur.execute(
-            f"""
-            SELECT paper_code, AVG(score::float / NULLIF(total, 0)) AS avg_score
-            FROM {attempts_table}
-            WHERE user_id = %s
-            GROUP BY paper_code
-            HAVING AVG(score::float / NULLIF(total, 0)) < 0.7
-            ORDER BY avg_score ASC
-            LIMIT 3
-            """,
-            (user_id,),
-        )
-        weak_rows = cur.fetchall()
+        weak_rows = []
+        try:
+            cur.execute(
+                f"""
+                SELECT paper_code, AVG(score::float / NULLIF(total, 0)) AS avg_score
+                FROM {attempts_table}
+                WHERE user_id = %s
+                GROUP BY paper_code
+                HAVING AVG(score::float / NULLIF(total, 0)) < 0.7
+                ORDER BY avg_score ASC
+                LIMIT 3
+                """,
+                (user_id,),
+            )
+            weak_rows = cur.fetchall()
+        except Exception as exc:
+            print(f"dashboard_insights weak area query failed for {attempts_table}: {exc}")
+
         weak_areas = [
             {
                 "paper_code": paper_code,
