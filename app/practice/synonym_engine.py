@@ -176,6 +176,37 @@ def _get_recent_incorrect_synonym_word_ids(cur, user_id):
     return [row[0] for row in cur.fetchall() if row and row[0]]
 
 
+def _fetch_random_synonym_row(cur, excluded_word_id=None):
+    if excluded_word_id is not None:
+        cur.execute(
+            """
+            SELECT word_id, headword, synonyms
+            FROM public.words
+            WHERE word_id <> %s
+              AND synonyms IS NOT NULL
+              AND TRIM(synonyms) <> ''
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (excluded_word_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+
+    cur.execute(
+        """
+        SELECT word_id, headword, synonyms
+        FROM public.words
+        WHERE synonyms IS NOT NULL
+          AND TRIM(synonyms) <> ''
+        ORDER BY RANDOM()
+        LIMIT 1
+        """
+    )
+    return cur.fetchone()
+
+
 def get_synonym_attempt_summary(user_id):
     conn = get_connection()
     cur = conn.cursor()
@@ -246,10 +277,18 @@ def get_synonym_question(user_email):
         row = None
         selected_word_id = None
         user_id = _resolve_user_id(cur, user_email)
+        latest_attempted_word_id = None
 
         if user_id:
+            latest_attempted_word_id = get_latest_synonym_attempt_word_id(user_id)
             weak_words = _get_recent_incorrect_synonym_word_ids(cur, user_id)
-            if weak_words:
+            alternative_weak_words = [
+                word_id for word_id in weak_words
+                if word_id != latest_attempted_word_id
+            ]
+            if alternative_weak_words:
+                selected_word_id = random.choice(alternative_weak_words)
+            elif weak_words and latest_attempted_word_id is None:
                 selected_word_id = random.choice(weak_words)
 
         if selected_word_id:
@@ -267,30 +306,7 @@ def get_synonym_question(user_email):
             row = cur.fetchone()
 
         if not row:
-            cur.execute(
-                """
-                SELECT word_id, headword, synonyms
-                FROM public.words
-                WHERE synonyms IS NOT NULL
-                  AND TRIM(synonyms) <> ''
-                ORDER BY RANDOM()
-                LIMIT 1
-                """
-            )
-            row = cur.fetchone()
-
-        if not row:
-            cur.execute(
-                """
-                SELECT word_id, headword, synonyms
-                FROM public.words
-                WHERE synonyms IS NOT NULL
-                  AND TRIM(synonyms) <> ''
-                ORDER BY RANDOM()
-                LIMIT 1
-                """
-            )
-            row = cur.fetchone()
+            row = _fetch_random_synonym_row(cur, excluded_word_id=latest_attempted_word_id)
 
         if not row:
             return {"error": "No synonym word found"}
