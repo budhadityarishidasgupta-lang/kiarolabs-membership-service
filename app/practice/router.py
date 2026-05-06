@@ -1943,16 +1943,41 @@ def get_comprehension_question(
                 SELECT question_id
                 FROM comprehension_attempts
                 WHERE user_id = %s
-                AND correct = false
+                  AND passage_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (user_id, passage_id),
+            )
+            latest_attempt_row = cur.fetchone()
+            latest_attempted_question_id = latest_attempt_row[0] if latest_attempt_row else None
+
+            cur.execute(
+                """
+                SELECT question_id
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                  AND passage_id = %s
+                  AND correct = false
                 ORDER BY created_at DESC
                 LIMIT 5
                 """,
-                (user_id,),
+                (user_id, passage_id),
             )
             weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
 
-            if weak_questions:
-                selected_question_id = random.choice(weak_questions)
+            if latest_attempted_question_id is not None:
+                alternative_weak_questions = [
+                    qid for qid in weak_questions
+                    if qid != latest_attempted_question_id
+                ]
+            else:
+                alternative_weak_questions = weak_questions
+
+            if alternative_weak_questions:
+                selected_question_id = random.choice(alternative_weak_questions)
+            elif weak_questions:
+                selected_question_id = weak_questions[0]
 
         if not selected_question_id:
             cur.execute(
