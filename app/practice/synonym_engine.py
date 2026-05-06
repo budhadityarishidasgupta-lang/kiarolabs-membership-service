@@ -3,6 +3,16 @@ import random
 from fastapi import HTTPException
 
 
+REVIEW_ENCOURAGEMENT_MESSAGE = "Let’s practise this one again — you were close last time."
+
+
+def _add_review_metadata(payload, review_reason):
+    if review_reason:
+        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
+        payload["review_reason"] = review_reason
+    return payload
+
+
 # --------------------------------------------------
 # INTERNAL HELPERS
 # --------------------------------------------------
@@ -174,6 +184,26 @@ def _get_recent_incorrect_synonym_word_ids(cur, user_id):
         (user_id,),
     )
     return [row[0] for row in cur.fetchall() if row and row[0]]
+
+
+def _has_incorrect_synonym_attempt(cur, user_id, word_id):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    correct_column = _get_synonym_correct_column(columns)
+    if not table_name or not correct_column:
+        return False
+
+    cur.execute(
+        f"""
+        SELECT 1
+        FROM public.{table_name}
+        WHERE user_id = %s
+          AND word_id = %s
+          AND {correct_column} = FALSE
+        LIMIT 1
+        """,
+        (user_id, word_id),
+    )
+    return cur.fetchone() is not None
 
 
 def _fetch_random_synonym_row(cur, excluded_word_id=None):
@@ -349,11 +379,16 @@ def get_synonym_question(user_email):
         if not options:
             return {"error": "Not enough distractors"}
 
-        return {
+        review_reason = None
+        if user_id and _has_incorrect_synonym_attempt(cur, user_id, word_id):
+            review_reason = "review_word"
+
+        payload = {
             "word_id": word_id,
             "word": headword,
             "options": options
         }
+        return _add_review_metadata(payload, review_reason)
 
     finally:
         cur.close()
@@ -794,11 +829,16 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
         if not options:
             return {"error": "Not enough distractors"}
 
-        return {
+        review_reason = None
+        if user_id and _has_incorrect_synonym_attempt(cur, user_id, word_id):
+            review_reason = "review_word"
+
+        payload = {
             "word_id": word_id,
             "word": headword,
             "options": options,
         }
+        return _add_review_metadata(payload, review_reason)
 
     finally:
         cur.close()

@@ -71,6 +71,15 @@ router = APIRouter(prefix="/practice", tags=["practice"])
 admin_router = APIRouter(tags=["admin"])
 logger = logging.getLogger(__name__)
 
+REVIEW_ENCOURAGEMENT_MESSAGE = "Let’s practise this one again — you were close last time."
+
+
+def _add_review_metadata(payload, review_reason):
+    if review_reason:
+        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
+        payload["review_reason"] = review_reason
+    return payload
+
 
 def is_admin(user):
     return user.get("role") == "admin"
@@ -1933,6 +1942,7 @@ def get_comprehension_question(
 
     try:
         selected_question_id = None
+        review_reason = None
 
         if question_id is not None:
             selected_question_id = question_id
@@ -1976,8 +1986,10 @@ def get_comprehension_question(
 
             if alternative_weak_questions:
                 selected_question_id = random.choice(alternative_weak_questions)
+                review_reason = "passage_review"
             elif weak_questions:
                 selected_question_id = weak_questions[0]
+                review_reason = "passage_review"
 
         if not selected_question_id:
             cur.execute(
@@ -2039,15 +2051,17 @@ def get_comprehension_question(
                 (passage_id,),
             )
             question = cur.fetchone()
+            review_reason = None
 
         if not question:
             _raise_not_found("Question not found")
 
-        return {
+        payload = {
             "question_id": question[0],
             "question_text": question[1],
             "options": [question[2], question[3], question[4], question[5]],
         }
+        return _add_review_metadata(payload, review_reason)
     except HTTPException:
         raise
     except Exception:

@@ -20,6 +20,16 @@ from app.repositories.spelling_stats_repository import (
 )
 
 
+REVIEW_ENCOURAGEMENT_MESSAGE = "Let’s practise this one again — you were close last time."
+
+
+def _add_review_metadata(payload, review_reason):
+    if review_reason:
+        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
+        payload["review_reason"] = review_reason
+    return payload
+
+
 def clean_text(value):
     if value is None:
         return ""
@@ -279,6 +289,13 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             patterns = [weak_pattern] if weak_pattern else None
             question_id = str(uuid.uuid4())
             session_id = session_id or str(uuid.uuid4())
+            review_reason = None
+            if selected_strategy == "weak":
+                review_reason = "weak_review"
+            elif selected_strategy == "resume":
+                review_reason = "resume_review"
+            elif selected_timing_stats.get("attempt_count", 0) > 0 and not mastered:
+                review_reason = "practice_review"
 
             if lesson_id == 870:
                 sample_words = []
@@ -307,7 +324,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 print("Word Count:", len(sample_words))
                 print("Sample Words:", sample_words[:5])
 
-            return {
+            payload = {
                 "question_id": question_id,
                 "session_id": session_id,
                 "lesson_id": lesson_id,
@@ -327,6 +344,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "mastered": mastered,
                 "timing": selected_timing_stats,
             }
+            return _add_review_metadata(payload, review_reason)
         finally:
             conn.close()
 

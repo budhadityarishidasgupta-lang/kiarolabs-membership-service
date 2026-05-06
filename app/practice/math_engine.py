@@ -8,6 +8,16 @@ from app.repositories.math_repository import (
 )
 
 
+REVIEW_ENCOURAGEMENT_MESSAGE = "Let’s practise this one again — you were close last time."
+
+
+def _add_review_metadata(payload, review_reason):
+    if review_reason:
+        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
+        payload["review_reason"] = review_reason
+    return payload
+
+
 def get_math_lessons():
     return get_math_lessons_list()
 
@@ -31,8 +41,11 @@ def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
         }
 
     session_id = _normalize_practice_session_id(session_id)
+    review_reason = None
+    if item.get("is_weak") or (item.get("times_wrong") or 0) > 0:
+        review_reason = "review_question"
 
-    return {
+    payload = {
         "session_id": session_id,
         "lesson_id": lesson_id,
         "question_id": item["question_id"],
@@ -45,6 +58,7 @@ def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
         ],
         "correct_option": item["correct_option"]
     }
+    return _add_review_metadata(payload, review_reason)
 
 
 def submit_math_answer(student_id, lesson_id, question_id, selected_option, session_id: str | None = None):
