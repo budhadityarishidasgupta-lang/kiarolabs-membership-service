@@ -265,6 +265,29 @@ def get_latest_synonym_attempt_word_id(user_id):
         conn.close()
 
 
+def _get_latest_lesson_synonym_attempt_word_id(cur, user_id, lesson_id):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    timestamp_column = _get_synonym_timestamp_column(columns)
+    if not table_name or not timestamp_column:
+        return None
+
+    cur.execute(
+        f"""
+        SELECT sa.word_id
+        FROM public.{table_name} sa
+        JOIN public.lesson_words lw
+          ON lw.word_id = sa.word_id
+        WHERE sa.user_id = %s
+          AND lw.lesson_id = %s
+        ORDER BY sa.{timestamp_column} DESC
+        LIMIT 1
+        """,
+        (user_id, lesson_id),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
 # --------------------------------------------------
 # QUESTION GENERATION
 # --------------------------------------------------
@@ -704,26 +727,55 @@ def get_dashboard_stats(user_email):
 # SESSION START
 # --------------------------------------------------
 
-def _get_lesson_synonym_question(lesson_id):
+def _get_lesson_synonym_question(lesson_id, user_id=None):
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        cur.execute(
-            """
-            SELECT w.word_id, w.headword, w.synonyms
-            FROM public.words w
-            JOIN public.lesson_words lw ON lw.word_id = w.word_id
-            WHERE lw.lesson_id = %s
-              AND w.synonyms IS NOT NULL
-              AND TRIM(w.synonyms) <> ''
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (lesson_id,),
-        )
+        latest_attempted_word_id = None
 
-        row = cur.fetchone()
+        if user_id:
+            latest_attempted_word_id = _get_latest_lesson_synonym_attempt_word_id(
+                cur,
+                user_id,
+                lesson_id,
+            )
+
+        if latest_attempted_word_id is not None:
+            cur.execute(
+                """
+                SELECT w.word_id, w.headword, w.synonyms
+                FROM public.words w
+                JOIN public.lesson_words lw ON lw.word_id = w.word_id
+                WHERE lw.lesson_id = %s
+                  AND w.synonyms IS NOT NULL
+                  AND TRIM(w.synonyms) <> ''
+                  AND w.word_id <> %s
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (lesson_id, latest_attempted_word_id),
+            )
+            row = cur.fetchone()
+        else:
+            row = None
+
+        if not row:
+            cur.execute(
+                """
+                SELECT w.word_id, w.headword, w.synonyms
+                FROM public.words w
+                JOIN public.lesson_words lw ON lw.word_id = w.word_id
+                WHERE lw.lesson_id = %s
+                  AND w.synonyms IS NOT NULL
+                  AND TRIM(w.synonyms) <> ''
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (lesson_id,),
+            )
+
+            row = cur.fetchone()
         if not row:
             return {"error": "No synonym word found for lesson"}
 
@@ -755,7 +807,17 @@ def _get_lesson_synonym_question(lesson_id):
 
 def get_practice_session(user_email, lesson_id):
     progress = get_synonym_progress(user_email)
-    question = _get_lesson_synonym_question(lesson_id)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        user_id = _resolve_user_id(cur, user_email)
+    finally:
+        cur.close()
+        conn.close()
+
+    question = _get_lesson_synonym_question(lesson_id, user_id=user_id)
 
     return {
         "course": "synonyms",
