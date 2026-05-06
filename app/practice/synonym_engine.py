@@ -3,7 +3,7 @@ import random
 from fastapi import HTTPException
 
 
-REVIEW_ENCOURAGEMENT_MESSAGE = "Let’s practise this one again — you were close last time."
+REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
 
 
 def _add_review_metadata(payload, review_reason):

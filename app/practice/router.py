@@ -71,7 +71,7 @@ router = APIRouter(prefix="/practice", tags=["practice"])
 admin_router = APIRouter(tags=["admin"])
 logger = logging.getLogger(__name__)
 
-REVIEW_ENCOURAGEMENT_MESSAGE = "Let’s practise this one again — you were close last time."
+REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
 
 
 def _add_review_metadata(payload, review_reason):
