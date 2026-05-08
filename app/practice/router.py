@@ -1965,6 +1965,17 @@ def get_comprehension_question(
             cur.execute(
                 """
                 SELECT question_id
+                FROM comprehension_questions
+                WHERE passage_id = %s
+                ORDER BY sort_order ASC, question_id ASC
+                """,
+                (passage_id,),
+            )
+            passage_question_ids = [r[0] for r in cur.fetchall() if r and r[0] is not None]
+
+            cur.execute(
+                """
+                SELECT question_id
                 FROM comprehension_attempts
                 WHERE user_id = %s
                   AND passage_id = %s
@@ -1974,21 +1985,31 @@ def get_comprehension_question(
                 """,
                 (user_id, passage_id),
             )
-            weak_questions = [r[0] for r in cur.fetchall() if r and r[0]]
+            weak_questions = [r[0] for r in cur.fetchall() if r and r[0] is not None]
+            unique_weak_questions = list(dict.fromkeys(weak_questions))
 
             if latest_attempted_question_id is not None:
                 alternative_weak_questions = [
-                    qid for qid in weak_questions
+                    qid for qid in unique_weak_questions
+                    if qid != latest_attempted_question_id
+                ]
+                alternative_passage_questions = [
+                    qid for qid in passage_question_ids
                     if qid != latest_attempted_question_id
                 ]
             else:
-                alternative_weak_questions = weak_questions
+                alternative_weak_questions = unique_weak_questions
+                alternative_passage_questions = passage_question_ids
 
             if alternative_weak_questions:
                 selected_question_id = random.choice(alternative_weak_questions)
                 review_reason = "passage_review"
+            elif weak_questions and alternative_passage_questions:
+                selected_question_id = alternative_passage_questions[0]
+                if selected_question_id in unique_weak_questions:
+                    review_reason = "passage_review"
             elif weak_questions:
-                selected_question_id = weak_questions[0]
+                selected_question_id = unique_weak_questions[0]
                 review_reason = "passage_review"
 
         if not selected_question_id:
