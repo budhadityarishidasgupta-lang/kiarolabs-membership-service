@@ -1943,6 +1943,9 @@ def get_comprehension_question(
     try:
         selected_question_id = None
         review_reason = None
+        latest_attempted_question_id = None
+        passage_question_ids: list[int] = []
+        unique_weak_questions: list[int] = []
 
         if question_id is not None:
             selected_question_id = question_id
@@ -2011,6 +2014,30 @@ def get_comprehension_question(
             elif weak_questions:
                 selected_question_id = unique_weak_questions[0]
                 review_reason = "passage_review"
+
+        if (
+            question_id is None
+            and latest_attempted_question_id is not None
+            and selected_question_id == latest_attempted_question_id
+        ):
+            alternative_weak_questions = [
+                qid for qid in unique_weak_questions
+                if qid != latest_attempted_question_id
+            ]
+            alternative_passage_questions = [
+                qid for qid in passage_question_ids
+                if qid != latest_attempted_question_id
+            ]
+
+            if alternative_weak_questions:
+                selected_question_id = alternative_weak_questions[0]
+                review_reason = "passage_review"
+            elif alternative_passage_questions:
+                selected_question_id = alternative_passage_questions[0]
+                if selected_question_id in unique_weak_questions:
+                    review_reason = "passage_review"
+                else:
+                    review_reason = None
 
         if not selected_question_id:
             cur.execute(
