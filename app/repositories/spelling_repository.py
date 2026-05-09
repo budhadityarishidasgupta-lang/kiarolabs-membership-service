@@ -1,8 +1,30 @@
 from datetime import datetime, timezone
 from itertools import zip_longest
+import re
 
 from app.database import get_connection
 from app.repositories.spelling_stats_repository import update_spelling_stats_from_attempt
+
+
+def _normalize_example_sentence(word: str | None, example_sentence: str | None) -> str:
+    sentence = (example_sentence or "").strip()
+    if not sentence:
+        return ""
+
+    clean_word = (word or "").strip()
+    if not clean_word:
+        return sentence
+
+    escaped_word = re.escape(clean_word)
+    sentence = re.sub(rf'^\s*{escaped_word}\s*[,:-]\s*["\']?', "", sentence, count=1, flags=re.IGNORECASE)
+    sentence = sentence.strip()
+
+    if sentence.startswith('"') and sentence.count('"') == 1:
+        sentence = sentence[1:].strip()
+    if sentence.startswith("'") and sentence.count("'") == 1:
+        sentence = sentence[1:].strip()
+
+    return sentence
 
 
 def get_spelling_micro_challenge_data(word_id: int):
@@ -26,7 +48,7 @@ def get_spelling_micro_challenge_data(word_id: int):
         return {
             "word": row[0],
             "hint": row[1],
-            "example_sentence": row[2],
+            "example_sentence": _normalize_example_sentence(row[0], row[2]),
         }
     finally:
         cur.close()
@@ -353,7 +375,7 @@ def _fetch_lesson_words(cur, user_id: int, lesson_id: int) -> list[dict]:
             "word_id": row[0],
             "word": row[1],
             "hint": row[2],
-            "example_sentence": row[3],
+            "example_sentence": _normalize_example_sentence(row[1], row[3]),
             "times_seen": row[4],
             "times_correct": row[5],
             "times_wrong": row[6],
@@ -483,7 +505,7 @@ def get_spelling_word_details(word_id: int, conn=None):
             "word_id": row[0],
             "word": row[1],
             "hint": row[2],
-            "example_sentence": row[3],
+            "example_sentence": _normalize_example_sentence(row[1], row[3]),
         }
     finally:
         cur.close()
