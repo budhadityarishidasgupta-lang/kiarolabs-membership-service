@@ -1,6 +1,11 @@
 from app.database import get_connection
 import random
 from fastapi import HTTPException
+from app.repositories.synonym_repository import (
+    audit_synonym_question_integrity,
+    build_validated_synonym_question,
+    normalize_synonym_list,
+)
 
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
@@ -45,80 +50,6 @@ def _resolve_user_id(cur, user_email):
     )
     row = cur.fetchone()
     return row[0] if row else None
-
-
-def _clean_synonym_value(value, *, headword=None):
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if text.isdigit():
-        return None
-    if headword and text.lower() == str(headword).strip().lower():
-        return None
-    return text
-
-
-def _normalize_synonym_list(synonyms, *, headword=None):
-    if isinstance(synonyms, str):
-        raw_values = synonyms.split(",")
-    elif isinstance(synonyms, list):
-        raw_values = synonyms
-    else:
-        return []
-
-    normalized = []
-    seen = set()
-    for value in raw_values:
-        cleaned = _clean_synonym_value(value, headword=headword)
-        if not cleaned:
-            continue
-        lowered = cleaned.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        normalized.append(cleaned)
-    return normalized
-
-
-def _build_options(cur, word_id, correct_answer, *, headword=None):
-    cur.execute(
-        """
-        SELECT synonyms
-        FROM public.words
-        WHERE word_id != %s
-          AND synonyms IS NOT NULL
-          AND TRIM(synonyms) <> ''
-        ORDER BY RANDOM()
-        LIMIT 25
-        """,
-        (word_id,),
-    )
-
-    distractor_pool = []
-    for r in cur.fetchall():
-        distractor_pool.extend(_normalize_synonym_list(r[0], headword=headword))
-
-    distractor_pool = [
-        d for d in distractor_pool
-        if d.lower() != correct_answer.lower()
-    ]
-
-    deduped_distractor_pool = []
-    seen = set()
-    for distractor in distractor_pool:
-        lowered = distractor.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        deduped_distractor_pool.append(distractor)
-
-    if len(deduped_distractor_pool) < 3:
-        return None
-
-    options = random.sample(deduped_distractor_pool, 3) + [correct_answer]
-    random.shuffle(options)
-
-    return options
 
 
 def _table_exists(cur, table_name):
@@ -643,15 +574,18 @@ def get_synonym_question(user_email):
 
         word_id, headword, synonyms = row
 
-        synonym_list = _normalize_synonym_list(synonyms, headword=headword)
+        synonym_list = normalize_synonym_list(synonyms, headword=headword)
 
         if not synonym_list:
             return {"error": "No valid synonyms"}
 
-        correct = synonym_list[0]
-
-        options = _build_options(cur, word_id, correct, headword=headword)
-        if not options:
+        validated_question = build_validated_synonym_question(
+            cur,
+            word_id=word_id,
+            headword=headword,
+            synonyms=synonyms,
+        )
+        if not validated_question:
             return {"error": "Not enough distractors"}
 
         review_reason = None
@@ -666,7 +600,7 @@ def get_synonym_question(user_email):
         payload = {
             "word_id": word_id,
             "word": headword,
-            "options": options
+            "options": validated_question["options"]
         }
         return _add_review_metadata(
             payload,
@@ -745,7 +679,7 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
         headword_row = cur.fetchone()
         headword = headword_row[0] if headword_row else None
 
-        normalized_synonyms = _normalize_synonym_list(synonyms, headword=headword)
+        normalized_synonyms = normalize_synonym_list(synonyms, headword=headword)
         synonym_list = [value.lower() for value in normalized_synonyms]
 
         if not normalized_synonyms:
@@ -887,22 +821,25 @@ def get_next_synonym_question(user_email):
 
         word_id, headword, synonyms = row
 
-        synonym_list = _normalize_synonym_list(synonyms, headword=headword)
+        synonym_list = normalize_synonym_list(synonyms, headword=headword)
 
         if not synonym_list:
             return {"error": "No valid synonyms"}
 
-        correct = synonym_list[0]
+        validated_question = build_validated_synonym_question(
+            cur,
+            word_id=word_id,
+            headword=headword,
+            synonyms=synonyms,
+        )
 
-        options = _build_options(cur, word_id, correct, headword=headword)
-
-        if not options:
+        if not validated_question:
             return {"error": "Not enough distractors"}
 
         return {
             "word_id": word_id,
             "word": headword,
-            "options": options
+            "options": validated_question["options"]
         }
 
     finally:
@@ -1123,15 +1060,18 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
 
         word_id, headword, synonyms = row
 
-        synonym_list = _normalize_synonym_list(synonyms, headword=headword)
+        synonym_list = normalize_synonym_list(synonyms, headword=headword)
 
         if not synonym_list:
             return {"error": "No valid synonyms"}
 
-        correct = synonym_list[0]
-
-        options = _build_options(cur, word_id, correct, headword=headword)
-        if not options:
+        validated_question = build_validated_synonym_question(
+            cur,
+            word_id=word_id,
+            headword=headword,
+            synonyms=synonyms,
+        )
+        if not validated_question:
             return {"error": "Not enough distractors"}
 
         review_reason = None
@@ -1146,7 +1086,7 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
         payload = {
             "word_id": word_id,
             "word": headword,
-            "options": options,
+            "options": validated_question["options"],
         }
         return _add_review_metadata(
             payload,
@@ -1181,3 +1121,11 @@ def get_practice_session(user_email, lesson_id):
         "xp_per_question": 10,
         "question": question
     }
+
+
+def validate_current_synonym_question(headword, correct_answer, options):
+    return audit_synonym_question_integrity(
+        headword=headword,
+        correct_answer=correct_answer,
+        options=options,
+    )

@@ -1,5 +1,7 @@
 import random
 import uuid
+import json
+import logging
 from datetime import datetime, timezone, timedelta
 
 from app.database import get_connection
@@ -7,9 +9,11 @@ from app.repositories.spelling_repository import (
     get_resume_word_id,
     get_weak_word_id,
     get_lesson_id_for_word,
-    get_recent_attempt_word_ids,
+    get_session_recent_word_ids,
+    get_session_word_positions,
     get_latest_attempt_summary,
     has_prior_incorrect_attempt,
+    is_word_eligible_for_review,
     is_word_mastered,
     get_word_timing_stats,
     get_next_unmastered_word,
@@ -25,9 +29,11 @@ from app.repositories.spelling_stats_repository import (
 )
 
 
+logger = logging.getLogger(__name__)
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
 SESSION_BOOTSTRAP_GAP = timedelta(minutes=15)
-REVIEW_COOLDOWN_WINDOW = 4
+REVIEW_COOLDOWN_DISTANCE = 5
+SESSION_RECENT_WINDOW = max(REVIEW_COOLDOWN_DISTANCE - 1, 1)
 
 
 def _build_session_state(*, is_review: bool, review_reason: str | None, question_position: int, cooldown_distance: int | None):
@@ -237,13 +243,13 @@ def _build_review_candidate(
     user_id: int,
     lesson_id: int,
     conn,
-    recent_attempt_word_ids: list[int],
+    session_recent_word_ids: list[int],
 ):
     weak_word_id = get_weak_word_id(
         user_id=user_id,
         lesson_id=lesson_id,
         conn=conn,
-        exclude_word_ids=recent_attempt_word_ids,
+        exclude_word_ids=session_recent_word_ids,
     )
     if not weak_word_id:
         return None
@@ -275,10 +281,39 @@ def _build_review_candidate(
     }
 
 
+def _log_cooldown_blocked(
+    *,
+    user_id: int,
+    lesson_id: int,
+    session_id: str | None,
+    word_id: int | None,
+    current_position: int,
+    last_seen_position: int | None,
+    cooldown_distance: int,
+):
+    logger.info(
+        "[SPELLING_COOLDOWN_BLOCKED] %s",
+        json.dumps(
+            {
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "session_id": session_id,
+                "word_id": word_id,
+                "current_position": current_position,
+                "last_seen_position": last_seen_position,
+                "cooldown_distance": cooldown_distance,
+            },
+            sort_keys=True,
+        ),
+    )
+
+
 def _should_schedule_review(
     review_candidate,
     progression_candidate,
-    recent_attempt_word_ids: list[int],
+    session_recent_word_ids: list[int],
+    review_eligible: bool,
+    current_question_position: int,
     session_bootstrap: bool,
 ) -> bool:
     if not review_candidate:
@@ -287,11 +322,13 @@ def _should_schedule_review(
     if session_bootstrap and progression_candidate:
         return False
 
-    if len(recent_attempt_word_ids) < REVIEW_COOLDOWN_WINDOW:
+    if not review_eligible:
         return False
 
-    review_word_id = review_candidate["word_id"]
-    return review_word_id not in set(recent_attempt_word_ids)
+    if current_question_position <= REVIEW_COOLDOWN_DISTANCE:
+        return False
+
+    return len(session_recent_word_ids) >= SESSION_RECENT_WINDOW
 
 
 def _get_lesson_attempt_count(user_id: int, lesson_id: int, conn) -> int:
@@ -319,14 +356,31 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 lesson_id=lesson_id,
                 conn=conn,
             )
-            recent_attempt_word_ids = get_recent_attempt_word_ids(
+            session_bootstrap = _is_session_bootstrap(latest_attempt_summary)
+            active_session_id = (
+                session_id
+                or (
+                    latest_attempt_summary.get("session_id")
+                    if latest_attempt_summary and not session_bootstrap
+                    else None
+                )
+                or str(uuid.uuid4())
+            )
+            session_positions = get_session_word_positions(
                 user_id=user_id,
                 lesson_id=lesson_id,
+                session_id=active_session_id,
                 conn=conn,
-                limit=4,
             )
-            recent_attempt_word_id_set = set(recent_attempt_word_ids)
-            session_bootstrap = _is_session_bootstrap(latest_attempt_summary)
+            current_question_position = int(session_positions["question_position"] or 1)
+            session_recent_word_ids = get_session_recent_word_ids(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                session_id=active_session_id,
+                conn=conn,
+                limit=SESSION_RECENT_WINDOW,
+            )
+            recent_attempt_word_id_set = set(session_recent_word_ids)
 
             progression_candidate, resume_word_id, next_unmastered_word_id = _build_progression_candidate(
                 user_id=user_id,
@@ -335,27 +389,64 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 latest_attempt_summary=latest_attempt_summary,
                 session_bootstrap=session_bootstrap,
             )
+            blocked_review_word_id = get_weak_word_id(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                conn=conn,
+            )
             review_candidate = _build_review_candidate(
                 user_id=user_id,
                 lesson_id=lesson_id,
                 conn=conn,
-                recent_attempt_word_ids=recent_attempt_word_ids,
+                session_recent_word_ids=session_recent_word_ids,
+            )
+            review_candidate_word_id = review_candidate["word_id"] if review_candidate else None
+            review_eligible = bool(review_candidate_word_id) and is_word_eligible_for_review(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                session_id=active_session_id,
+                word_id=review_candidate_word_id,
+                conn=conn,
+                cooldown_distance=REVIEW_COOLDOWN_DISTANCE,
+                session_positions=session_positions,
             )
 
             weak_word_id = review_candidate["word_id"] if review_candidate else None
 
+            blocked_review_eligible = bool(blocked_review_word_id) and is_word_eligible_for_review(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                session_id=active_session_id,
+                word_id=blocked_review_word_id,
+                conn=conn,
+                cooldown_distance=REVIEW_COOLDOWN_DISTANCE,
+                session_positions=session_positions,
+            )
+            if blocked_review_word_id and not blocked_review_eligible:
+                _log_cooldown_blocked(
+                    user_id=user_id,
+                    lesson_id=lesson_id,
+                    session_id=active_session_id,
+                    word_id=blocked_review_word_id,
+                    current_position=current_question_position,
+                    last_seen_position=session_positions["last_seen_positions"].get(blocked_review_word_id),
+                    cooldown_distance=REVIEW_COOLDOWN_DISTANCE,
+                )
+
             selected_candidate = None
             selected_from_spaced_review = False
-            if progression_candidate:
-                selected_candidate = progression_candidate
-            elif _should_schedule_review(
+            if _should_schedule_review(
                 review_candidate=review_candidate,
                 progression_candidate=progression_candidate,
-                recent_attempt_word_ids=recent_attempt_word_ids,
+                session_recent_word_ids=session_recent_word_ids,
+                review_eligible=review_eligible,
+                current_question_position=current_question_position,
                 session_bootstrap=session_bootstrap,
             ):
                 selected_candidate = review_candidate
                 selected_from_spaced_review = True
+            elif progression_candidate:
+                selected_candidate = progression_candidate
 
             if selected_candidate:
                 item = selected_candidate["item"]
@@ -364,7 +455,12 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 selected_timing_stats = selected_candidate["timing"]
                 mastered = selected_candidate["mastered"]
             else:
-                item = get_spelling_next_item(user_id, lesson_id)
+                item = get_spelling_next_item(
+                    user_id,
+                    lesson_id,
+                    recent_word_ids=session_recent_word_ids,
+                    last_word_id=session_recent_word_ids[0] if session_recent_word_ids else None,
+                )
                 selected_strategy = item.get("_selection_strategy", "fallback") if item else "fallback"
                 best_score = 0
                 selected_timing_stats = {
@@ -391,7 +487,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     "adaptive_strategy": "progression_with_spaced_review",
                     "selection_strategy": selected_strategy,
                     "selection_score": best_score,
-                }, None, question_position=1)
+                }, None, question_position=current_question_position)
 
             if selected_strategy == "fallback":
                 mastered = is_word_mastered(
@@ -410,13 +506,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             weak_pattern = get_spelling_weak_pattern(user_id)
             patterns = [weak_pattern] if weak_pattern else None
             question_id = str(uuid.uuid4())
-            session_id = session_id or str(uuid.uuid4())
             selected_word_id = item["word_id"]
-            lesson_attempt_count = _get_lesson_attempt_count(
-                user_id=user_id,
-                lesson_id=lesson_id,
-                conn=conn,
-            )
             prior_incorrect_attempt = has_prior_incorrect_attempt(
                 user_id=user_id,
                 lesson_id=lesson_id,
@@ -457,7 +547,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
 
             payload = {
                 "question_id": question_id,
-                "session_id": session_id,
+                "session_id": active_session_id,
                 "lesson_id": lesson_id,
                 "word_id": selected_word_id,
                 "word_audio": "",
@@ -478,8 +568,8 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             return _add_review_metadata(
                 payload,
                 review_reason,
-                question_position=lesson_attempt_count + 1,
-                cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+                question_position=current_question_position,
+                cooldown_distance=REVIEW_COOLDOWN_DISTANCE if review_reason else None,
             )
         finally:
             conn.close()

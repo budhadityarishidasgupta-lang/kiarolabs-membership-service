@@ -146,11 +146,99 @@ def get_recent_attempt_word_ids(user_id: int, lesson_id: int, conn, limit: int =
         return [row[0] for row in cur.fetchall() if row and row[0] is not None]
 
 
+def get_session_recent_word_ids(
+    user_id: int,
+    lesson_id: int,
+    session_id: str | None,
+    conn,
+    limit: int = 4,
+) -> list[int]:
+    if not session_id:
+        return []
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT word_id
+            FROM spelling_attempts
+            WHERE user_id = %s
+              AND lesson_id = %s
+              AND session_id = %s
+            ORDER BY created_at DESC, attempt_id DESC
+            LIMIT %s
+            """,
+            (user_id, lesson_id, session_id, limit),
+        )
+        return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def get_session_word_positions(
+    user_id: int,
+    lesson_id: int,
+    session_id: str | None,
+    conn,
+) -> dict:
+    if not session_id:
+        return {
+            "question_position": 1,
+            "last_seen_positions": {},
+        }
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT word_id
+            FROM spelling_attempts
+            WHERE user_id = %s
+              AND lesson_id = %s
+              AND session_id = %s
+            ORDER BY created_at ASC, attempt_id ASC
+            """,
+            (user_id, lesson_id, session_id),
+        )
+        ordered_attempts = [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+    last_seen_positions = {}
+    for position, attempted_word_id in enumerate(ordered_attempts, start=1):
+        last_seen_positions[attempted_word_id] = position
+
+    return {
+        "question_position": len(ordered_attempts) + 1,
+        "last_seen_positions": last_seen_positions,
+    }
+
+
+def is_word_eligible_for_review(
+    user_id: int,
+    lesson_id: int,
+    session_id: str | None,
+    word_id: int,
+    conn,
+    cooldown_distance: int = 5,
+    session_positions: dict | None = None,
+) -> bool:
+    if not session_id or not word_id:
+        return True
+
+    positions = session_positions or get_session_word_positions(
+        user_id=user_id,
+        lesson_id=lesson_id,
+        session_id=session_id,
+        conn=conn,
+    )
+    last_seen_position = positions["last_seen_positions"].get(word_id)
+    if last_seen_position is None:
+        return True
+
+    current_position = int(positions.get("question_position") or 1)
+    return current_position - last_seen_position >= cooldown_distance
+
+
 def get_latest_attempt_summary(user_id: int, lesson_id: int, conn):
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT word_id, correct, created_at
+            SELECT word_id, correct, created_at, session_id
             FROM spelling_attempts
             WHERE user_id = %s
               AND lesson_id = %s
@@ -168,6 +256,7 @@ def get_latest_attempt_summary(user_id: int, lesson_id: int, conn):
         "word_id": row[0],
         "correct": bool(row[1]),
         "created_at": row[2],
+        "session_id": row[3],
     }
 
 
@@ -443,7 +532,12 @@ def _count_wrong_letters(submitted_text: str, correct_word: str) -> int:
     )
 
 
-def get_spelling_next_item(user_id: int, lesson_id: int):
+def get_spelling_next_item(
+    user_id: int,
+    lesson_id: int,
+    recent_word_ids: list[int] | None = None,
+    last_word_id: int | None = None,
+):
     conn = get_connection()
     cur = conn.cursor()
 
@@ -452,8 +546,8 @@ def get_spelling_next_item(user_id: int, lesson_id: int):
         if not items:
             return None
 
-        last_word_id = _get_latest_word_id(cur, user_id, lesson_id)
-        recent_word_ids = get_recent_attempt_word_ids(user_id, lesson_id, conn, limit=4)
+        resolved_last_word_id = last_word_id if last_word_id is not None else _get_latest_word_id(cur, user_id, lesson_id)
+        resolved_recent_word_ids = recent_word_ids if recent_word_ids is not None else get_recent_attempt_word_ids(user_id, lesson_id, conn, limit=4)
 
         unseen = [item for item in items if item["times_seen"] == 0]
         weak = [item for item in items if item["is_weak"]]
@@ -466,8 +560,8 @@ def get_spelling_next_item(user_id: int, lesson_id: int):
         for pool_name, pool in (("unseen", unseen), ("weak", weak), ("review", review)):
             candidate_pool = pool
             if pool_name in {"weak", "review"}:
-                candidate_pool = _avoid_recent_review_repeat(candidate_pool, recent_word_ids)
-            candidate_pool = _avoid_immediate_repeat(candidate_pool, last_word_id)
+                candidate_pool = _avoid_recent_review_repeat(candidate_pool, resolved_recent_word_ids)
+            candidate_pool = _avoid_immediate_repeat(candidate_pool, resolved_last_word_id)
             if candidate_pool:
                 selected_item = dict(candidate_pool[0])
                 selected_item["_selection_strategy"] = pool_name

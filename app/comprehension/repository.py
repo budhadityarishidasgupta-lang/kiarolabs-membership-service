@@ -1,6 +1,10 @@
-# app/comprehension/repository.py
+import json
+import logging
 
 from app.database import get_connection
+
+logger = logging.getLogger(__name__)
+COMPREHENSION_COOLDOWN_DISTANCE = 3
 
 
 # =========================
@@ -141,6 +145,125 @@ def get_question_by_id(question_id):
     conn.close()
 
     return result
+
+
+def get_next_comprehension_question(
+    user_id,
+    passage_id,
+    conn=None,
+    cooldown_distance: int = COMPREHENSION_COOLDOWN_DISTANCE,
+):
+    owns_connection = conn is None
+    if owns_connection:
+        conn = get_connection()
+
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT question_id
+            FROM comprehension_questions
+            WHERE passage_id = %s
+            ORDER BY sort_order ASC, question_id ASC
+            """,
+            (passage_id,),
+        )
+        ordered_question_ids = [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+        if not ordered_question_ids:
+            return None
+
+        cur.execute(
+            """
+            SELECT question_id
+            FROM comprehension_attempts
+            WHERE user_id = %s
+              AND passage_id = %s
+            ORDER BY created_at ASC, attempt_id ASC
+            """,
+            (user_id, passage_id),
+        )
+        attempt_question_ids = [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+        recent_question_ids = attempt_question_ids[-cooldown_distance:] if cooldown_distance > 0 else []
+        recent_question_id_set = set(recent_question_ids)
+
+        cycle_attempted_ids = set()
+        ordered_question_id_set = set(ordered_question_ids)
+        for attempted_question_id in attempt_question_ids:
+            if attempted_question_id not in ordered_question_id_set:
+                continue
+            cycle_attempted_ids.add(attempted_question_id)
+            if len(cycle_attempted_ids) == len(ordered_question_ids):
+                cycle_attempted_ids = set()
+
+        current_cycle_unanswered = [
+            question_id for question_id in ordered_question_ids
+            if question_id not in cycle_attempted_ids
+        ]
+
+        def _first_not_recent(question_ids):
+            for candidate_question_id in question_ids:
+                if candidate_question_id not in recent_question_id_set:
+                    return candidate_question_id
+            return None
+
+        selected_question_id = _first_not_recent(current_cycle_unanswered)
+        cycle_restarted = False
+
+        if selected_question_id is None and current_cycle_unanswered:
+            blocked_question_id = current_cycle_unanswered[0]
+            logger.info(
+                "[COMPREHENSION_REPEAT_BLOCKED] %s",
+                json.dumps(
+                    {
+                        "user_id": user_id,
+                        "passage_id": passage_id,
+                        "blocked_question_id": blocked_question_id,
+                        "recent_question_ids": recent_question_ids,
+                        "cooldown_distance": cooldown_distance,
+                        "reason": "progression_recent_cooldown",
+                    },
+                    sort_keys=True,
+                ),
+            )
+            selected_question_id = blocked_question_id
+
+        if selected_question_id is None:
+            cycle_restarted = True
+            restart_candidates = list(ordered_question_ids)
+            selected_question_id = _first_not_recent(restart_candidates)
+            if selected_question_id is None and restart_candidates:
+                logger.info(
+                    "[COMPREHENSION_REPEAT_BLOCKED] %s",
+                    json.dumps(
+                        {
+                            "user_id": user_id,
+                            "passage_id": passage_id,
+                            "blocked_question_id": restart_candidates[0],
+                            "recent_question_ids": recent_question_ids,
+                            "cooldown_distance": cooldown_distance,
+                            "reason": "cycle_restart_recent_cooldown",
+                        },
+                        sort_keys=True,
+                    ),
+                )
+                selected_question_id = restart_candidates[0]
+
+        if selected_question_id is None:
+            return None
+
+        return {
+            "question_id": selected_question_id,
+            "attempt_count": len(attempt_question_ids),
+            "recent_question_ids": recent_question_ids,
+            "cycle_restarted": cycle_restarted,
+        }
+    finally:
+        cur.close()
+        if owns_connection:
+            conn.close()
 
 
 def insert_question(passage_id, question_text, a, b, c, d, correct, qtype, order):

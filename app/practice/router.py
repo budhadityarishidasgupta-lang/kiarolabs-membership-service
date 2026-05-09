@@ -56,7 +56,8 @@ from app.comprehension.service import (
 )
 from app.comprehension.repository import (
     insert_passage,
-    insert_question
+    insert_question,
+    get_next_comprehension_question,
 )
 from app.repositories.vr_repository import (
     get_active_vr_papers,
@@ -1960,140 +1961,21 @@ def get_comprehension_question(
     try:
         selected_question_id = None
         review_reason = None
-        latest_attempted_question_id = None
-        recent_attempted_question_ids: list[int] = []
-        recent_attempted_question_id_set: set[int] = set()
-        passage_question_ids: list[int] = []
-        attempted_question_ids: list[int] = []
-        attempted_question_id_set: set[int] = set()
-        unique_weak_questions: list[int] = []
-        selected_as_review_return = False
         attempt_count = 0
 
         if question_id is not None:
             selected_question_id = question_id
 
         if selected_question_id is None:
-            cur.execute(
-                """
-                SELECT COUNT(*)
-                FROM comprehension_attempts
-                WHERE user_id = %s
-                  AND passage_id = %s
-                """,
-                (user_id, passage_id),
+            next_question = get_next_comprehension_question(
+                user_id=user_id,
+                passage_id=passage_id,
+                conn=conn,
+                cooldown_distance=3,
             )
-            attempt_row = cur.fetchone()
-            attempt_count = int(attempt_row[0] or 0) if attempt_row else 0
-
-            cur.execute(
-                """
-                SELECT question_id
-                FROM comprehension_attempts
-                WHERE user_id = %s
-                  AND passage_id = %s
-                ORDER BY created_at DESC
-                LIMIT 4
-                """,
-                (user_id, passage_id),
-            )
-            recent_attempted_question_ids = [
-                row[0] for row in cur.fetchall()
-                if row and row[0] is not None
-            ]
-            recent_attempted_question_id_set = set(recent_attempted_question_ids)
-            latest_attempted_question_id = recent_attempted_question_ids[0] if recent_attempted_question_ids else None
-
-            cur.execute(
-                """
-                SELECT DISTINCT question_id
-                FROM comprehension_attempts
-                WHERE user_id = %s
-                  AND passage_id = %s
-                """,
-                (user_id, passage_id),
-            )
-            attempted_question_ids = [row[0] for row in cur.fetchall() if row and row[0] is not None]
-            attempted_question_id_set = set(attempted_question_ids)
-
-            cur.execute(
-                """
-                SELECT question_id
-                FROM comprehension_questions
-                WHERE passage_id = %s
-                ORDER BY sort_order ASC, question_id ASC
-                """,
-                (passage_id,),
-            )
-            passage_question_ids = [r[0] for r in cur.fetchall() if r and r[0] is not None]
-
-            cur.execute(
-                """
-                SELECT question_id
-                FROM comprehension_attempts
-                WHERE user_id = %s
-                  AND passage_id = %s
-                  AND correct = false
-                ORDER BY created_at DESC
-                LIMIT 5
-                """,
-                (user_id, passage_id),
-            )
-            weak_questions = [r[0] for r in cur.fetchall() if r and r[0] is not None]
-            unique_weak_questions = list(dict.fromkeys(weak_questions))
-
-            progression_questions = [
-                qid for qid in passage_question_ids
-                if qid not in attempted_question_id_set
-            ]
-            alternative_weak_questions = [
-                qid for qid in unique_weak_questions
-                if qid not in recent_attempted_question_id_set
-            ]
-            alternative_passage_questions = [
-                qid for qid in passage_question_ids
-                if qid not in recent_attempted_question_id_set
-            ]
-
-            if progression_questions:
-                selected_question_id = progression_questions[0]
-            elif alternative_weak_questions:
-                selected_question_id = random.choice(alternative_weak_questions)
-                selected_as_review_return = True
-            elif unique_weak_questions and alternative_passage_questions:
-                selected_question_id = alternative_passage_questions[0]
-            elif unique_weak_questions:
-                selected_question_id = unique_weak_questions[0]
-                selected_as_review_return = True
-
-        if (
-            question_id is None
-            and latest_attempted_question_id is not None
-            and selected_question_id == latest_attempted_question_id
-        ):
-            alternative_weak_questions = [
-                qid for qid in unique_weak_questions
-                if qid not in recent_attempted_question_id_set
-            ]
-            alternative_passage_questions = [
-                qid for qid in passage_question_ids
-                if qid not in recent_attempted_question_id_set
-            ]
-
-            if alternative_weak_questions:
-                selected_question_id = alternative_weak_questions[0]
-                selected_as_review_return = True
-            elif alternative_passage_questions:
-                selected_question_id = alternative_passage_questions[0]
-                selected_as_review_return = False
-
-        if not selected_question_id:
-            alternative_passage_questions = [
-                qid for qid in passage_question_ids
-                if qid not in recent_attempted_question_id_set
-            ]
-            if alternative_passage_questions:
-                selected_question_id = alternative_passage_questions[0]
+            if next_question:
+                selected_question_id = next_question["question_id"]
+                attempt_count = int(next_question.get("attempt_count") or 0)
 
         if not selected_question_id:
             cur.execute(
@@ -2159,26 +2041,6 @@ def get_comprehension_question(
 
         if not question:
             _raise_not_found("Question not found")
-
-        if (
-            question_id is None
-            and selected_as_review_return
-            and question[0] not in recent_attempted_question_id_set
-        ):
-            cur.execute(
-                """
-                SELECT 1
-                FROM comprehension_attempts
-                WHERE user_id = %s
-                  AND passage_id = %s
-                  AND question_id = %s
-                  AND correct = FALSE
-                LIMIT 1
-                """,
-                (user_id, passage_id, question[0]),
-            )
-            if cur.fetchone():
-                review_reason = "passage_review"
 
         payload = {
             "question_id": question[0],
