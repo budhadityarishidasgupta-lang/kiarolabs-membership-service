@@ -4,12 +4,29 @@ from fastapi import HTTPException
 
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
+REVIEW_COOLDOWN_WINDOW = 4
 
 
-def _add_review_metadata(payload, review_reason):
-    if review_reason:
-        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
-        payload["review_reason"] = review_reason
+def _build_session_state(*, is_review: bool, review_reason: str | None, question_position: int, cooldown_distance: int | None):
+    return {
+        "is_review": bool(is_review),
+        "review_reason": review_reason,
+        "question_position": max(int(question_position or 1), 1),
+        "cooldown_distance": cooldown_distance,
+    }
+
+
+def _add_review_metadata(payload, review_reason, *, question_position: int, cooldown_distance: int | None = None):
+    is_review = bool(review_reason)
+    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if is_review else None
+    payload["review_reason"] = review_reason
+    payload["is_review"] = is_review
+    payload["session_state"] = _build_session_state(
+        is_review=is_review,
+        review_reason=review_reason,
+        question_position=question_position,
+        cooldown_distance=cooldown_distance if is_review else None,
+    )
     return payload
 
 
@@ -205,6 +222,23 @@ def _get_recent_synonym_attempt_word_ids(cur, user_id, limit=4):
     return [row[0] for row in cur.fetchall() if row and row[0] is not None]
 
 
+def _get_synonym_attempt_count(cur, user_id):
+    table_name, _columns = _resolve_synonym_attempt_store(cur)
+    if not table_name:
+        return 0
+
+    cur.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM public.{table_name}
+        WHERE user_id = %s
+        """,
+        (user_id,),
+    )
+    row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
 def _get_recent_lesson_synonym_attempt_word_ids(cur, user_id, lesson_id, limit=4):
     table_name, columns = _resolve_synonym_attempt_store(cur)
     timestamp_column = _get_synonym_timestamp_column(columns)
@@ -225,6 +259,27 @@ def _get_recent_lesson_synonym_attempt_word_ids(cur, user_id, lesson_id, limit=4
         (user_id, lesson_id, limit),
     )
     return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _get_lesson_synonym_attempt_count(cur, user_id, lesson_id):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    timestamp_column = _get_synonym_timestamp_column(columns)
+    if not table_name or not timestamp_column:
+        return 0
+
+    cur.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM public.{table_name} sa
+        JOIN public.lesson_words lw
+          ON lw.word_id = sa.word_id
+        WHERE sa.user_id = %s
+          AND lw.lesson_id = %s
+        """,
+        (user_id, lesson_id),
+    )
+    row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def _get_recent_incorrect_lesson_synonym_word_ids(cur, user_id, lesson_id, limit=5):
@@ -283,8 +338,66 @@ def _has_incorrect_synonym_attempt(cur, user_id, word_id, lesson_id=None):
             LIMIT 1
             """,
             (user_id, word_id),
-        )
+    )
     return cur.fetchone() is not None
+
+
+def _get_lesson_word_ids(cur, lesson_id):
+    cur.execute(
+        """
+        SELECT lw.word_id
+        FROM public.lesson_words lw
+        JOIN public.words w
+          ON w.word_id = lw.word_id
+        WHERE lw.lesson_id = %s
+          AND w.synonyms IS NOT NULL
+          AND TRIM(w.synonyms) <> ''
+        ORDER BY lw.word_id ASC
+        """,
+        (lesson_id,),
+    )
+    return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _get_attempted_lesson_word_ids(cur, user_id, lesson_id):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    timestamp_column = _get_synonym_timestamp_column(columns)
+    if not table_name or not timestamp_column:
+        return []
+
+    cur.execute(
+        f"""
+        SELECT DISTINCT ON (sa.word_id) sa.word_id
+        FROM public.{table_name} sa
+        JOIN public.lesson_words lw
+          ON lw.word_id = sa.word_id
+        WHERE sa.user_id = %s
+          AND lw.lesson_id = %s
+        ORDER BY sa.word_id, sa.{timestamp_column} DESC
+        """,
+        (user_id, lesson_id),
+    )
+    return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _get_next_progression_word_id(cur, user_id, lesson_id, latest_attempt_word_id):
+    lesson_word_ids = _get_lesson_word_ids(cur, lesson_id)
+    if not lesson_word_ids:
+        return None, []
+
+    attempted_word_id_set = set(_get_attempted_lesson_word_ids(cur, user_id, lesson_id))
+
+    if latest_attempt_word_id in lesson_word_ids:
+        latest_index = lesson_word_ids.index(latest_attempt_word_id)
+        for word_id in lesson_word_ids[latest_index + 1:]:
+            if word_id not in attempted_word_id_set:
+                return word_id, lesson_word_ids
+
+    for word_id in lesson_word_ids:
+        if word_id not in attempted_word_id_set:
+            return word_id, lesson_word_ids
+
+    return None, lesson_word_ids
 
 
 def _fetch_random_synonym_row(cur, excluded_word_ids=None, lesson_id=None):
@@ -452,8 +565,10 @@ def get_synonym_question(user_email):
         user_id = _resolve_user_id(cur, user_email)
         recent_attempted_word_ids = []
         selected_as_review_return = False
+        attempt_count = 0
 
         if user_id:
+            attempt_count = _get_synonym_attempt_count(cur, user_id)
             recent_attempted_word_ids = _get_recent_synonym_attempt_word_ids(cur, user_id, limit=4)
             weak_words = _get_recent_incorrect_synonym_word_ids(cur, user_id)
             weak_words = list(dict.fromkeys(weak_words))
@@ -464,7 +579,7 @@ def get_synonym_question(user_email):
             if alternative_weak_words:
                 selected_word_id = random.choice(alternative_weak_words)
                 selected_as_review_return = True
-            elif weak_words:
+            elif weak_words and len(weak_words) == 1:
                 selected_word_id = random.choice(weak_words)
                 selected_as_review_return = True
 
@@ -517,7 +632,12 @@ def get_synonym_question(user_email):
             "word": headword,
             "options": options
         }
-        return _add_review_metadata(payload, review_reason)
+        return _add_review_metadata(
+            payload,
+            review_reason,
+            question_position=attempt_count + 1,
+            cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+        )
 
     finally:
         cur.close()
@@ -899,26 +1019,39 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
         recent_attempted_word_ids = []
         selected_word_id = None
         selected_as_review_return = False
+        attempt_count = 0
+        lesson_word_ids = []
 
         if user_id:
+            attempt_count = _get_lesson_synonym_attempt_count(cur, user_id, lesson_id)
             recent_attempted_word_ids = _get_recent_lesson_synonym_attempt_word_ids(
                 cur,
                 user_id,
                 lesson_id,
                 limit=4,
             )
-            weak_words = _get_recent_incorrect_lesson_synonym_word_ids(cur, user_id, lesson_id, limit=5)
-            weak_words = list(dict.fromkeys(weak_words))
-            alternative_weak_words = [
-                word_id for word_id in weak_words
-                if word_id not in recent_attempted_word_ids
-            ]
-            if alternative_weak_words:
-                selected_word_id = random.choice(alternative_weak_words)
-                selected_as_review_return = True
-            elif weak_words:
-                selected_word_id = random.choice(weak_words)
-                selected_as_review_return = True
+            latest_attempt_word_id = _get_latest_lesson_synonym_attempt_word_id(cur, user_id, lesson_id)
+            next_progression_word_id, lesson_word_ids = _get_next_progression_word_id(
+                cur,
+                user_id,
+                lesson_id,
+                latest_attempt_word_id,
+            )
+            if next_progression_word_id is not None:
+                selected_word_id = next_progression_word_id
+            else:
+                weak_words = _get_recent_incorrect_lesson_synonym_word_ids(cur, user_id, lesson_id, limit=5)
+                weak_words = list(dict.fromkeys(weak_words))
+                alternative_weak_words = [
+                    word_id for word_id in weak_words
+                    if word_id not in recent_attempted_word_ids
+                ]
+                if alternative_weak_words:
+                    selected_word_id = random.choice(alternative_weak_words)
+                    selected_as_review_return = True
+                elif weak_words and len(lesson_word_ids or weak_words) <= 1:
+                    selected_word_id = random.choice(weak_words)
+                    selected_as_review_return = True
 
         if selected_word_id is not None:
             cur.execute(
@@ -972,7 +1105,12 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
             "word": headword,
             "options": options,
         }
-        return _add_review_metadata(payload, review_reason)
+        return _add_review_metadata(
+            payload,
+            review_reason,
+            question_position=attempt_count + 1,
+            cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+        )
 
     finally:
         cur.close()

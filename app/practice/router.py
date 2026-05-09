@@ -72,12 +72,29 @@ admin_router = APIRouter(tags=["admin"])
 logger = logging.getLogger(__name__)
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
+REVIEW_COOLDOWN_WINDOW = 4
 
 
-def _add_review_metadata(payload, review_reason):
-    if review_reason:
-        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
-        payload["review_reason"] = review_reason
+def _build_session_state(*, is_review: bool, review_reason: str | None, question_position: int, cooldown_distance: int | None):
+    return {
+        "is_review": bool(is_review),
+        "review_reason": review_reason,
+        "question_position": max(int(question_position or 1), 1),
+        "cooldown_distance": cooldown_distance,
+    }
+
+
+def _add_review_metadata(payload, review_reason, *, question_position: int, cooldown_distance: int | None = None):
+    is_review = bool(review_reason)
+    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if is_review else None
+    payload["review_reason"] = review_reason
+    payload["is_review"] = is_review
+    payload["session_state"] = _build_session_state(
+        is_review=is_review,
+        review_reason=review_reason,
+        question_position=question_position,
+        cooldown_distance=cooldown_distance if is_review else None,
+    )
     return payload
 
 
@@ -1947,13 +1964,28 @@ def get_comprehension_question(
         recent_attempted_question_ids: list[int] = []
         recent_attempted_question_id_set: set[int] = set()
         passage_question_ids: list[int] = []
+        attempted_question_ids: list[int] = []
+        attempted_question_id_set: set[int] = set()
         unique_weak_questions: list[int] = []
         selected_as_review_return = False
+        attempt_count = 0
 
         if question_id is not None:
             selected_question_id = question_id
 
         if selected_question_id is None:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                  AND passage_id = %s
+                """,
+                (user_id, passage_id),
+            )
+            attempt_row = cur.fetchone()
+            attempt_count = int(attempt_row[0] or 0) if attempt_row else 0
+
             cur.execute(
                 """
                 SELECT question_id
@@ -1971,6 +2003,18 @@ def get_comprehension_question(
             ]
             recent_attempted_question_id_set = set(recent_attempted_question_ids)
             latest_attempted_question_id = recent_attempted_question_ids[0] if recent_attempted_question_ids else None
+
+            cur.execute(
+                """
+                SELECT DISTINCT question_id
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                  AND passage_id = %s
+                """,
+                (user_id, passage_id),
+            )
+            attempted_question_ids = [row[0] for row in cur.fetchall() if row and row[0] is not None]
+            attempted_question_id_set = set(attempted_question_ids)
 
             cur.execute(
                 """
@@ -1998,6 +2042,10 @@ def get_comprehension_question(
             weak_questions = [r[0] for r in cur.fetchall() if r and r[0] is not None]
             unique_weak_questions = list(dict.fromkeys(weak_questions))
 
+            progression_questions = [
+                qid for qid in passage_question_ids
+                if qid not in attempted_question_id_set
+            ]
             alternative_weak_questions = [
                 qid for qid in unique_weak_questions
                 if qid not in recent_attempted_question_id_set
@@ -2007,7 +2055,9 @@ def get_comprehension_question(
                 if qid not in recent_attempted_question_id_set
             ]
 
-            if alternative_weak_questions:
+            if progression_questions:
+                selected_question_id = progression_questions[0]
+            elif alternative_weak_questions:
                 selected_question_id = random.choice(alternative_weak_questions)
                 selected_as_review_return = True
             elif unique_weak_questions and alternative_passage_questions:
@@ -2135,7 +2185,12 @@ def get_comprehension_question(
             "question_text": question[1],
             "options": [question[2], question[3], question[4], question[5]],
         }
-        return _add_review_metadata(payload, review_reason)
+        return _add_review_metadata(
+            payload,
+            review_reason,
+            question_position=attempt_count + 1,
+            cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+        )
     except HTTPException:
         raise
     except Exception:

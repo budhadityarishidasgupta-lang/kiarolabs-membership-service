@@ -27,12 +27,29 @@ from app.repositories.spelling_stats_repository import (
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
 SESSION_BOOTSTRAP_GAP = timedelta(minutes=15)
+REVIEW_COOLDOWN_WINDOW = 4
 
 
-def _add_review_metadata(payload, review_reason):
-    if review_reason:
-        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
-        payload["review_reason"] = review_reason
+def _build_session_state(*, is_review: bool, review_reason: str | None, question_position: int, cooldown_distance: int | None):
+    return {
+        "is_review": bool(is_review),
+        "review_reason": review_reason,
+        "question_position": max(int(question_position or 1), 1),
+        "cooldown_distance": cooldown_distance,
+    }
+
+
+def _add_review_metadata(payload, review_reason, *, question_position: int, cooldown_distance: int | None = None):
+    is_review = bool(review_reason)
+    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if is_review else None
+    payload["review_reason"] = review_reason
+    payload["is_review"] = is_review
+    payload["session_state"] = _build_session_state(
+        is_review=is_review,
+        review_reason=review_reason,
+        question_position=question_position,
+        cooldown_distance=cooldown_distance if is_review else None,
+    )
     return payload
 
 
@@ -270,11 +287,26 @@ def _should_schedule_review(
     if session_bootstrap and progression_candidate:
         return False
 
-    if len(recent_attempt_word_ids) < 4:
+    if len(recent_attempt_word_ids) < REVIEW_COOLDOWN_WINDOW:
         return False
 
     review_word_id = review_candidate["word_id"]
     return review_word_id not in set(recent_attempt_word_ids)
+
+
+def _get_lesson_attempt_count(user_id: int, lesson_id: int, conn) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM spelling_attempts
+            WHERE user_id = %s
+              AND lesson_id = %s
+            """,
+            (user_id, lesson_id),
+        )
+        row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None = None):
@@ -345,12 +377,12 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             if not item:
                 print("Word Count:", 0)
                 print("Sample Words:", [])
-                return {
+                return _add_review_metadata({
                     "word_id": None,
                     "word_audio": "",
                     "masked_word": "",
                     "hint": "",
-                    "example_sentence": "",
+                    "example_sentence": None,
                     "weak_word_id": weak_word_id,
                     "resume_from_word_id": resume_word_id,
                     "next_unmastered_word_id": next_unmastered_word_id,
@@ -359,7 +391,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     "adaptive_strategy": "progression_with_spaced_review",
                     "selection_strategy": selected_strategy,
                     "selection_score": best_score,
-                }
+                }, None, question_position=1)
 
             if selected_strategy == "fallback":
                 mastered = is_word_mastered(
@@ -380,6 +412,11 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             question_id = str(uuid.uuid4())
             session_id = session_id or str(uuid.uuid4())
             selected_word_id = item["word_id"]
+            lesson_attempt_count = _get_lesson_attempt_count(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                conn=conn,
+            )
             prior_incorrect_attempt = has_prior_incorrect_attempt(
                 user_id=user_id,
                 lesson_id=lesson_id,
@@ -427,7 +464,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "word_audio": "",
                 "masked_word": mask_word(item["word"], patterns, blanks_count=3),
                 "hint": clean_text(item["hint"]),
-                "example_sentence": clean_text(item["example_sentence"]),
+                "example_sentence": None,
                 "weak_word_id": weak_word_id,
                 "resume_from_word_id": resume_word_id,
                 "next_unmastered_word_id": next_unmastered_word_id,
@@ -439,7 +476,12 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "mastered": mastered,
                 "timing": selected_timing_stats,
             }
-            return _add_review_metadata(payload, review_reason)
+            return _add_review_metadata(
+                payload,
+                review_reason,
+                question_position=lesson_attempt_count + 1,
+                cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+            )
         finally:
             conn.close()
 
@@ -450,7 +492,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             "word_audio": "",
             "masked_word": "",
             "hint": "",
-            "example_sentence": "",
+            "example_sentence": None,
         }
 
 
@@ -466,7 +508,16 @@ def get_word_by_id(user_id: int, word_id: int):
         "word_id": word_id,
         "masked_word": mask_word_simple(details["word"]),
         "hint": details["hint"] or "",
-        "example_sentence": details["example_sentence"] or "",
+        "example_sentence": None,
+        "encouragement_message": None,
+        "review_reason": None,
+        "is_review": False,
+        "session_state": _build_session_state(
+            is_review=False,
+            review_reason=None,
+            question_position=1,
+            cooldown_distance=None,
+        ),
     }
 
 

@@ -9,12 +9,30 @@ from app.repositories.math_repository import (
 
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
+REVIEW_COOLDOWN_WINDOW = 4
+
+
+def _build_session_state(*, is_review: bool, review_reason: str | None, question_position: int, cooldown_distance: int | None):
+    return {
+        "is_review": bool(is_review),
+        "review_reason": review_reason,
+        "question_position": max(int(question_position or 1), 1),
+        "cooldown_distance": cooldown_distance,
+    }
 
 
 def _add_review_metadata(payload, review_reason):
-    if review_reason:
-        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
-        payload["review_reason"] = review_reason
+    is_review = bool(review_reason)
+    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if is_review else None
+    payload["review_reason"] = review_reason
+    payload["is_review"] = is_review
+    payload["session_state"] = _build_session_state(
+        is_review=is_review,
+        review_reason=review_reason,
+        question_position=(payload.get("question_position") or 1),
+        cooldown_distance=REVIEW_COOLDOWN_WINDOW if is_review else None,
+    )
+    payload.pop("question_position", None)
     return payload
 
 
@@ -35,10 +53,10 @@ def _normalize_practice_session_id(session_id):
 def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
     item = get_math_next_question(user_id or 0, lesson_id)
     if not item:
-        return {
+        return _add_review_metadata({
             "status": "no_questions",
             "lesson_id": lesson_id
-        }
+        }, None)
 
     session_id = _normalize_practice_session_id(session_id)
     review_reason = None
@@ -62,7 +80,8 @@ def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
             item["option_c"],
             item["option_d"]
         ],
-        "correct_option": item["correct_option"]
+        "correct_option": item["correct_option"],
+        "question_position": (item.get("_attempt_count") or 0) + 1,
     }
     return _add_review_metadata(payload, review_reason)
 

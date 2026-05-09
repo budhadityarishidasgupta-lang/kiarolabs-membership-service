@@ -259,6 +259,20 @@ def _get_incorrect_question_ids(cur, user_id: int, lesson_id: int) -> set[int]:
     return {row[0] for row in cur.fetchall() if row and row[0] is not None}
 
 
+def _get_attempt_count(cur, user_id: int, lesson_id: int) -> int:
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM math_attempts
+        WHERE student_id = %s
+          AND lesson_id = %s
+        """,
+        (user_id, lesson_id),
+    )
+    row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
 def _avoid_immediate_repeat(items: list[dict], last_question_id):
     if len(items) <= 1 or not last_question_id:
         return items
@@ -292,6 +306,7 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
         last_question_id = _get_latest_question_id(cur, user_id, lesson_id_or_scope)
         recent_question_ids = _get_recent_question_ids(cur, user_id, lesson_id_or_scope)
         incorrect_question_ids = _get_incorrect_question_ids(cur, user_id, lesson_id_or_scope)
+        attempt_count = _get_attempt_count(cur, user_id, lesson_id_or_scope)
 
         unseen = [item for item in items if item["times_seen"] == 0]
         weak = [item for item in items if item["is_weak"] or item["times_wrong"] > 0]
@@ -317,12 +332,14 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
                 selected["_selection_strategy"] = strategy
                 selected["_has_prior_incorrect_attempt"] = selected["question_id"] in incorrect_question_ids
                 selected["_recent_question_ids"] = recent_question_ids
+                selected["_attempt_count"] = attempt_count
                 return selected
 
         selected = dict(items[0])
         selected["_selection_strategy"] = "fallback"
         selected["_has_prior_incorrect_attempt"] = selected["question_id"] in incorrect_question_ids
         selected["_recent_question_ids"] = recent_question_ids
+        selected["_attempt_count"] = attempt_count
         return selected
     finally:
         cur.close()
