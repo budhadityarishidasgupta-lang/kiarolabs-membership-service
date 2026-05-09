@@ -47,7 +47,40 @@ def _resolve_user_id(cur, user_email):
     return row[0] if row else None
 
 
-def _build_options(cur, word_id, correct_answer):
+def _clean_synonym_value(value, *, headword=None):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return None
+    if headword and text.lower() == str(headword).strip().lower():
+        return None
+    return text
+
+
+def _normalize_synonym_list(synonyms, *, headword=None):
+    if isinstance(synonyms, str):
+        raw_values = synonyms.split(",")
+    elif isinstance(synonyms, list):
+        raw_values = synonyms
+    else:
+        return []
+
+    normalized = []
+    seen = set()
+    for value in raw_values:
+        cleaned = _clean_synonym_value(value, headword=headword)
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(cleaned)
+    return normalized
+
+
+def _build_options(cur, word_id, correct_answer, *, headword=None):
     cur.execute(
         """
         SELECT synonyms
@@ -63,21 +96,26 @@ def _build_options(cur, word_id, correct_answer):
 
     distractor_pool = []
     for r in cur.fetchall():
-        distractor_pool.extend(
-            [s.strip() for s in r[0].split(",") if s.strip()]
-        )
+        distractor_pool.extend(_normalize_synonym_list(r[0], headword=headword))
 
     distractor_pool = [
         d for d in distractor_pool
         if d.lower() != correct_answer.lower()
     ]
 
-    distractor_pool = list(dict.fromkeys(distractor_pool))
+    deduped_distractor_pool = []
+    seen = set()
+    for distractor in distractor_pool:
+        lowered = distractor.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped_distractor_pool.append(distractor)
 
-    if len(distractor_pool) < 3:
+    if len(deduped_distractor_pool) < 3:
         return None
 
-    options = random.sample(distractor_pool, 3) + [correct_answer]
+    options = random.sample(deduped_distractor_pool, 3) + [correct_answer]
     random.shuffle(options)
 
     return options
@@ -605,16 +643,14 @@ def get_synonym_question(user_email):
 
         word_id, headword, synonyms = row
 
-        synonym_list = [
-            s.strip() for s in synonyms.split(",") if s.strip()
-        ]
+        synonym_list = _normalize_synonym_list(synonyms, headword=headword)
 
         if not synonym_list:
             return {"error": "No valid synonyms"}
 
-        correct = random.choice(synonym_list)
+        correct = synonym_list[0]
 
-        options = _build_options(cur, word_id, correct)
+        options = _build_options(cur, word_id, correct, headword=headword)
         if not options:
             return {"error": "Not enough distractors"}
 
@@ -697,24 +733,29 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
                 detail="No synonyms found for word"
             )
 
-        if isinstance(synonyms, str):
-            synonym_list = [s.strip().lower() for s in synonyms.split(",") if s.strip()]
-        elif isinstance(synonyms, list):
-            synonym_list = [str(s).strip().lower() for s in synonyms if str(s).strip()]
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Invalid synonyms format"
-            )
+        cur.execute(
+            """
+            SELECT headword
+            FROM public.words
+            WHERE word_id = %s
+            LIMIT 1
+            """,
+            (word_id,),
+        )
+        headword_row = cur.fetchone()
+        headword = headword_row[0] if headword_row else None
 
-        if not synonym_list:
+        normalized_synonyms = _normalize_synonym_list(synonyms, headword=headword)
+        synonym_list = [value.lower() for value in normalized_synonyms]
+
+        if not normalized_synonyms:
             raise HTTPException(
                 status_code=500,
-                detail="Failed to evaluate answer"
+                detail="Failed to evaluate answer",
             )
 
         correct = chosen.strip().lower() in synonym_list
-        correct_answer = synonym_list[0]
+        correct_answer = normalized_synonyms[0]
 
         print("INSERT DEBUG:", user_id, word_id, chosen, correct)
 
@@ -846,13 +887,17 @@ def get_next_synonym_question(user_email):
 
         word_id, headword, synonyms = row
 
-        synonym_list = [
-            s.strip() for s in synonyms.split(",") if s.strip()
-        ]
+        synonym_list = _normalize_synonym_list(synonyms, headword=headword)
 
-        correct = random.choice(synonym_list)
+        if not synonym_list:
+            return {"error": "No valid synonyms"}
 
-        options = _build_options(cur, word_id, correct)
+        correct = synonym_list[0]
+
+        options = _build_options(cur, word_id, correct, headword=headword)
+
+        if not options:
+            return {"error": "Not enough distractors"}
 
         return {
             "word_id": word_id,
@@ -1078,16 +1123,14 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
 
         word_id, headword, synonyms = row
 
-        synonym_list = [
-            s.strip() for s in synonyms.split(",") if s.strip()
-        ]
+        synonym_list = _normalize_synonym_list(synonyms, headword=headword)
 
         if not synonym_list:
             return {"error": "No valid synonyms"}
 
-        correct = random.choice(synonym_list)
+        correct = synonym_list[0]
 
-        options = _build_options(cur, word_id, correct)
+        options = _build_options(cur, word_id, correct, headword=headword)
         if not options:
             return {"error": "Not enough distractors"}
 
