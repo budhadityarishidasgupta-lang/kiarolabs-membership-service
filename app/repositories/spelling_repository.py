@@ -124,6 +124,31 @@ def get_recent_attempt_word_ids(user_id: int, lesson_id: int, conn, limit: int =
         return [row[0] for row in cur.fetchall() if row and row[0] is not None]
 
 
+def get_latest_attempt_summary(user_id: int, lesson_id: int, conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT word_id, correct, created_at
+            FROM spelling_attempts
+            WHERE user_id = %s
+              AND lesson_id = %s
+            ORDER BY created_at DESC, attempt_id DESC
+            LIMIT 1
+            """,
+            (user_id, lesson_id),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "word_id": row[0],
+        "correct": bool(row[1]),
+        "created_at": row[2],
+    }
+
+
 def has_prior_incorrect_attempt(user_id: int, lesson_id: int, word_id: int, conn) -> bool:
     with conn.cursor() as cur:
         cur.execute(
@@ -269,6 +294,26 @@ def get_next_unmastered_word(user_id, lesson_id, conn):
 
     with conn.cursor() as cur:
         cur.execute(query, (lesson_id, user_id, lesson_id))
+        result = cur.fetchone()
+
+    return result[0] if result else None
+
+
+def get_next_lesson_word_after(lesson_id: int, current_word_id: int, conn):
+    query = """
+        SELECT li.word_id
+        FROM spelling_lesson_items li
+        JOIN spelling_lessons l
+          ON l.lesson_id = li.lesson_id
+        WHERE li.lesson_id = %s
+          AND l.is_active = TRUE
+          AND li.word_id > %s
+        ORDER BY li.word_id ASC
+        LIMIT 1
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, (lesson_id, current_word_id))
         result = cur.fetchone()
 
     return result[0] if result else None

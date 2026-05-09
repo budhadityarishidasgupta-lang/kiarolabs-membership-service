@@ -1,5 +1,6 @@
 import random
 import uuid
+from datetime import datetime, timezone, timedelta
 
 from app.database import get_connection
 from app.repositories.spelling_repository import (
@@ -7,10 +8,12 @@ from app.repositories.spelling_repository import (
     get_weak_word_id,
     get_lesson_id_for_word,
     get_recent_attempt_word_ids,
+    get_latest_attempt_summary,
     has_prior_incorrect_attempt,
     is_word_mastered,
     get_word_timing_stats,
     get_next_unmastered_word,
+    get_next_lesson_word_after,
     get_spelling_next_item,
     get_spelling_micro_challenge_data,
     get_spelling_word_details,
@@ -23,6 +26,7 @@ from app.repositories.spelling_stats_repository import (
 
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
+SESSION_BOOTSTRAP_GAP = timedelta(minutes=15)
 
 
 def _add_review_metadata(payload, review_reason):
@@ -125,11 +129,164 @@ def compute_priority_score(is_weak, is_mastered, is_slow):
     return score
 
 
+def _is_session_bootstrap(latest_attempt_summary) -> bool:
+    if not latest_attempt_summary:
+        return True
+
+    created_at = latest_attempt_summary.get("created_at")
+    if created_at is None:
+        return True
+
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    return datetime.now(timezone.utc) - created_at > SESSION_BOOTSTRAP_GAP
+
+
+def _build_progression_candidate(
+    user_id: int,
+    lesson_id: int,
+    conn,
+    latest_attempt_summary,
+    session_bootstrap: bool,
+):
+    resume_word_id = get_resume_word_id(
+        user_id=user_id,
+        lesson_id=lesson_id,
+        conn=conn,
+    )
+    latest_attempted_word_id = latest_attempt_summary["word_id"] if latest_attempt_summary else None
+    next_progression_word_id = None
+    if latest_attempted_word_id:
+        next_progression_word_id = get_next_lesson_word_after(
+            lesson_id=lesson_id,
+            current_word_id=latest_attempted_word_id,
+            conn=conn,
+        )
+    next_unmastered_word_id = get_next_unmastered_word(
+        user_id=user_id,
+        lesson_id=lesson_id,
+        conn=conn,
+    )
+
+    if session_bootstrap:
+        progression_word_id = resume_word_id or next_unmastered_word_id
+        selected_strategy = "resume" if resume_word_id else "next"
+    else:
+        progression_word_id = next_progression_word_id or next_unmastered_word_id or resume_word_id
+        if next_progression_word_id:
+            selected_strategy = "next"
+        elif next_unmastered_word_id:
+            selected_strategy = "next"
+        else:
+            selected_strategy = "resume"
+
+    if not progression_word_id:
+        return None, resume_word_id, next_unmastered_word_id
+
+    progression_word = get_spelling_word_details(
+        word_id=progression_word_id,
+        conn=conn,
+    )
+    if not progression_word:
+        return None, resume_word_id, next_unmastered_word_id
+
+    timing_stats = get_word_timing_stats(
+        user_id=user_id,
+        lesson_id=lesson_id,
+        word_id=progression_word_id,
+        conn=conn,
+    )
+    mastered = is_word_mastered(
+        user_id=user_id,
+        lesson_id=lesson_id,
+        word_id=progression_word_id,
+        conn=conn,
+    )
+    return (
+        {
+            "item": progression_word,
+            "selection_strategy": selected_strategy,
+            "selection_score": 50 if selected_strategy == "resume" else 40,
+            "timing": timing_stats,
+            "mastered": mastered,
+        },
+        resume_word_id,
+        next_unmastered_word_id,
+    )
+
+
+def _build_review_candidate(
+    user_id: int,
+    lesson_id: int,
+    conn,
+    recent_attempt_word_ids: list[int],
+):
+    weak_word_id = get_weak_word_id(
+        user_id=user_id,
+        lesson_id=lesson_id,
+        conn=conn,
+        exclude_word_ids=recent_attempt_word_ids,
+    )
+    if not weak_word_id:
+        return None
+
+    weak_word = get_spelling_word_details(
+        word_id=weak_word_id,
+        conn=conn,
+    )
+    if not weak_word:
+        return None
+
+    return {
+        "item": weak_word,
+        "selection_strategy": "review",
+        "selection_score": 100,
+        "timing": get_word_timing_stats(
+            user_id=user_id,
+            lesson_id=lesson_id,
+            word_id=weak_word_id,
+            conn=conn,
+        ),
+        "mastered": is_word_mastered(
+            user_id=user_id,
+            lesson_id=lesson_id,
+            word_id=weak_word_id,
+            conn=conn,
+        ),
+        "word_id": weak_word_id,
+    }
+
+
+def _should_schedule_review(
+    review_candidate,
+    progression_candidate,
+    recent_attempt_word_ids: list[int],
+    session_bootstrap: bool,
+) -> bool:
+    if not review_candidate:
+        return False
+
+    if session_bootstrap and progression_candidate:
+        return False
+
+    if len(recent_attempt_word_ids) < 4:
+        return False
+
+    review_word_id = review_candidate["word_id"]
+    return review_word_id not in set(recent_attempt_word_ids)
+
+
 def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None = None):
     try:
         print("Lesson ID:", lesson_id)
         conn = get_connection()
         try:
+            latest_attempt_summary = get_latest_attempt_summary(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                conn=conn,
+            )
             recent_attempt_word_ids = get_recent_attempt_word_ids(
                 user_id=user_id,
                 lesson_id=lesson_id,
@@ -137,103 +294,43 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 limit=4,
             )
             recent_attempt_word_id_set = set(recent_attempt_word_ids)
+            session_bootstrap = _is_session_bootstrap(latest_attempt_summary)
 
-            # STEP 10: Weak word prioritization
-            weak_word_id = get_weak_word_id(
+            progression_candidate, resume_word_id, next_unmastered_word_id = _build_progression_candidate(
                 user_id=user_id,
                 lesson_id=lesson_id,
                 conn=conn,
-                exclude_word_ids=recent_attempt_word_ids,
+                latest_attempt_summary=latest_attempt_summary,
+                session_bootstrap=session_bootstrap,
             )
-
-            weak_word = None
-
-            if weak_word_id:
-                weak_word = get_spelling_word_details(
-                    word_id=weak_word_id,
-                    conn=conn,
-                )
-
-            resume_word_id = get_resume_word_id(
+            review_candidate = _build_review_candidate(
                 user_id=user_id,
                 lesson_id=lesson_id,
                 conn=conn,
+                recent_attempt_word_ids=recent_attempt_word_ids,
             )
-            resume_word = None
-            if resume_word_id:
-                resume_word = get_spelling_word_details(
-                    word_id=resume_word_id,
-                    conn=conn,
-                )
 
-            next_unmastered_word_id = get_next_unmastered_word(
-                user_id=user_id,
-                lesson_id=lesson_id,
-                conn=conn,
-            )
-            next_unmastered_word = None
-            if next_unmastered_word_id:
-                next_unmastered_word = get_spelling_word_details(
-                    word_id=next_unmastered_word_id,
-                    conn=conn,
-                )
+            weak_word_id = review_candidate["word_id"] if review_candidate else None
 
-            candidates = []
+            selected_candidate = None
+            if _should_schedule_review(
+                review_candidate=review_candidate,
+                progression_candidate=progression_candidate,
+                recent_attempt_word_ids=recent_attempt_word_ids,
+                session_bootstrap=session_bootstrap,
+            ):
+                selected_candidate = review_candidate
+            elif progression_candidate:
+                selected_candidate = progression_candidate
+            elif review_candidate:
+                selected_candidate = review_candidate
 
-            if weak_word:
-                candidates.append(("weak", weak_word))
-
-            if resume_word:
-                candidates.append(("resume", resume_word))
-
-            if next_unmastered_word:
-                candidates.append(("next", next_unmastered_word))
-
-            scored_candidates = []
-
-            for label, candidate in candidates:
-                word_id = candidate["word_id"] if "word_id" in candidate else candidate["id"]
-
-                is_weak = label == "weak"
-                is_mastered = is_word_mastered(
-                    user_id=user_id,
-                    lesson_id=lesson_id,
-                    word_id=word_id,
-                    conn=conn,
-                )
-                timing_stats = get_word_timing_stats(
-                    user_id=user_id,
-                    lesson_id=lesson_id,
-                    word_id=word_id,
-                    conn=conn,
-                )
-                is_slow = timing_stats["is_slow"]
-                score = compute_priority_score(is_weak, is_mastered, is_slow)
-
-                scored_candidates.append((score, candidate, label, timing_stats, is_mastered))
-
-            if scored_candidates:
-                scored_candidates.sort(key=lambda entry: entry[0], reverse=True)
-                best_score, item, selected_strategy, selected_timing_stats, mastered = scored_candidates[0]
-
-                latest_attempted_word_id = recent_attempt_word_ids[0] if recent_attempt_word_ids else None
-
-                selected_word_id = item["word_id"] if "word_id" in item else item["id"]
-                if latest_attempted_word_id and selected_word_id == latest_attempted_word_id:
-                    alternative = next(
-                        (
-                            candidate
-                            for candidate in scored_candidates[1:]
-                            if (
-                                candidate[1]["word_id"]
-                                if "word_id" in candidate[1]
-                                else candidate[1]["id"]
-                            ) != latest_attempted_word_id
-                        ),
-                        None,
-                    )
-                    if alternative:
-                        best_score, item, selected_strategy, selected_timing_stats, mastered = alternative
+            if selected_candidate:
+                item = selected_candidate["item"]
+                selected_strategy = selected_candidate["selection_strategy"]
+                best_score = selected_candidate["selection_score"]
+                selected_timing_stats = selected_candidate["timing"]
+                mastered = selected_candidate["mastered"]
             else:
                 item = get_spelling_next_item(user_id, lesson_id)
                 selected_strategy = item.get("_selection_strategy", "fallback") if item else "fallback"
@@ -258,8 +355,8 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     "resume_from_word_id": resume_word_id,
                     "next_unmastered_word_id": next_unmastered_word_id,
                     "resumed": False,
-                    "resume_strategy": "last_correct_next",
-                    "adaptive_strategy": "deterministic_priority_scoring",
+                    "resume_strategy": "progression_resume",
+                    "adaptive_strategy": "progression_with_spaced_review",
                     "selection_strategy": selected_strategy,
                     "selection_score": best_score,
                 }
@@ -289,14 +386,11 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 word_id=selected_word_id,
                 conn=conn,
             )
-            selected_as_review_return = selected_strategy in {"weak", "review"}
+            selected_as_review_return = selected_strategy == "review"
             outside_cooldown = selected_word_id not in recent_attempt_word_id_set
             review_reason = None
             if prior_incorrect_attempt and outside_cooldown and selected_as_review_return:
-                if selected_strategy == "weak":
-                    review_reason = "weak_review"
-                else:
-                    review_reason = "practice_review"
+                review_reason = "practice_review"
 
             if lesson_id == 870:
                 sample_words = []
@@ -338,8 +432,8 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "resume_from_word_id": resume_word_id,
                 "next_unmastered_word_id": next_unmastered_word_id,
                 "resumed": selected_strategy == "resume",
-                "resume_strategy": "last_correct_next",
-                "adaptive_strategy": "deterministic_priority_scoring",
+                "resume_strategy": "progression_resume",
+                "adaptive_strategy": "progression_with_spaced_review",
                 "selection_strategy": selected_strategy,
                 "selection_score": best_score,
                 "mastered": mastered,
