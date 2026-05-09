@@ -345,17 +345,17 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             weak_word_id = review_candidate["word_id"] if review_candidate else None
 
             selected_candidate = None
-            if _should_schedule_review(
+            selected_from_spaced_review = False
+            if progression_candidate:
+                selected_candidate = progression_candidate
+            elif _should_schedule_review(
                 review_candidate=review_candidate,
                 progression_candidate=progression_candidate,
                 recent_attempt_word_ids=recent_attempt_word_ids,
                 session_bootstrap=session_bootstrap,
             ):
                 selected_candidate = review_candidate
-            elif progression_candidate:
-                selected_candidate = progression_candidate
-            elif review_candidate:
-                selected_candidate = review_candidate
+                selected_from_spaced_review = True
 
             if selected_candidate:
                 item = selected_candidate["item"]
@@ -423,10 +423,9 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 word_id=selected_word_id,
                 conn=conn,
             )
-            selected_as_review_return = selected_strategy == "review"
             outside_cooldown = selected_word_id not in recent_attempt_word_id_set
             review_reason = None
-            if prior_incorrect_attempt and outside_cooldown and selected_as_review_return:
+            if prior_incorrect_attempt and outside_cooldown and selected_from_spaced_review:
                 review_reason = "practice_review"
 
             if lesson_id == 870:
