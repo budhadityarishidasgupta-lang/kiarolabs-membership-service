@@ -6,6 +6,8 @@ from app.repositories.spelling_repository import (
     get_resume_word_id,
     get_weak_word_id,
     get_lesson_id_for_word,
+    get_recent_attempt_word_ids,
+    has_prior_incorrect_attempt,
     is_word_mastered,
     get_word_timing_stats,
     get_next_unmastered_word,
@@ -128,11 +130,20 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
         print("Lesson ID:", lesson_id)
         conn = get_connection()
         try:
+            recent_attempt_word_ids = get_recent_attempt_word_ids(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                conn=conn,
+                limit=4,
+            )
+            recent_attempt_word_id_set = set(recent_attempt_word_ids)
+
             # STEP 10: Weak word prioritization
             weak_word_id = get_weak_word_id(
                 user_id=user_id,
                 lesson_id=lesson_id,
                 conn=conn,
+                exclude_word_ids=recent_attempt_word_ids,
             )
 
             weak_word = None
@@ -205,25 +216,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 scored_candidates.sort(key=lambda entry: entry[0], reverse=True)
                 best_score, item, selected_strategy, selected_timing_stats, mastered = scored_candidates[0]
 
-                latest_attempted_word_id = None
-                anti_repeat_cur = conn.cursor()
-                try:
-                    anti_repeat_cur.execute(
-                        """
-                        SELECT word_id
-                        FROM spelling_attempts
-                        WHERE user_id = %s
-                          AND lesson_id = %s
-                        ORDER BY created_at DESC, attempt_id DESC
-                        LIMIT 1
-                        """,
-                        (user_id, lesson_id),
-                    )
-                    row = anti_repeat_cur.fetchone()
-                    if row:
-                        latest_attempted_word_id = row[0]
-                finally:
-                    anti_repeat_cur.close()
+                latest_attempted_word_id = recent_attempt_word_ids[0] if recent_attempt_word_ids else None
 
                 selected_word_id = item["word_id"] if "word_id" in item else item["id"]
                 if latest_attempted_word_id and selected_word_id == latest_attempted_word_id:
@@ -243,7 +236,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                         best_score, item, selected_strategy, selected_timing_stats, mastered = alternative
             else:
                 item = get_spelling_next_item(user_id, lesson_id)
-                selected_strategy = "fallback"
+                selected_strategy = item.get("_selection_strategy", "fallback") if item else "fallback"
                 best_score = 0
                 selected_timing_stats = {
                     "attempt_count": 0,
@@ -289,13 +282,21 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             patterns = [weak_pattern] if weak_pattern else None
             question_id = str(uuid.uuid4())
             session_id = session_id or str(uuid.uuid4())
+            selected_word_id = item["word_id"]
+            prior_incorrect_attempt = has_prior_incorrect_attempt(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                word_id=selected_word_id,
+                conn=conn,
+            )
+            selected_as_review_return = selected_strategy in {"weak", "review"}
+            outside_cooldown = selected_word_id not in recent_attempt_word_id_set
             review_reason = None
-            if selected_strategy == "weak":
-                review_reason = "weak_review"
-            elif selected_strategy == "resume":
-                review_reason = "resume_review"
-            elif selected_timing_stats.get("attempt_count", 0) > 0 and not mastered:
-                review_reason = "practice_review"
+            if prior_incorrect_attempt and outside_cooldown and selected_as_review_return:
+                if selected_strategy == "weak":
+                    review_reason = "weak_review"
+                else:
+                    review_reason = "practice_review"
 
             if lesson_id == 870:
                 sample_words = []
@@ -328,7 +329,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "question_id": question_id,
                 "session_id": session_id,
                 "lesson_id": lesson_id,
-                "word_id": item["word_id"],
+                "word_id": selected_word_id,
                 "word_audio": "",
                 "masked_word": mask_word(item["word"], patterns, blanks_count=3),
                 "hint": clean_text(item["hint"]),

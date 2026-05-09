@@ -1,4 +1,95 @@
+import logging
+import re
+
 from app.database import get_connection
+
+
+logger = logging.getLogger(__name__)
+
+CANONICAL_SPELLING_LESSON_RE = re.compile(r'^"[A-Z/\' ]+" pattern Words$')
+BAD_SPELLING_LESSON_RE = re.compile(r"^\s*(?:lx-p\d+|\d+|patterns?|spelling patterns?)\s*$", re.IGNORECASE)
+PATTERN_EXTRACTION_RULES = (
+    ("SSION", lambda word: word.endswith("ssion")),
+    ("TION", lambda word: word.endswith("tion")),
+    ("SION", lambda word: word.endswith("sion")),
+    ("CION", lambda word: word.endswith("cion")),
+    ("URE", lambda word: word.endswith("ure")),
+    ("PH", lambda word: "ph" in word),
+    ("CH", lambda word: "ch" in word),
+    ("GH", lambda word: "gh" in word),
+    ("DGE", lambda word: "dge" in word),
+    ("TCH", lambda word: "tch" in word),
+    ("CK", lambda word: "ck" in word),
+    ("WR", lambda word: "wr" in word),
+    ("KN", lambda word: "kn" in word),
+    ("GN", lambda word: "gn" in word),
+    ("MB", lambda word: word.endswith("mb")),
+    ("OUGH", lambda word: "ough" in word),
+)
+
+
+def _normalize_pattern_token(value: str) -> str:
+    cleaned = (value or "").strip().upper().replace('"', "")
+    cleaned = re.sub(r"\s+", "", cleaned)
+    cleaned = re.sub(r"[^A-Z/']", "", cleaned)
+    return cleaned
+
+
+def _canonical_spelling_lesson_name(pattern: str) -> str:
+    return f'"{pattern}" pattern Words'
+
+
+def _extract_pattern_from_text(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    quoted = re.search(r'"([^"]+)"', raw)
+    if quoted:
+        normalized = _normalize_pattern_token(quoted.group(1))
+        if normalized:
+            return normalized
+
+    tokenized = re.findall(r"[A-Za-z/']+", raw)
+    for token in tokenized:
+        normalized = _normalize_pattern_token(token)
+        if normalized in {rule[0] for rule in PATTERN_EXTRACTION_RULES}:
+            return normalized
+
+    lowered = raw.lower()
+    if BAD_SPELLING_LESSON_RE.match(raw):
+        return None
+
+    for pattern, matcher in PATTERN_EXTRACTION_RULES:
+        if matcher(lowered):
+            return pattern
+    return None
+
+
+def _coerce_spelling_lesson_name(value: str) -> str:
+    pattern = _extract_pattern_from_text(value)
+    if not pattern:
+        logger.warning("spelling_lesson_name_unassigned: %r", value)
+        return "UNASSIGNED"
+
+    lesson_name = _canonical_spelling_lesson_name(pattern)
+    if not CANONICAL_SPELLING_LESSON_RE.match(lesson_name):
+        raise ValueError("lesson_name failed canonical spelling lesson validation")
+    return lesson_name
+
+
+def _fetch_existing_spelling_lesson(cur, course_id: int, canonical_lesson_name: str):
+    cur.execute(
+        """
+        SELECT lesson_id, course_id, lesson_name, COALESCE(display_name, lesson_name), COALESCE(sort_order, 0), COALESCE(is_active, TRUE)
+        FROM spelling_lessons
+        WHERE course_id = %s
+          AND lesson_name = %s
+        LIMIT 1
+        """,
+        (course_id, canonical_lesson_name),
+    )
+    return cur.fetchone()
 
 
 def get_spelling_overview():
@@ -183,6 +274,23 @@ def create_spelling_lesson(
     cur = conn.cursor()
 
     try:
+        canonical_lesson_name = _coerce_spelling_lesson_name(lesson_name)
+        canonical_display_name = (
+            canonical_lesson_name if canonical_lesson_name == "UNASSIGNED" else (display_name or "").strip() or canonical_lesson_name
+        )
+
+        existing_row = _fetch_existing_spelling_lesson(cur, course_id, canonical_lesson_name)
+        if existing_row:
+            conn.rollback()
+            return {
+                "lesson_id": existing_row[0],
+                "course_id": existing_row[1],
+                "lesson_name": existing_row[2],
+                "display_name": existing_row[3],
+                "sort_order": existing_row[4],
+                "is_active": existing_row[5],
+            }
+
         cur.execute(
             """
             SELECT COALESCE(MAX(sort_order), 0) + 1
@@ -199,7 +307,7 @@ def create_spelling_lesson(
             VALUES (%s, %s, %s, %s, %s)
             RETURNING lesson_id, course_id, lesson_name, COALESCE(display_name, lesson_name), sort_order, is_active
             """,
-            (course_id, lesson_name.strip(), (display_name or "").strip() or None, sort_order, is_active),
+            (course_id, canonical_lesson_name, canonical_display_name, sort_order, is_active),
         )
         row = cur.fetchone()
         conn.commit()
@@ -229,8 +337,10 @@ def update_spelling_lesson(
     cur = conn.cursor()
 
     try:
-        cleaned_lesson_name = (lesson_name or "").strip()
-        cleaned_display_name = (display_name or "").strip() or None
+        cleaned_lesson_name = _coerce_spelling_lesson_name(lesson_name)
+        cleaned_display_name = (
+            cleaned_lesson_name if cleaned_lesson_name == "UNASSIGNED" else ((display_name or "").strip() or cleaned_lesson_name)
+        )
 
         if not cleaned_lesson_name:
             raise ValueError("lesson_name is required")

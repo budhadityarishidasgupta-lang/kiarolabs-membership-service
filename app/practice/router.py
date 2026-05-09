@@ -1944,8 +1944,11 @@ def get_comprehension_question(
         selected_question_id = None
         review_reason = None
         latest_attempted_question_id = None
+        recent_attempted_question_ids: list[int] = []
+        recent_attempted_question_id_set: set[int] = set()
         passage_question_ids: list[int] = []
         unique_weak_questions: list[int] = []
+        selected_as_review_return = False
 
         if question_id is not None:
             selected_question_id = question_id
@@ -1958,12 +1961,16 @@ def get_comprehension_question(
                 WHERE user_id = %s
                   AND passage_id = %s
                 ORDER BY created_at DESC
-                LIMIT 1
+                LIMIT 4
                 """,
                 (user_id, passage_id),
             )
-            latest_attempt_row = cur.fetchone()
-            latest_attempted_question_id = latest_attempt_row[0] if latest_attempt_row else None
+            recent_attempted_question_ids = [
+                row[0] for row in cur.fetchall()
+                if row and row[0] is not None
+            ]
+            recent_attempted_question_id_set = set(recent_attempted_question_ids)
+            latest_attempted_question_id = recent_attempted_question_ids[0] if recent_attempted_question_ids else None
 
             cur.execute(
                 """
@@ -1991,29 +1998,23 @@ def get_comprehension_question(
             weak_questions = [r[0] for r in cur.fetchall() if r and r[0] is not None]
             unique_weak_questions = list(dict.fromkeys(weak_questions))
 
-            if latest_attempted_question_id is not None:
-                alternative_weak_questions = [
-                    qid for qid in unique_weak_questions
-                    if qid != latest_attempted_question_id
-                ]
-                alternative_passage_questions = [
-                    qid for qid in passage_question_ids
-                    if qid != latest_attempted_question_id
-                ]
-            else:
-                alternative_weak_questions = unique_weak_questions
-                alternative_passage_questions = passage_question_ids
+            alternative_weak_questions = [
+                qid for qid in unique_weak_questions
+                if qid not in recent_attempted_question_id_set
+            ]
+            alternative_passage_questions = [
+                qid for qid in passage_question_ids
+                if qid not in recent_attempted_question_id_set
+            ]
 
             if alternative_weak_questions:
                 selected_question_id = random.choice(alternative_weak_questions)
-                review_reason = "passage_review"
-            elif weak_questions and alternative_passage_questions:
+                selected_as_review_return = True
+            elif unique_weak_questions and alternative_passage_questions:
                 selected_question_id = alternative_passage_questions[0]
-                if selected_question_id in unique_weak_questions:
-                    review_reason = "passage_review"
-            elif weak_questions:
+            elif unique_weak_questions:
                 selected_question_id = unique_weak_questions[0]
-                review_reason = "passage_review"
+                selected_as_review_return = True
 
         if (
             question_id is None
@@ -2022,22 +2023,27 @@ def get_comprehension_question(
         ):
             alternative_weak_questions = [
                 qid for qid in unique_weak_questions
-                if qid != latest_attempted_question_id
+                if qid not in recent_attempted_question_id_set
             ]
             alternative_passage_questions = [
                 qid for qid in passage_question_ids
-                if qid != latest_attempted_question_id
+                if qid not in recent_attempted_question_id_set
             ]
 
             if alternative_weak_questions:
                 selected_question_id = alternative_weak_questions[0]
-                review_reason = "passage_review"
+                selected_as_review_return = True
             elif alternative_passage_questions:
                 selected_question_id = alternative_passage_questions[0]
-                if selected_question_id in unique_weak_questions:
-                    review_reason = "passage_review"
-                else:
-                    review_reason = None
+                selected_as_review_return = False
+
+        if not selected_question_id:
+            alternative_passage_questions = [
+                qid for qid in passage_question_ids
+                if qid not in recent_attempted_question_id_set
+            ]
+            if alternative_passage_questions:
+                selected_question_id = alternative_passage_questions[0]
 
         if not selected_question_id:
             cur.execute(
@@ -2103,6 +2109,26 @@ def get_comprehension_question(
 
         if not question:
             _raise_not_found("Question not found")
+
+        if (
+            question_id is None
+            and selected_as_review_return
+            and question[0] not in recent_attempted_question_id_set
+        ):
+            cur.execute(
+                """
+                SELECT 1
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                  AND passage_id = %s
+                  AND question_id = %s
+                  AND correct = FALSE
+                LIMIT 1
+                """,
+                (user_id, passage_id, question[0]),
+            )
+            if cur.fetchone():
+                review_reason = "passage_review"
 
         payload = {
             "question_id": question[0],

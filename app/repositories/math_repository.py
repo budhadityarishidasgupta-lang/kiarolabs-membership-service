@@ -230,6 +230,35 @@ def _get_latest_question_id(cur, user_id: int, lesson_id: int):
     return row[0] if row else None
 
 
+def _get_recent_question_ids(cur, user_id: int, lesson_id: int, limit: int = 4) -> list[int]:
+    cur.execute(
+        """
+        SELECT question_id
+        FROM math_attempts
+        WHERE student_id = %s
+          AND lesson_id = %s
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (user_id, lesson_id, limit),
+    )
+    return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _get_incorrect_question_ids(cur, user_id: int, lesson_id: int) -> set[int]:
+    cur.execute(
+        """
+        SELECT DISTINCT question_id
+        FROM math_attempts
+        WHERE student_id = %s
+          AND lesson_id = %s
+          AND is_correct = FALSE
+        """,
+        (user_id, lesson_id),
+    )
+    return {row[0] for row in cur.fetchall() if row and row[0] is not None}
+
+
 def _avoid_immediate_repeat(items: list[dict], last_question_id):
     if len(items) <= 1 or not last_question_id:
         return items
@@ -239,6 +268,15 @@ def _avoid_immediate_repeat(items: list[dict], last_question_id):
 
 def _sort_last_seen(value):
     return value if value is not None else datetime.min
+
+
+def _apply_recent_cooldown(items: list[dict], recent_question_ids: list[int]):
+    if len(items) <= 1 or not recent_question_ids:
+        return items
+
+    recent_question_set = set(recent_question_ids)
+    filtered = [item for item in items if item["question_id"] not in recent_question_set]
+    return filtered or items
 
 
 def get_math_next_question(user_id: int, lesson_id_or_scope: int):
@@ -252,6 +290,8 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
             return None
 
         last_question_id = _get_latest_question_id(cur, user_id, lesson_id_or_scope)
+        recent_question_ids = _get_recent_question_ids(cur, user_id, lesson_id_or_scope)
+        incorrect_question_ids = _get_incorrect_question_ids(cur, user_id, lesson_id_or_scope)
 
         unseen = [item for item in items if item["times_seen"] == 0]
         weak = [item for item in items if item["is_weak"] or item["times_wrong"] > 0]
@@ -261,12 +301,29 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
         weak = sorted(weak, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["question_id"]))
         review = sorted(review, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["question_id"]))
 
-        for pool in (unseen, weak, review):
-            candidate_pool = _avoid_immediate_repeat(pool, last_question_id)
-            if candidate_pool:
-                return candidate_pool[0]
+        pool_definitions = (
+            ("unseen", unseen, False),
+            ("weak", weak, True),
+            ("review", review, True),
+        )
 
-        return items[0]
+        for strategy, pool, apply_cooldown in pool_definitions:
+            candidate_pool = pool
+            if apply_cooldown:
+                candidate_pool = _apply_recent_cooldown(candidate_pool, recent_question_ids)
+            candidate_pool = _avoid_immediate_repeat(candidate_pool, last_question_id)
+            if candidate_pool:
+                selected = dict(candidate_pool[0])
+                selected["_selection_strategy"] = strategy
+                selected["_has_prior_incorrect_attempt"] = selected["question_id"] in incorrect_question_ids
+                selected["_recent_question_ids"] = recent_question_ids
+                return selected
+
+        selected = dict(items[0])
+        selected["_selection_strategy"] = "fallback"
+        selected["_has_prior_incorrect_attempt"] = selected["question_id"] in incorrect_question_ids
+        selected["_recent_question_ids"] = recent_question_ids
+        return selected
     finally:
         cur.close()
         conn.close()

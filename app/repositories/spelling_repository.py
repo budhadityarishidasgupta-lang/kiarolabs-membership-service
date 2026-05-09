@@ -68,7 +68,7 @@ def get_resume_word_id(user_id, lesson_id, conn):
     return result[0] if result else None
 
 
-def get_weak_word_id(user_id, lesson_id, conn):
+def get_weak_word_id(user_id, lesson_id, conn, exclude_word_ids: list[int] | None = None):
     """
     Returns a weak word_id for a user within a lesson.
     Weak = more incorrect attempts than correct attempts.
@@ -76,42 +76,69 @@ def get_weak_word_id(user_id, lesson_id, conn):
     """
 
     query = """
-        WITH latest_attempt AS (
+        SELECT
+            word_id,
+            (
+                SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)::float /
+                COUNT(*)
+            ) AS accuracy,
+            MAX(created_at) AS last_attempt_at
+        FROM spelling_attempts
+        WHERE user_id = %s
+          AND lesson_id = %s
+        GROUP BY word_id
+        HAVING SUM(CASE WHEN correct = FALSE THEN 1 ELSE 0 END) >
+               SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)
+        ORDER BY accuracy ASC, last_attempt_at ASC
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, (user_id, lesson_id))
+        rows = cur.fetchall()
+
+    if not rows:
+        return None
+
+    exclude_set = {word_id for word_id in (exclude_word_ids or []) if word_id is not None}
+    if exclude_set:
+        for row in rows:
+            if row[0] not in exclude_set:
+                return row[0]
+
+    return None
+
+
+def get_recent_attempt_word_ids(user_id: int, lesson_id: int, conn, limit: int = 4) -> list[int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
             SELECT word_id
             FROM spelling_attempts
             WHERE user_id = %s
               AND lesson_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        ),
-        weak_words AS (
-            SELECT
-                word_id,
-                (
-                    SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)::float /
-                    COUNT(*)
-                ) AS accuracy,
-                MAX(created_at) AS last_attempt_at
+            ORDER BY created_at DESC, attempt_id DESC
+            LIMIT %s
+            """,
+            (user_id, lesson_id, limit),
+        )
+        return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def has_prior_incorrect_attempt(user_id: int, lesson_id: int, word_id: int, conn) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
             FROM spelling_attempts
             WHERE user_id = %s
               AND lesson_id = %s
-            GROUP BY word_id
-            HAVING SUM(CASE WHEN correct = FALSE THEN 1 ELSE 0 END) >
-                   SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END)
+              AND word_id = %s
+              AND correct = FALSE
+            LIMIT 1
+            """,
+            (user_id, lesson_id, word_id),
         )
-        SELECT ww.word_id
-        FROM weak_words ww
-        LEFT JOIN latest_attempt la ON TRUE
-        WHERE la.word_id IS NULL OR ww.word_id <> la.word_id
-        ORDER BY ww.accuracy ASC, ww.last_attempt_at ASC
-        LIMIT 1
-    """
-
-    with conn.cursor() as cur:
-        cur.execute(query, (user_id, lesson_id, user_id, lesson_id))
-        result = cur.fetchone()
-
-    return result[0] if result else None
+        return cur.fetchone() is not None
 
 
 def get_lesson_id_for_word(word_id: int, conn=None):
@@ -323,6 +350,14 @@ def _avoid_immediate_repeat(items: list[dict], last_word_id):
     return filtered or items
 
 
+def _avoid_recent_review_repeat(items: list[dict], recent_word_ids: list[int]):
+    if not recent_word_ids:
+        return items
+    recent_word_id_set = set(recent_word_ids)
+    filtered = [item for item in items if item["word_id"] not in recent_word_id_set]
+    return filtered or items
+
+
 def _sort_last_seen(value):
     return value if value is not None else datetime.min
 
@@ -351,6 +386,7 @@ def get_spelling_next_item(user_id: int, lesson_id: int):
             return None
 
         last_word_id = _get_latest_word_id(cur, user_id, lesson_id)
+        recent_word_ids = get_recent_attempt_word_ids(user_id, lesson_id, conn, limit=4)
 
         unseen = [item for item in items if item["times_seen"] == 0]
         weak = [item for item in items if item["is_weak"]]
@@ -360,12 +396,19 @@ def get_spelling_next_item(user_id: int, lesson_id: int):
         weak = sorted(weak, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["word_id"]))
         review = sorted(review, key=lambda item: (item["accuracy"], _sort_last_seen(item["last_seen_at"]), item["word_id"]))
 
-        for pool in (unseen, weak, review):
-            candidate_pool = _avoid_immediate_repeat(pool, last_word_id)
+        for pool_name, pool in (("unseen", unseen), ("weak", weak), ("review", review)):
+            candidate_pool = pool
+            if pool_name in {"weak", "review"}:
+                candidate_pool = _avoid_recent_review_repeat(candidate_pool, recent_word_ids)
+            candidate_pool = _avoid_immediate_repeat(candidate_pool, last_word_id)
             if candidate_pool:
-                return candidate_pool[0]
+                selected_item = dict(candidate_pool[0])
+                selected_item["_selection_strategy"] = pool_name
+                return selected_item
 
-        return items[0]
+        selected_item = dict(items[0])
+        selected_item["_selection_strategy"] = "fallback"
+        return selected_item
     finally:
         cur.close()
         conn.close()

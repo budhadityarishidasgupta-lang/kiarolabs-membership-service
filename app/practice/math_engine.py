@@ -42,7 +42,13 @@ def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
 
     session_id = _normalize_practice_session_id(session_id)
     review_reason = None
-    if item.get("is_weak") or (item.get("times_wrong") or 0) > 0:
+    recent_question_ids = item.get("_recent_question_ids") or []
+    is_spaced_review_return = (
+        item.get("_selection_strategy") in {"weak", "review"}
+        and item.get("_has_prior_incorrect_attempt")
+        and item["question_id"] not in recent_question_ids
+    )
+    if is_spaced_review_return:
         review_reason = "review_question"
 
     payload = {

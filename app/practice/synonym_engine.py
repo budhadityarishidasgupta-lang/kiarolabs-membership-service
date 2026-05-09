@@ -186,39 +186,159 @@ def _get_recent_incorrect_synonym_word_ids(cur, user_id):
     return [row[0] for row in cur.fetchall() if row and row[0]]
 
 
-def _has_incorrect_synonym_attempt(cur, user_id, word_id):
+def _get_recent_synonym_attempt_word_ids(cur, user_id, limit=4):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    timestamp_column = _get_synonym_timestamp_column(columns)
+    if not table_name or not timestamp_column:
+        return []
+
+    cur.execute(
+        f"""
+        SELECT word_id
+        FROM public.{table_name}
+        WHERE user_id = %s
+        ORDER BY {timestamp_column} DESC
+        LIMIT %s
+        """,
+        (user_id, limit),
+    )
+    return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _get_recent_lesson_synonym_attempt_word_ids(cur, user_id, lesson_id, limit=4):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    timestamp_column = _get_synonym_timestamp_column(columns)
+    if not table_name or not timestamp_column:
+        return []
+
+    cur.execute(
+        f"""
+        SELECT sa.word_id
+        FROM public.{table_name} sa
+        JOIN public.lesson_words lw
+          ON lw.word_id = sa.word_id
+        WHERE sa.user_id = %s
+          AND lw.lesson_id = %s
+        ORDER BY sa.{timestamp_column} DESC
+        LIMIT %s
+        """,
+        (user_id, lesson_id, limit),
+    )
+    return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _get_recent_incorrect_lesson_synonym_word_ids(cur, user_id, lesson_id, limit=5):
+    table_name, columns = _resolve_synonym_attempt_store(cur)
+    correct_column = _get_synonym_correct_column(columns)
+    timestamp_column = _get_synonym_timestamp_column(columns)
+    if not table_name or not correct_column or not timestamp_column:
+        return []
+
+    cur.execute(
+        f"""
+        SELECT sa.word_id
+        FROM public.{table_name} sa
+        JOIN public.lesson_words lw
+          ON lw.word_id = sa.word_id
+        WHERE sa.user_id = %s
+          AND lw.lesson_id = %s
+          AND sa.{correct_column} = FALSE
+        ORDER BY sa.{timestamp_column} DESC
+        LIMIT %s
+        """,
+        (user_id, lesson_id, limit),
+    )
+    return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _has_incorrect_synonym_attempt(cur, user_id, word_id, lesson_id=None):
     table_name, columns = _resolve_synonym_attempt_store(cur)
     correct_column = _get_synonym_correct_column(columns)
     if not table_name or not correct_column:
         return False
 
-    cur.execute(
-        f"""
-        SELECT 1
-        FROM public.{table_name}
-        WHERE user_id = %s
-          AND word_id = %s
-          AND {correct_column} = FALSE
-        LIMIT 1
-        """,
-        (user_id, word_id),
-    )
+    if lesson_id is not None:
+        cur.execute(
+            f"""
+            SELECT 1
+            FROM public.{table_name} sa
+            JOIN public.lesson_words lw
+              ON lw.word_id = sa.word_id
+            WHERE sa.user_id = %s
+              AND sa.word_id = %s
+              AND lw.lesson_id = %s
+              AND sa.{correct_column} = FALSE
+            LIMIT 1
+            """,
+            (user_id, word_id, lesson_id),
+        )
+    else:
+        cur.execute(
+            f"""
+            SELECT 1
+            FROM public.{table_name}
+            WHERE user_id = %s
+              AND word_id = %s
+              AND {correct_column} = FALSE
+            LIMIT 1
+            """,
+            (user_id, word_id),
+        )
     return cur.fetchone() is not None
 
 
-def _fetch_random_synonym_row(cur, excluded_word_id=None):
-    if excluded_word_id is not None:
+def _fetch_random_synonym_row(cur, excluded_word_ids=None, lesson_id=None):
+    excluded_word_ids = [word_id for word_id in (excluded_word_ids or []) if word_id is not None]
+
+    if lesson_id is not None and excluded_word_ids:
         cur.execute(
             """
             SELECT word_id, headword, synonyms
-            FROM public.words
-            WHERE word_id <> %s
+            FROM public.words w
+            JOIN public.lesson_words lw ON lw.word_id = w.word_id
+            WHERE lw.lesson_id = %s
+              AND w.word_id <> ALL(%s)
               AND synonyms IS NOT NULL
               AND TRIM(synonyms) <> ''
             ORDER BY RANDOM()
             LIMIT 1
             """,
-            (excluded_word_id,),
+            (lesson_id, excluded_word_ids),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+
+    if lesson_id is not None:
+        cur.execute(
+            """
+            SELECT word_id, headword, synonyms
+            FROM public.words w
+            JOIN public.lesson_words lw ON lw.word_id = w.word_id
+            WHERE lw.lesson_id = %s
+              AND synonyms IS NOT NULL
+              AND TRIM(synonyms) <> ''
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (lesson_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            return row
+
+    if excluded_word_ids:
+        cur.execute(
+            """
+            SELECT word_id, headword, synonyms
+            FROM public.words
+            WHERE word_id <> ALL(%s)
+              AND synonyms IS NOT NULL
+              AND TRIM(synonyms) <> ''
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            (excluded_word_ids,),
         )
         row = cur.fetchone()
         if row:
@@ -330,19 +450,23 @@ def get_synonym_question(user_email):
         row = None
         selected_word_id = None
         user_id = _resolve_user_id(cur, user_email)
-        latest_attempted_word_id = None
+        recent_attempted_word_ids = []
+        selected_as_review_return = False
 
         if user_id:
-            latest_attempted_word_id = get_latest_synonym_attempt_word_id(user_id)
+            recent_attempted_word_ids = _get_recent_synonym_attempt_word_ids(cur, user_id, limit=4)
             weak_words = _get_recent_incorrect_synonym_word_ids(cur, user_id)
+            weak_words = list(dict.fromkeys(weak_words))
             alternative_weak_words = [
                 word_id for word_id in weak_words
-                if word_id != latest_attempted_word_id
+                if word_id not in recent_attempted_word_ids
             ]
             if alternative_weak_words:
                 selected_word_id = random.choice(alternative_weak_words)
-            elif weak_words and latest_attempted_word_id is None:
+                selected_as_review_return = True
+            elif weak_words:
                 selected_word_id = random.choice(weak_words)
+                selected_as_review_return = True
 
         if selected_word_id:
             cur.execute(
@@ -359,7 +483,7 @@ def get_synonym_question(user_email):
             row = cur.fetchone()
 
         if not row:
-            row = _fetch_random_synonym_row(cur, excluded_word_id=latest_attempted_word_id)
+            row = _fetch_random_synonym_row(cur, excluded_word_ids=recent_attempted_word_ids)
 
         if not row:
             return {"error": "No synonym word found"}
@@ -380,7 +504,12 @@ def get_synonym_question(user_email):
             return {"error": "Not enough distractors"}
 
         review_reason = None
-        if user_id and _has_incorrect_synonym_attempt(cur, user_id, word_id):
+        if (
+            user_id
+            and selected_as_review_return
+            and word_id not in recent_attempted_word_ids
+            and _has_incorrect_synonym_attempt(cur, user_id, word_id)
+        ):
             review_reason = "review_word"
 
         payload = {
@@ -767,50 +896,50 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
     cur = conn.cursor()
 
     try:
-        latest_attempted_word_id = None
+        recent_attempted_word_ids = []
+        selected_word_id = None
+        selected_as_review_return = False
 
         if user_id:
-            latest_attempted_word_id = _get_latest_lesson_synonym_attempt_word_id(
+            recent_attempted_word_ids = _get_recent_lesson_synonym_attempt_word_ids(
                 cur,
                 user_id,
                 lesson_id,
+                limit=4,
             )
+            weak_words = _get_recent_incorrect_lesson_synonym_word_ids(cur, user_id, lesson_id, limit=5)
+            weak_words = list(dict.fromkeys(weak_words))
+            alternative_weak_words = [
+                word_id for word_id in weak_words
+                if word_id not in recent_attempted_word_ids
+            ]
+            if alternative_weak_words:
+                selected_word_id = random.choice(alternative_weak_words)
+                selected_as_review_return = True
+            elif weak_words:
+                selected_word_id = random.choice(weak_words)
+                selected_as_review_return = True
 
-        if latest_attempted_word_id is not None:
+        if selected_word_id is not None:
             cur.execute(
                 """
                 SELECT w.word_id, w.headword, w.synonyms
                 FROM public.words w
                 JOIN public.lesson_words lw ON lw.word_id = w.word_id
                 WHERE lw.lesson_id = %s
+                  AND w.word_id = %s
                   AND w.synonyms IS NOT NULL
                   AND TRIM(w.synonyms) <> ''
-                  AND w.word_id <> %s
-                ORDER BY RANDOM()
                 LIMIT 1
                 """,
-                (lesson_id, latest_attempted_word_id),
+                (lesson_id, selected_word_id),
             )
             row = cur.fetchone()
         else:
             row = None
 
         if not row:
-            cur.execute(
-                """
-                SELECT w.word_id, w.headword, w.synonyms
-                FROM public.words w
-                JOIN public.lesson_words lw ON lw.word_id = w.word_id
-                WHERE lw.lesson_id = %s
-                  AND w.synonyms IS NOT NULL
-                  AND TRIM(w.synonyms) <> ''
-                ORDER BY RANDOM()
-                LIMIT 1
-                """,
-                (lesson_id,),
-            )
-
-            row = cur.fetchone()
+            row = _fetch_random_synonym_row(cur, excluded_word_ids=recent_attempted_word_ids, lesson_id=lesson_id)
         if not row:
             return {"error": "No synonym word found for lesson"}
 
@@ -830,7 +959,12 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
             return {"error": "Not enough distractors"}
 
         review_reason = None
-        if user_id and _has_incorrect_synonym_attempt(cur, user_id, word_id):
+        if (
+            user_id
+            and selected_as_review_return
+            and word_id not in recent_attempted_word_ids
+            and _has_incorrect_synonym_attempt(cur, user_id, word_id, lesson_id=lesson_id)
+        ):
             review_reason = "review_word"
 
         payload = {
