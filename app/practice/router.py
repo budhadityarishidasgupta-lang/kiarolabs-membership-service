@@ -1927,7 +1927,6 @@ def start_comprehension(passage_id: Optional[int] = None, user=Depends(get_curre
         raise HTTPException(status_code=404, detail="Passage not found")
 
     questions = result["questions"]
-
     next_question_id = None
 
     for question in questions:
@@ -1937,18 +1936,47 @@ def start_comprehension(passage_id: Optional[int] = None, user=Depends(get_curre
 
     if next_question_id is None and questions:
         conn = get_connection()
+        cur = conn.cursor()
+
         try:
+            recent_question_id = None
+
+            cur.execute(
+                """
+                SELECT question_id
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                  AND passage_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (user_id, passage_id),
+            )
+            recent_row = cur.fetchone()
+            if recent_row:
+                recent_question_id = recent_row[0]
+
             next_question = get_next_comprehension_question(
                 user_id=user_id,
                 passage_id=passage_id,
                 conn=conn,
                 cooldown_distance=3,
             )
-            if next_question:
+
+            if next_question and next_question.get("question_id") != recent_question_id:
                 next_question_id = next_question["question_id"]
-            else:
+
+            if next_question_id is None:
+                for question in questions:
+                    if question.get("question_id") != recent_question_id:
+                        next_question_id = question["question_id"]
+                        break
+
+            if next_question_id is None:
                 next_question_id = questions[0]["question_id"]
+
         finally:
+            cur.close()
             conn.close()
 
     return {
@@ -1976,6 +2004,22 @@ def get_comprehension_question(
         selected_question_id = None
         review_reason = None
         attempt_count = 0
+        recent_question_id = None
+
+        cur.execute(
+            """
+            SELECT question_id
+            FROM comprehension_attempts
+            WHERE user_id = %s
+              AND passage_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id, passage_id),
+        )
+        recent_row = cur.fetchone()
+        if recent_row:
+            recent_question_id = recent_row[0]
 
         if question_id is not None:
             selected_question_id = question_id
@@ -1997,10 +2041,11 @@ def get_comprehension_question(
                 SELECT question_id
                 FROM comprehension_questions
                 WHERE passage_id = %s
+                  AND (%s IS NULL OR question_id <> %s)
                 ORDER BY sort_order ASC, question_id ASC
                 LIMIT 1
                 """,
-                (passage_id,),
+                (passage_id, recent_question_id, recent_question_id),
             )
             fallback_row = cur.fetchone()
             if fallback_row:
@@ -2012,7 +2057,7 @@ def get_comprehension_question(
                 SELECT question_id
                 FROM comprehension_questions
                 WHERE passage_id = %s
-                ORDER BY RANDOM()
+                ORDER BY sort_order ASC, question_id ASC
                 LIMIT 1
                 """,
                 (passage_id,),
@@ -2045,6 +2090,21 @@ def get_comprehension_question(
                 SELECT question_id, question_text, option_a, option_b, option_c, option_d
                 FROM comprehension_questions
                 WHERE passage_id = %s
+                  AND (%s IS NULL OR question_id <> %s)
+                ORDER BY sort_order ASC, question_id ASC
+                LIMIT 1
+                """,
+                (passage_id, recent_question_id, recent_question_id),
+            )
+            question = cur.fetchone()
+            review_reason = None
+
+        if not question:
+            cur.execute(
+                """
+                SELECT question_id, question_text, option_a, option_b, option_c, option_d
+                FROM comprehension_questions
+                WHERE passage_id = %s
                 ORDER BY sort_order ASC, question_id ASC
                 LIMIT 1
                 """,
@@ -2061,12 +2121,14 @@ def get_comprehension_question(
             "question_text": question[1],
             "options": [question[2], question[3], question[4], question[5]],
         }
+
         return _add_review_metadata(
             payload,
             review_reason,
             question_position=attempt_count + 1,
             cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
         )
+
     except HTTPException:
         raise
     except Exception:
