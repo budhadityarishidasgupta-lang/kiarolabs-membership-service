@@ -689,7 +689,8 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
             )
 
         correct = chosen.strip().lower() in synonym_list
-        correct_answer = normalized_synonyms[0]
+        chosen_normalized = chosen.strip().lower()
+        correct_answer = chosen.strip() if chosen_normalized in synonym_list else normalized_synonyms[0]
 
         print("INSERT DEBUG:", user_id, word_id, chosen, correct)
 
