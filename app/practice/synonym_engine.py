@@ -381,13 +381,13 @@ def _fetch_random_synonym_row(cur, excluded_word_ids=None, lesson_id=None):
     if lesson_id is not None and excluded_word_ids:
         cur.execute(
             """
-            SELECT word_id, headword, synonyms
+            SELECT w.word_id, w.headword, w.synonyms
             FROM public.words w
             JOIN public.lesson_words lw ON lw.word_id = w.word_id
             WHERE lw.lesson_id = %s
-              AND w.word_id <> ALL(%s)
-              AND synonyms IS NOT NULL
-              AND TRIM(synonyms) <> ''
+            AND w.word_id <> ALL(%s)
+            AND w.synonyms IS NOT NULL
+            AND TRIM(w.synonyms) <> ''
             ORDER BY RANDOM()
             LIMIT 1
             """,
@@ -400,12 +400,12 @@ def _fetch_random_synonym_row(cur, excluded_word_ids=None, lesson_id=None):
     if lesson_id is not None:
         cur.execute(
             """
-            SELECT word_id, headword, synonyms
+            SELECT w.word_id, w.headword, w.synonyms
             FROM public.words w
             JOIN public.lesson_words lw ON lw.word_id = w.word_id
             WHERE lw.lesson_id = %s
-              AND synonyms IS NOT NULL
-              AND TRIM(synonyms) <> ''
+            AND w.synonyms IS NOT NULL
+            AND TRIM(w.synonyms) <> ''
             ORDER BY RANDOM()
             LIMIT 1
             """,
