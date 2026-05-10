@@ -1935,7 +1935,16 @@ def start_comprehension(passage_id: Optional[int] = None, user=Depends(get_curre
             break
 
     if next_question_id is None and questions:
-        next_question_id = questions[0]["question_id"]
+        next_question = get_next_comprehension_question(
+            user_id=user_id,
+            passage_id=passage_id,
+            conn=None,
+            cooldown_distance=3,
+        )
+        if next_question:
+            next_question_id = next_question["question_id"]
+        else:
+            next_question_id = questions[0]["question_id"]
 
     return {
         "passage": result["passage"],
