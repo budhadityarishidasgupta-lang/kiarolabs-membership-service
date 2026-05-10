@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
 SESSION_BOOTSTRAP_GAP = timedelta(minutes=15)
 REVIEW_COOLDOWN_DISTANCE = 5
-SESSION_RECENT_WINDOW = max(REVIEW_COOLDOWN_DISTANCE - 1, 1)
+SESSION_RECENT_WINDOW = REVIEW_COOLDOWN_DISTANCE
 
 
 def _build_session_state(*, is_review: bool, review_reason: str | None, question_position: int, cooldown_distance: int | None):
