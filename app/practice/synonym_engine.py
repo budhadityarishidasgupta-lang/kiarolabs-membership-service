@@ -600,8 +600,7 @@ def get_synonym_question(user_email):
         payload = {
             "word_id": word_id,
             "word": headword,
-            "options": validated_question["options"],
-            "correct_answer": validated_question["correct_answer"]
+            "options": validated_question["options"]
         }
         return _add_review_metadata(
             payload,
@@ -690,8 +689,7 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
             )
 
         correct = chosen.strip().lower() in synonym_list
-        chosen_normalized = chosen.strip().lower()
-        correct_answer = chosen.strip() if chosen_normalized in synonym_list else normalized_synonyms[0]
+        correct_answer = normalized_synonyms[0]
 
         print("INSERT DEBUG:", user_id, word_id, chosen, correct)
 
@@ -841,8 +839,7 @@ def get_next_synonym_question(user_email):
         return {
             "word_id": word_id,
             "word": headword,
-            "options": validated_question["options"],
-            "correct_answer": validated_question["correct_answer"]
+            "options": validated_question["options"]
         }
 
     finally:
