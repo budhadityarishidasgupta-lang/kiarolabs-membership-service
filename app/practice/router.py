@@ -1929,22 +1929,27 @@ def start_comprehension(passage_id: Optional[int] = None, user=Depends(get_curre
     questions = result["questions"]
 
     next_question_id = None
+
     for question in questions:
         if not question.get("attempted"):
             next_question_id = question["question_id"]
             break
 
     if next_question_id is None and questions:
-        next_question = get_next_comprehension_question(
-            user_id=user_id,
-            passage_id=passage_id,
-            conn=None,
-            cooldown_distance=3,
-        )
-        if next_question:
-            next_question_id = next_question["question_id"]
-        else:
-            next_question_id = questions[0]["question_id"]
+        conn = get_connection()
+        try:
+            next_question = get_next_comprehension_question(
+                user_id=user_id,
+                passage_id=passage_id,
+                conn=conn,
+                cooldown_distance=3,
+            )
+            if next_question:
+                next_question_id = next_question["question_id"]
+            else:
+                next_question_id = questions[0]["question_id"]
+        finally:
+            conn.close()
 
     return {
         "passage": result["passage"],
