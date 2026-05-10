@@ -21,9 +21,16 @@ def _build_session_state(*, is_review: bool, review_reason: str | None, question
     }
 
 
-def _add_review_metadata(payload, review_reason, *, question_position: int, cooldown_distance: int | None = None):
+def _add_review_metadata(
+    payload,
+    review_reason,
+    *,
+    question_position: int,
+    cooldown_distance: int | None = None,
+    show_encouragement: bool = False,
+):
     is_review = bool(review_reason)
-    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if is_review else None
+    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if show_encouragement else None
     payload["review_reason"] = review_reason
     payload["is_review"] = is_review
     payload["session_state"] = _build_session_state(
@@ -33,7 +40,6 @@ def _add_review_metadata(payload, review_reason, *, question_position: int, cool
         cooldown_distance=cooldown_distance if is_review else None,
     )
     return payload
-
 
 # --------------------------------------------------
 # INTERNAL HELPERS
@@ -689,7 +695,21 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
             )
 
         correct = chosen.strip().lower() in synonym_list
-        correct_answer = normalized_synonyms[0]
+        chosen_normalized = chosen.strip().lower()
+
+        validated_question = build_validated_synonym_question(
+            cur,
+            word_id=word_id,
+            headword=headword,
+            synonyms=synonyms,
+        )
+
+        if validated_question and validated_question.get("correct_answer"):
+            correct_answer = validated_question["correct_answer"]
+        elif chosen_normalized in synonym_list:
+            correct_answer = chosen.strip()
+        else:
+            correct_answer = normalized_synonyms[0]
 
         print("INSERT DEBUG:", user_id, word_id, chosen, correct)
 
@@ -839,7 +859,8 @@ def get_next_synonym_question(user_email):
         return {
             "word_id": word_id,
             "word": headword,
-            "options": validated_question["options"]
+            "options": validated_question["options"],
+            "correct_answer": validated_question["correct_answer"],
         }
 
     finally:
