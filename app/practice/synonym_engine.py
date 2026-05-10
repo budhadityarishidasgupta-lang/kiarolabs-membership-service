@@ -606,13 +606,15 @@ def get_synonym_question(user_email):
         payload = {
             "word_id": word_id,
             "word": headword,
-            "options": validated_question["options"]
+            "options": validated_question["options"],
+            "correct_answer": validated_question["correct_answer"],
         }
         return _add_review_metadata(
             payload,
             review_reason,
             question_position=attempt_count + 1,
             cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+            show_encouragement=bool(review_reason and selected_as_review_return),
         )
 
     finally:
@@ -1115,6 +1117,7 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
             review_reason,
             question_position=attempt_count + 1,
             cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+            show_encouragement=bool(review_reason and selected_as_review_return),
         )
 
     finally:
