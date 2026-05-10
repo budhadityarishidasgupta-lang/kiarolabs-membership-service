@@ -672,7 +672,6 @@ def get_synonym_question(user_email):
             "word_id": word_id,
             "word": headword,
             "options": validated_question["options"],
-            "correct_answer": validated_question["correct_answer"],
         }
         return _add_review_metadata(
             payload,
@@ -938,7 +937,6 @@ def get_next_synonym_question(user_email):
             "word_id": word_id,
             "word": headword,
             "options": validated_question["options"],
-            "correct_answer": validated_question["correct_answer"],
         }
 
     finally:
@@ -1177,7 +1175,6 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
             "word_id": word_id,
             "word": headword,
             "options": validated_question["options"],
-            "correct_answer": validated_question["correct_answer"]
         }
         return _add_review_metadata(
             payload,

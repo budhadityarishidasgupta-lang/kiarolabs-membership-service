@@ -99,6 +99,50 @@ def _add_review_metadata(payload, review_reason, *, question_position: int, cool
     return payload
 
 
+def _select_comprehension_start_question_id(
+    questions,
+    recent_question_id: int | None,
+    *,
+    exclude_question_id: int | None = None,
+):
+    if not isinstance(questions, list) or not questions:
+        return None
+
+    excluded_question_ids = {
+        question_id
+        for question_id in (recent_question_id, exclude_question_id)
+        if question_id is not None
+    }
+
+    def _iter_question_ids(*, attempted: bool | None = None, excluded_ids: set[int] | None = None):
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            question_id = question.get("question_id")
+            if question_id is None:
+                continue
+            if attempted is not None and bool(question.get("attempted")) is not attempted:
+                continue
+            if excluded_ids and question_id in excluded_ids:
+                continue
+            yield question_id
+
+    for question_id in _iter_question_ids(attempted=False, excluded_ids=excluded_question_ids):
+        return question_id
+
+    if exclude_question_id is not None and recent_question_id is not None:
+        for question_id in _iter_question_ids(attempted=False, excluded_ids={recent_question_id}):
+            return question_id
+
+    for question_id in _iter_question_ids(attempted=False):
+        return question_id
+
+    for question_id in _iter_question_ids(excluded_ids=excluded_question_ids):
+        return question_id
+
+    return next(_iter_question_ids(), None)
+
+
 def is_admin(user):
     return user.get("role") == "admin"
 
@@ -1914,7 +1958,11 @@ def get_comprehension_courses(user=Depends(get_current_user)):
 
 
 @router.get("/comprehension/start")
-def start_comprehension(passage_id: Optional[int] = None, user=Depends(get_current_user)):
+def start_comprehension(
+    passage_id: Optional[int] = None,
+    exclude_question_id: Optional[int] = None,
+    user=Depends(get_current_user),
+):
     if passage_id is None:
         _missing_param("passage_id")
 
@@ -1948,28 +1996,11 @@ def start_comprehension(passage_id: Optional[int] = None, user=Depends(get_curre
     finally:
         cur.close()
         conn.close()
-    next_question_id = None
-
-    for question in questions:
-        if not question.get("attempted") and question.get("question_id") != recent_question_id:
-            next_question_id = question["question_id"]
-            break
-
-    if next_question_id is None and recent_question_id is not None:
-        for question in questions:
-            if not question.get("attempted"):
-                next_question_id = question["question_id"]
-                break
-
-    if next_question_id is None and questions:
-        non_recent_questions = [
-            question for question in questions
-            if question.get("question_id") != recent_question_id
-        ]
-        if non_recent_questions:
-            next_question_id = non_recent_questions[0]["question_id"]
-        else:
-            next_question_id = questions[0]["question_id"]
+    next_question_id = _select_comprehension_start_question_id(
+        questions,
+        recent_question_id,
+        exclude_question_id=exclude_question_id,
+    )
 
     return {
         "passage": result["passage"],
@@ -2029,6 +2060,13 @@ def get_comprehension_question(
             attempt_count = int(recent_row[1] or 0)
         if excluded_question_id is None:
             excluded_question_id = recent_question_id
+            session_result = start_passage(passage_id, user_id)
+            start_question_id = _select_comprehension_start_question_id(
+                session_result.get("questions") if isinstance(session_result, dict) else [],
+                recent_question_id,
+            )
+            if start_question_id is not None:
+                excluded_question_id = start_question_id
 
         if question_id is not None:
             if question_id not in ordered_question_ids:
