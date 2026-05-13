@@ -169,12 +169,16 @@ def _resolve_comprehension_question_exclusion(
 ):
     if explicit_exclude_question_id is not None:
         return explicit_exclude_question_id
-    if recent_question_id is not None:
-        return recent_question_id
-    return _select_comprehension_start_question_id(
+
+    start_question_id = _select_comprehension_start_question_id(
         questions,
         recent_question_id,
     )
+    if start_question_id is not None:
+        return start_question_id
+    if recent_question_id is not None:
+        return recent_question_id
+    return None
 
 
 def is_admin(user):
@@ -2076,7 +2080,7 @@ def get_comprehension_question(
         )
 
         session_result = None
-        if effective_exclude_question_id is None and recent_question_id is None:
+        if effective_exclude_question_id is None:
             session_result = start_passage(passage_id, user_id)
 
         effective_exclude_question_id = _resolve_comprehension_question_exclusion(
