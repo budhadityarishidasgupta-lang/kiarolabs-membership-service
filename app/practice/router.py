@@ -143,6 +143,40 @@ def _select_comprehension_start_question_id(
     return next(_iter_question_ids(), None)
 
 
+def _get_recent_comprehension_attempt(cur, user_id: int, passage_id: int):
+    cur.execute(
+        """
+        SELECT question_id, COUNT(*) OVER()
+        FROM comprehension_attempts
+        WHERE user_id = %s
+          AND passage_id = %s
+        ORDER BY created_at DESC, attempt_id DESC
+        LIMIT 1
+        """,
+        (user_id, passage_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None, 0
+    return row[0], int(row[1] or 0)
+
+
+def _resolve_comprehension_question_exclusion(
+    *,
+    explicit_exclude_question_id: int | None,
+    recent_question_id: int | None,
+    questions,
+):
+    if explicit_exclude_question_id is not None:
+        return explicit_exclude_question_id
+    if recent_question_id is not None:
+        return recent_question_id
+    return _select_comprehension_start_question_id(
+        questions,
+        recent_question_id,
+    )
+
+
 def is_admin(user):
     return user.get("role") == "admin"
 
@@ -1980,19 +2014,11 @@ def start_comprehension(
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute(
-            """
-            SELECT question_id
-            FROM comprehension_attempts
-            WHERE user_id = %s
-              AND passage_id = %s
-            ORDER BY created_at DESC, attempt_id DESC
-            LIMIT 1
-            """,
-            (user_id, passage_id),
+        recent_question_id, _attempt_count = _get_recent_comprehension_attempt(
+            cur,
+            user_id,
+            passage_id,
         )
-        recent_row = cur.fetchone()
-        recent_question_id = recent_row[0] if recent_row else None
     finally:
         cur.close()
         conn.close()
@@ -2029,7 +2055,7 @@ def get_comprehension_question(
         review_reason = None
         attempt_count = 0
         recent_question_id = None
-        excluded_question_id = exclude_question_id
+        effective_exclude_question_id = exclude_question_id
         ordered_question_ids: list[int] = []
 
         cur.execute(
@@ -2043,50 +2069,26 @@ def get_comprehension_question(
         )
         ordered_question_ids = [row[0] for row in cur.fetchall() if row and row[0] is not None]
 
-        cur.execute(
-            """
-            SELECT question_id, COUNT(*) OVER()
-            FROM comprehension_attempts
-            WHERE user_id = %s
-              AND passage_id = %s
-            ORDER BY created_at DESC, attempt_id DESC
-            LIMIT 1
-            """,
-            (user_id, passage_id),
+        recent_question_id, attempt_count = _get_recent_comprehension_attempt(
+            cur,
+            user_id,
+            passage_id,
         )
-        recent_row = cur.fetchone()
-        if recent_row:
-            recent_question_id = recent_row[0]
-            attempt_count = int(recent_row[1] or 0)
-        if excluded_question_id is None:
-            excluded_question_id = recent_question_id
+
+        session_result = None
+        if effective_exclude_question_id is None and recent_question_id is None:
             session_result = start_passage(passage_id, user_id)
-            start_question_id = _select_comprehension_start_question_id(
-                session_result.get("questions") if isinstance(session_result, dict) else [],
-                recent_question_id,
-            )
-            if start_question_id is not None:
-                excluded_question_id = start_question_id
+
+        effective_exclude_question_id = _resolve_comprehension_question_exclusion(
+            explicit_exclude_question_id=exclude_question_id,
+            recent_question_id=recent_question_id,
+            questions=session_result.get("questions") if isinstance(session_result, dict) else [],
+        )
 
         if question_id is not None:
             if question_id not in ordered_question_ids:
                 _raise_not_found("Question not found")
             selected_question_id = question_id
-
-        if selected_question_id is None and ordered_question_ids:
-            if excluded_question_id is None and len(ordered_question_ids) > 1:
-                # `/comprehension/start` can already have returned the first ordered question
-                # without creating an attempt row, so avoid replaying it immediately.
-                selected_question_id = ordered_question_ids[1]
-            else:
-                selected_question_id = next(
-                    (
-                        candidate_question_id
-                        for candidate_question_id in ordered_question_ids
-                        if candidate_question_id != excluded_question_id
-                    ),
-                    ordered_question_ids[0],
-                )
 
         if selected_question_id is None:
             next_question = get_next_comprehension_question(
@@ -2094,16 +2096,22 @@ def get_comprehension_question(
                 passage_id=passage_id,
                 conn=conn,
                 cooldown_distance=3,
+                exclude_question_ids=[effective_exclude_question_id] if effective_exclude_question_id is not None else None,
             )
             if next_question:
-                next_candidate_question_id = next_question["question_id"]
-                if excluded_question_id is None or next_candidate_question_id != excluded_question_id:
-                    selected_question_id = next_candidate_question_id
+                selected_question_id = next_question["question_id"]
                 attempt_count = max(attempt_count, int(next_question.get("attempt_count") or 0))
 
         if not selected_question_id:
             if ordered_question_ids:
-                selected_question_id = ordered_question_ids[0]
+                selected_question_id = next(
+                    (
+                        candidate_question_id
+                        for candidate_question_id in ordered_question_ids
+                        if candidate_question_id != effective_exclude_question_id
+                    ),
+                    ordered_question_ids[0],
+                )
 
         if not selected_question_id:
             _raise_not_found("Question not found")
@@ -2133,7 +2141,7 @@ def get_comprehension_question(
                 ORDER BY sort_order ASC, question_id ASC
                 LIMIT 1
                 """,
-                (passage_id, excluded_question_id, excluded_question_id),
+                (passage_id, effective_exclude_question_id, effective_exclude_question_id),
             )
             question = cur.fetchone()
             review_reason = None

@@ -7,6 +7,14 @@ from app.repositories.words_repository import (
     record_words_attempt,
 )
 
+PRE_SUBMIT_ANSWER_FIELDS = {
+    "correct_answer",
+    "answer_key",
+    "answer",
+    "correct_index",
+    "correct_option_index",
+}
+
 
 def clean_text(value):
     if value is None:
@@ -49,6 +57,16 @@ def get_words_courses():
     return get_words_courses_tree()
 
 
+def _sanitize_pre_submit_question(payload: dict):
+    if not isinstance(payload, dict):
+        return payload
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in PRE_SUBMIT_ANSWER_FIELDS
+    }
+
+
 def get_words_question(lesson_id: int, user_id: int):
     item = get_words_next_item(user_id, lesson_id)
     if not item:
@@ -59,12 +77,12 @@ def get_words_question(lesson_id: int, user_id: int):
             "example": "",
         }
 
-    return {
+    return _sanitize_pre_submit_question({
         "word_id": item["word_id"],
         "masked_word": mask_word(item["word"]),
         "hint": clean_text(item["hint"]),
         "example": clean_text(item["example"]),
-    }
+    })
 
 
 def submit_words_answer(word_id: int, answer: str, user_id: int):

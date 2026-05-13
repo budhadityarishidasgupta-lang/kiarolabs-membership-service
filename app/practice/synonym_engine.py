@@ -10,6 +10,13 @@ from app.repositories.synonym_repository import (
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
 REVIEW_COOLDOWN_WINDOW = 4
+PRE_SUBMIT_ANSWER_FIELDS = {
+    "correct_answer",
+    "answer_key",
+    "answer",
+    "correct_index",
+    "correct_option_index",
+}
 
 
 def _build_session_state(*, is_review: bool, review_reason: str | None, question_position: int, cooldown_distance: int | None):
@@ -40,6 +47,16 @@ def _add_review_metadata(
         cooldown_distance=cooldown_distance if is_review else None,
     )
     return payload
+
+
+def _sanitize_pre_submit_question(payload: dict):
+    if not isinstance(payload, dict):
+        return payload
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in PRE_SUBMIT_ANSWER_FIELDS
+    }
 
 # --------------------------------------------------
 # INTERNAL HELPERS
@@ -673,12 +690,14 @@ def get_synonym_question(user_email):
             "word": headword,
             "options": validated_question["options"],
         }
-        return _add_review_metadata(
-            payload,
-            review_reason,
-            question_position=attempt_count + 1,
-            cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
-            show_encouragement=bool(review_reason and selected_as_review_return),
+        return _sanitize_pre_submit_question(
+            _add_review_metadata(
+                payload,
+                review_reason,
+                question_position=attempt_count + 1,
+                cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+                show_encouragement=bool(review_reason and selected_as_review_return),
+            )
         )
 
     finally:
@@ -933,11 +952,11 @@ def get_next_synonym_question(user_email):
         if not validated_question:
             return {"error": "Not enough distractors"}
 
-        return {
+        return _sanitize_pre_submit_question({
             "word_id": word_id,
             "word": headword,
             "options": validated_question["options"],
-        }
+        })
 
     finally:
         cur.close()
@@ -1176,12 +1195,14 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
             "word": headword,
             "options": validated_question["options"],
         }
-        return _add_review_metadata(
-            payload,
-            review_reason,
-            question_position=attempt_count + 1,
-            cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
-            show_encouragement=bool(review_reason and selected_as_review_return),
+        return _sanitize_pre_submit_question(
+            _add_review_metadata(
+                payload,
+                review_reason,
+                question_position=attempt_count + 1,
+                cooldown_distance=REVIEW_COOLDOWN_WINDOW if review_reason else None,
+                show_encouragement=bool(review_reason and selected_as_review_return),
+            )
         )
 
     finally:
@@ -1201,7 +1222,9 @@ def get_practice_session(user_email, lesson_id):
         cur.close()
         conn.close()
 
-    question = _get_lesson_synonym_question(lesson_id, user_id=user_id)
+    question = _sanitize_pre_submit_question(
+        _get_lesson_synonym_question(lesson_id, user_id=user_id)
+    )
 
     return {
         "course": "synonyms",

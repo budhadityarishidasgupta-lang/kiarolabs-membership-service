@@ -41,7 +41,7 @@ def start_passage(passage_id, user_id=None):
             SELECT question_id, question_text, option_a, option_b, option_c, option_d, sort_order
             FROM comprehension_questions
             WHERE passage_id = %s
-            ORDER BY sort_order
+            ORDER BY sort_order ASC, question_id ASC
         """, (passage_id,))
         questions = cur.fetchall()
 

@@ -152,6 +152,7 @@ def get_next_comprehension_question(
     passage_id,
     conn=None,
     cooldown_distance: int = COMPREHENSION_COOLDOWN_DISTANCE,
+    exclude_question_ids: list[int] | None = None,
 ):
     owns_connection = conn is None
     if owns_connection:
@@ -160,6 +161,12 @@ def get_next_comprehension_question(
     cur = conn.cursor()
 
     try:
+        excluded_question_id_set = {
+            question_id
+            for question_id in (exclude_question_ids or [])
+            if question_id is not None
+        }
+
         cur.execute(
             """
             SELECT question_id
@@ -203,17 +210,25 @@ def get_next_comprehension_question(
             if question_id not in cycle_attempted_ids
         ]
 
+        def _available_candidates(question_ids):
+            return [
+                candidate_question_id
+                for candidate_question_id in question_ids
+                if candidate_question_id not in excluded_question_id_set
+            ]
+
         def _first_not_recent(question_ids):
             for candidate_question_id in question_ids:
                 if candidate_question_id not in recent_question_id_set:
                     return candidate_question_id
             return None
 
-        selected_question_id = _first_not_recent(current_cycle_unanswered)
+        available_cycle_unanswered = _available_candidates(current_cycle_unanswered)
+        selected_question_id = _first_not_recent(available_cycle_unanswered)
         cycle_restarted = False
 
-        if selected_question_id is None and current_cycle_unanswered:
-            blocked_question_id = current_cycle_unanswered[0]
+        if selected_question_id is None and available_cycle_unanswered:
+            blocked_question_id = available_cycle_unanswered[0]
             logger.info(
                 "[COMPREHENSION_REPEAT_BLOCKED] %s",
                 json.dumps(
@@ -232,7 +247,7 @@ def get_next_comprehension_question(
 
         if selected_question_id is None:
             cycle_restarted = True
-            restart_candidates = list(ordered_question_ids)
+            restart_candidates = _available_candidates(ordered_question_ids)
             selected_question_id = _first_not_recent(restart_candidates)
             if selected_question_id is None and restart_candidates:
                 logger.info(
@@ -250,6 +265,12 @@ def get_next_comprehension_question(
                     ),
                 )
                 selected_question_id = restart_candidates[0]
+
+        if selected_question_id is None:
+            if ordered_question_ids:
+                selected_question_id = ordered_question_ids[0]
+            else:
+                return None
 
         if selected_question_id is None:
             return None
