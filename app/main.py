@@ -450,6 +450,75 @@ def get_valid_app_codes():
     return {item["app_code"] for item in AVAILABLE_APP_CATALOG}
 
 
+def _normalize_admin_app_codes(raw_apps) -> list[str]:
+    if isinstance(raw_apps, dict):
+        raw_apps = list(raw_apps.values())
+    elif isinstance(raw_apps, str):
+        raw_apps = [raw_apps]
+    elif raw_apps is None:
+        raw_apps = []
+    elif not isinstance(raw_apps, list):
+        raise HTTPException(status_code=400, detail="Apps must be a list")
+
+    valid_codes = get_valid_app_codes()
+    normalized_apps = sorted(
+        {
+            app_code
+            for app_code in (
+                str(app.get("app_code") if isinstance(app, dict) else app).strip().lower()
+                for app in raw_apps
+                if (app.get("app_code") if isinstance(app, dict) else app) is not None
+            )
+            if app_code and app_code not in {"none", "null"}
+        }
+    )
+    invalid_codes = [app for app in normalized_apps if app not in valid_codes]
+    if invalid_codes:
+        raise HTTPException(status_code=400, detail=f"Invalid apps: {', '.join(invalid_codes)}")
+
+    return normalized_apps
+
+
+def _resolve_member_for_admin_update(cur, *, raw_member_id: str, raw_email: str):
+    if not raw_email and not raw_member_id:
+        raise HTTPException(status_code=400, detail="Email or member_id is required")
+
+    cur.execute(
+        """
+        SELECT id, email
+        FROM kiaro_membership.members
+        WHERE (%s <> '' AND id::text = %s)
+           OR (%s <> '' AND LOWER(email) = LOWER(%s))
+        ORDER BY id
+        LIMIT 1
+        """,
+        (raw_member_id, raw_member_id, raw_email, raw_email),
+    )
+    member = cur.fetchone()
+    if not member:
+        raise HTTPException(status_code=404, detail="User not found")
+    return member
+
+
+def _replace_member_apps(cur, member_id: int, normalized_apps: list[str]):
+    cur.execute(
+        """
+        DELETE FROM kiaro_membership.member_apps
+        WHERE member_id = %s
+        """,
+        (member_id,),
+    )
+
+    for app_code in normalized_apps:
+        cur.execute(
+            """
+            INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+            VALUES (%s, %s)
+            """,
+            (member_id, app_code),
+        )
+
+
 # =========================
 # Health
 # =========================
@@ -1208,6 +1277,7 @@ def get_all_users(user=Depends(get_current_user)):
             """
             SELECT
                 m.id,
+                u.user_id,
                 m.email,
                 COALESCE(u.role, 'student') as role,
                 m.account_type,
@@ -1218,7 +1288,7 @@ def get_all_users(user=Depends(get_current_user)):
                 ON LOWER(u.email) = LOWER(m.email)
             LEFT JOIN kiaro_membership.member_apps ma
                 ON ma.member_id = m.id
-            GROUP BY m.id, m.email, u.role, m.account_type, m.created_at
+            GROUP BY m.id, u.user_id, m.email, u.role, m.account_type, m.created_at
             ORDER BY m.created_at DESC
             """
         )
@@ -1227,8 +1297,8 @@ def get_all_users(user=Depends(get_current_user)):
 
         result = []
         for r in rows:
-            account_type = r[3]
-            apps = [app for app in (r[5] or []) if app]
+            account_type = r[4]
+            apps = [app for app in (r[6] or []) if app]
 
             expected_apps = []
 
@@ -1240,10 +1310,11 @@ def get_all_users(user=Depends(get_current_user)):
             result.append(
                 {
                     "member_id": str(r[0]),
-                    "email": r[1],
-                    "role": r[2] if r[2] else "student",
-                    "account_type": r[3],
-                    "created_at": str(r[4]),
+                    "user_id": r[1],
+                    "email": r[2],
+                    "role": r[3] if r[3] else "student",
+                    "account_type": r[4],
+                    "created_at": str(r[5]),
                     "apps": apps,
                 }
             )
@@ -1304,71 +1375,19 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
 
     raw_email = str(payload.get("email", "")).strip().lower()
     raw_member_id = str(payload.get("member_id", "")).strip()
-    raw_apps = payload.get("apps", [])
-
-    if isinstance(raw_apps, dict):
-        raw_apps = list(raw_apps.values())
-    elif isinstance(raw_apps, str):
-        raw_apps = [raw_apps]
-    elif not isinstance(raw_apps, list):
-        raise HTTPException(status_code=400, detail="Apps must be a list")
-
-    if not raw_email and not raw_member_id:
-        raise HTTPException(status_code=400, detail="Email or member_id is required")
-
-    valid_codes = get_valid_app_codes()
-    normalized_apps = sorted(
-        {
-            app_code
-            for app_code in (
-                str(app.get("app_code") if isinstance(app, dict) else app).strip().lower()
-                for app in raw_apps
-                if (app.get("app_code") if isinstance(app, dict) else app) is not None
-            )
-            if app_code and app_code not in {"none", "null"}
-        }
-    )
-    invalid_codes = [app for app in normalized_apps if app not in valid_codes]
-    if invalid_codes:
-        raise HTTPException(status_code=400, detail=f"Invalid apps: {', '.join(invalid_codes)}")
+    normalized_apps = _normalize_admin_app_codes(payload.get("apps", []))
 
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        cur.execute(
-            """
-            SELECT id, email
-            FROM kiaro_membership.members
-            WHERE (%s <> '' AND id::text = %s)
-               OR (%s <> '' AND LOWER(email) = LOWER(%s))
-            ORDER BY id
-            LIMIT 1
-            """,
-            (raw_member_id, raw_member_id, raw_email, raw_email),
+        member = _resolve_member_for_admin_update(
+            cur,
+            raw_member_id=raw_member_id,
+            raw_email=raw_email,
         )
-        member = cur.fetchone()
-        if not member:
-            raise HTTPException(status_code=404, detail="User not found")
-
         member_id = member[0]
-
-        cur.execute(
-            """
-            DELETE FROM kiaro_membership.member_apps
-            WHERE member_id = %s
-            """,
-            (member_id,),
-        )
-
-        for app_code in normalized_apps:
-            cur.execute(
-                """
-                INSERT INTO kiaro_membership.member_apps (member_id, app_code)
-                VALUES (%s, %s)
-                """,
-                (member_id, app_code),
-            )
+        _replace_member_apps(cur, member_id, normalized_apps)
 
         conn.commit()
 
@@ -1377,6 +1396,66 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
             "email": member[1],
             "member_id": member_id,
             "apps": normalized_apps,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/admin/set-user-apps-bulk")
+def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    raw_targets = payload.get("users", [])
+    if not isinstance(raw_targets, list) or not raw_targets:
+        raise HTTPException(status_code=400, detail="At least one user is required")
+
+    normalized_apps = _normalize_admin_app_codes(payload.get("apps", []))
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        updated_users = []
+        seen_member_ids: set[int] = set()
+
+        for raw_target in raw_targets:
+            if isinstance(raw_target, dict):
+                raw_member_id = str(raw_target.get("member_id", "")).strip()
+                raw_email = str(raw_target.get("email", "")).strip().lower()
+            else:
+                raw_member_id = str(raw_target).strip()
+                raw_email = ""
+
+            member = _resolve_member_for_admin_update(
+                cur,
+                raw_member_id=raw_member_id,
+                raw_email=raw_email,
+            )
+            member_id = int(member[0])
+            if member_id in seen_member_ids:
+                continue
+
+            _replace_member_apps(cur, member_id, normalized_apps)
+            seen_member_ids.add(member_id)
+            updated_users.append(
+                {
+                    "member_id": member_id,
+                    "email": member[1],
+                }
+            )
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "updated_count": len(updated_users),
+            "apps": normalized_apps,
+            "users": updated_users,
         }
     except Exception:
         conn.rollback()

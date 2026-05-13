@@ -42,6 +42,14 @@ class AdminResetPasswordPayload(BaseModel):
         allow_population_by_field_name = True
 
 
+class AdminBulkResetPasswordPayload(BaseModel):
+    user_ids: list[int] = Field(alias="userIds")
+    new_password: str = Field(alias="newPassword")
+
+    class Config:
+        allow_population_by_field_name = True
+
+
 def init_password_reset_tables():
     conn = get_connection()
     cur = conn.cursor()
@@ -237,6 +245,44 @@ def admin_reset_password(
         conn.commit()
 
         return {"message": "Password updated by admin"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/admin/reset-password-bulk")
+def admin_reset_password_bulk(
+    payload: AdminBulkResetPasswordPayload,
+    user=Depends(get_current_user),
+):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    normalized_user_ids = sorted({int(user_id) for user_id in (payload.user_ids or []) if user_id is not None})
+    if not normalized_user_ids:
+        raise HTTPException(status_code=400, detail="At least one user_id is required")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        password_hash = _hash_password(payload.new_password)
+        updated_user_ids: list[int] = []
+
+        for user_id in normalized_user_ids:
+            _update_password_hashes(cur, user_id, password_hash)
+            updated_user_ids.append(user_id)
+
+        conn.commit()
+
+        return {
+            "message": "Passwords updated by admin",
+            "updated_count": len(updated_user_ids),
+            "user_ids": updated_user_ids,
+        }
     except HTTPException:
         conn.rollback()
         raise
