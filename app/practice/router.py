@@ -87,7 +87,10 @@ def _build_session_state(*, is_review: bool, review_reason: str | None, question
 
 def _add_review_metadata(payload, review_reason, *, question_position: int, cooldown_distance: int | None = None):
     is_review = bool(review_reason)
-    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if is_review else None
+    if is_review:
+        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
+    else:
+        payload.pop("encouragement_message", None)
     payload["review_reason"] = review_reason
     payload["is_review"] = is_review
     payload["session_state"] = _build_session_state(

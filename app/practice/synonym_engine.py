@@ -37,7 +37,10 @@ def _add_review_metadata(
     show_encouragement: bool = False,
 ):
     is_review = bool(review_reason)
-    payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE if show_encouragement else None
+    if show_encouragement:
+        payload["encouragement_message"] = REVIEW_ENCOURAGEMENT_MESSAGE
+    else:
+        payload.pop("encouragement_message", None)
     payload["review_reason"] = review_reason
     payload["is_review"] = is_review
     payload["session_state"] = _build_session_state(
