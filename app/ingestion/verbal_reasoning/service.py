@@ -95,6 +95,7 @@ def upload_verbal_reasoning_answer_csv(file: UploadFile, selected_paper_code: st
     answer_rows = []
     seen_pairs: dict[tuple[str, int], str] = {}
     row_errors: list[dict] = []
+    selected_normalized_code = normalize_vr_paper_code(selected_paper_code.strip()) if selected_paper_code and selected_paper_code.strip() else None
 
     try:
         for idx, row in enumerate(reader, start=2):
@@ -103,19 +104,14 @@ def upload_verbal_reasoning_answer_csv(file: UploadFile, selected_paper_code: st
                 for key, value in row.items()
             }
 
-            paper_code = normalize_vr_paper_code(str(clean.get("paper_code") or "").strip())
+            csv_paper_code = normalize_vr_paper_code(str(clean.get("paper_code") or "").strip())
             question_number_raw = str(clean.get("question_number") or "").strip()
             correct_answer = str(clean.get("correct_answer") or "").strip().upper()
+            paper_code = selected_normalized_code or csv_paper_code
 
             if not paper_code or not question_number_raw or not correct_answer:
                 row_errors.append(
                     {"row": idx, "detail": "paper_code, question_number and correct_answer are required"}
-                )
-                continue
-
-            if selected_paper_code and paper_code != normalize_vr_paper_code(selected_paper_code.strip()):
-                row_errors.append(
-                    {"row": idx, "detail": f"paper_code {paper_code} does not match selected paper {selected_paper_code}"}
                 )
                 continue
 
@@ -195,7 +191,7 @@ def upload_verbal_reasoning_answer_csv(file: UploadFile, selected_paper_code: st
         resolved_paper_codes = sorted({row["paper_code"] for row in answer_rows})
         return {
             "status": "success",
-            "paper_code": resolved_paper_codes[0] if len(resolved_paper_codes) == 1 else None,
+            "paper_code": selected_normalized_code or (resolved_paper_codes[0] if len(resolved_paper_codes) == 1 else None),
             "paper_codes": resolved_paper_codes,
             "rows": len(answer_rows),
             "rows_processed": len(answer_rows),
