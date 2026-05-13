@@ -164,24 +164,40 @@ def _get_recent_comprehension_attempt(cur, user_id: int, passage_id: int):
     return row[0], int(row[1] or 0)
 
 
-def _resolve_comprehension_question_exclusion(
+def _unique_question_ids(*question_id_groups):
+    seen: set[int] = set()
+    ordered_ids: list[int] = []
+
+    for question_id_group in question_id_groups:
+        if question_id_group is None:
+            continue
+        if isinstance(question_id_group, (list, tuple, set)):
+            iterable = question_id_group
+        else:
+            iterable = (question_id_group,)
+        for question_id in iterable:
+            if question_id is None or question_id in seen:
+                continue
+            seen.add(question_id)
+            ordered_ids.append(question_id)
+
+    return ordered_ids
+
+
+def _resolve_comprehension_question_exclusions(
     *,
     explicit_exclude_question_id: int | None,
     recent_question_id: int | None,
     questions,
 ):
     if explicit_exclude_question_id is not None:
-        return explicit_exclude_question_id
+        return _unique_question_ids(explicit_exclude_question_id, recent_question_id)
 
     start_question_id = _select_comprehension_start_question_id(
         questions,
         recent_question_id,
     )
-    if start_question_id is not None:
-        return start_question_id
-    if recent_question_id is not None:
-        return recent_question_id
-    return None
+    return _unique_question_ids(start_question_id, recent_question_id)
 
 
 def is_admin(user):
@@ -2062,7 +2078,7 @@ def get_comprehension_question(
         review_reason = None
         attempt_count = 0
         recent_question_id = None
-        effective_exclude_question_id = exclude_question_id
+        effective_exclude_question_ids: list[int] = _unique_question_ids(exclude_question_id)
         ordered_question_ids: list[int] = []
 
         cur.execute(
@@ -2083,14 +2099,15 @@ def get_comprehension_question(
         )
 
         session_result = None
-        if effective_exclude_question_id is None:
+        if not effective_exclude_question_ids:
             session_result = start_passage(passage_id, user_id)
 
-        effective_exclude_question_id = _resolve_comprehension_question_exclusion(
+        effective_exclude_question_ids = _resolve_comprehension_question_exclusions(
             explicit_exclude_question_id=exclude_question_id,
             recent_question_id=recent_question_id,
             questions=session_result.get("questions") if isinstance(session_result, dict) else [],
         )
+        excluded_question_id_set = set(effective_exclude_question_ids)
 
         if question_id is not None:
             if question_id not in ordered_question_ids:
@@ -2103,9 +2120,9 @@ def get_comprehension_question(
                 passage_id=passage_id,
                 conn=conn,
                 cooldown_distance=3,
-                exclude_question_ids=[effective_exclude_question_id] if effective_exclude_question_id is not None else None,
+                exclude_question_ids=effective_exclude_question_ids or None,
             )
-            if next_question:
+            if next_question and next_question["question_id"] not in excluded_question_id_set:
                 selected_question_id = next_question["question_id"]
                 attempt_count = max(attempt_count, int(next_question.get("attempt_count") or 0))
 
@@ -2115,7 +2132,7 @@ def get_comprehension_question(
                     (
                         candidate_question_id
                         for candidate_question_id in ordered_question_ids
-                        if candidate_question_id != effective_exclude_question_id
+                        if candidate_question_id not in excluded_question_id_set
                     ),
                     ordered_question_ids[0],
                 )
@@ -2144,13 +2161,18 @@ def get_comprehension_question(
                 SELECT question_id, question_text, option_a, option_b, option_c, option_d
                 FROM comprehension_questions
                 WHERE passage_id = %s
-                  AND (%s IS NULL OR question_id <> %s)
                 ORDER BY sort_order ASC, question_id ASC
-                LIMIT 1
                 """,
-                (passage_id, effective_exclude_question_id, effective_exclude_question_id),
+                (passage_id,),
             )
-            question = cur.fetchone()
+            question = next(
+                (
+                    row
+                    for row in cur.fetchall()
+                    if row and row[0] not in excluded_question_id_set
+                ),
+                None,
+            )
             review_reason = None
 
         if not question:
