@@ -36,6 +36,7 @@ from app.practice.synonym_engine import (
     get_synonym_progress,
     get_next_synonym_question,
     get_practice_session,
+    get_next_session_question,
     get_latest_synonym_attempt_word_id,
     get_synonym_attempt_summary,
 )
@@ -1598,11 +1599,11 @@ def session_answer(req: SessionAnswerRequest, user=Depends(get_current_user)):
 
 
 @router.get("/session/next")
-def session_next(user=Depends(get_current_user)):
+def session_next(lesson_id: Optional[int] = None, user=Depends(get_current_user)):
     """
     Returns next question in session.
     """
-    return get_next_synonym_question(user["sub"])
+    return get_next_session_question(user["sub"], lesson_id)
 
 
 # -----------------------------

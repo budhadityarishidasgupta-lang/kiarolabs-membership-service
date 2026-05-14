@@ -1316,6 +1316,23 @@ def get_practice_session(user_email, lesson_id):
     }
 
 
+def get_next_session_question(user_email, lesson_id=None):
+    if lesson_id is None:
+        return get_next_synonym_question(user_email)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        user_id = _resolve_user_id(cur, user_email)
+    finally:
+        cur.close()
+        conn.close()
+
+    return _sanitize_pre_submit_question(
+        _get_lesson_synonym_question(lesson_id, user_id=user_id)
+    )
+
+
 def validate_current_synonym_question(headword, correct_answer, options):
     return audit_synonym_question_integrity(
         headword=headword,
