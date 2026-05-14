@@ -10,6 +10,7 @@ from app.repositories.synonym_repository import (
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
 REVIEW_COOLDOWN_WINDOW = 4
+PREVIEW_QUESTION_LIMIT = 5
 PRE_SUBMIT_ANSWER_FIELDS = {
     "correct_answer",
     "answer_key",
@@ -98,6 +99,47 @@ def _resolve_user_id(cur, user_email):
     )
     row = cur.fetchone()
     return row[0] if row else None
+
+
+def get_words_practice_access_mode(user_email, user_role=None):
+    if user_role == "admin":
+        return "full"
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT id, account_type
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            LIMIT 1
+            """,
+            (user_email,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return "preview"
+
+        member_id, account_type = row
+        is_legacy = bool(account_type and str(account_type).strip().lower() != "free")
+        if is_legacy:
+            return "full"
+
+        cur.execute(
+            """
+            SELECT 1
+            FROM kiaro_membership.member_apps
+            WHERE member_id = %s
+              AND app_code = 'general'
+            LIMIT 1
+            """,
+            (member_id,),
+        )
+        return "full" if cur.fetchone() else "preview"
+    finally:
+        cur.close()
+        conn.close()
 
 
 def _table_exists(cur, table_name):
@@ -374,6 +416,21 @@ def _get_lesson_word_ids(cur, lesson_id):
         (lesson_id,),
     )
     return [row[0] for row in cur.fetchall() if row and row[0] is not None]
+
+
+def _resolve_lesson_id_for_word(cur, word_id):
+    cur.execute(
+        """
+        SELECT lesson_id
+        FROM public.lesson_words
+        WHERE word_id = %s
+        ORDER BY lesson_id ASC
+        LIMIT 1
+        """,
+        (word_id,),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
 def _get_attempted_lesson_word_ids(cur, user_id, lesson_id):
@@ -738,7 +795,7 @@ def get_synonym_question(user_email):
 # ANSWER SUBMISSION
 # --------------------------------------------------
 
-def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
+def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms, lesson_id=None, access_mode=None):
     payload = {
         "word_id": word_id,
         "chosen": chosen,
@@ -759,6 +816,22 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
                 status_code=400,
                 detail="User not identified - JWT missing user_id"
             )
+
+        effective_access_mode = access_mode or get_words_practice_access_mode(user_email)
+        effective_lesson_id = lesson_id if lesson_id is not None else _resolve_lesson_id_for_word(cur, word_id)
+        if effective_lesson_id is not None and effective_access_mode == "preview":
+            attempt_count = _get_lesson_synonym_attempt_count(cur, user_id, effective_lesson_id)
+            if attempt_count >= PREVIEW_QUESTION_LIMIT:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "practice_preview_locked",
+                        "message": "Preview question limit reached.",
+                        "access": "locked",
+                        "preview_question_limit": PREVIEW_QUESTION_LIMIT,
+                        "preview_attempts": int(attempt_count or 0),
+                    },
+                )
 
         if word_id is None:
             raise HTTPException(status_code=400, detail="word_id is required")
@@ -1293,7 +1366,21 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
         conn.close()
 
 
-def get_practice_session(user_email, lesson_id):
+def _build_preview_locked_payload(lesson_id, user_id, attempt_count):
+    preview_question = _sanitize_pre_submit_question(
+        _get_lesson_synonym_question(lesson_id, user_id=user_id)
+    )
+    return {
+        "access": "locked",
+        "preview_access": "preview",
+        "preview_locked": True,
+        "preview_question_limit": PREVIEW_QUESTION_LIMIT,
+        "preview_attempts": int(attempt_count or 0),
+        "question": preview_question,
+    }
+
+
+def get_practice_session(user_email, lesson_id, user_role=None):
     progress = get_synonym_progress(user_email)
 
     conn = get_connection()
@@ -1301,9 +1388,20 @@ def get_practice_session(user_email, lesson_id):
 
     try:
         user_id = _resolve_user_id(cur, user_email)
+        access_mode = get_words_practice_access_mode(user_email, user_role=user_role)
+        attempt_count = _get_lesson_synonym_attempt_count(cur, user_id, lesson_id) if user_id else 0
     finally:
         cur.close()
         conn.close()
+
+    if access_mode == "preview" and attempt_count >= PREVIEW_QUESTION_LIMIT:
+        return {
+            "course": "synonyms",
+            "progress": progress,
+            "session_length": 10,
+            "xp_per_question": 10,
+            **_build_preview_locked_payload(lesson_id, user_id, attempt_count),
+        }
 
     question = _sanitize_pre_submit_question(
         _get_lesson_synonym_question(lesson_id, user_id=user_id)
@@ -1314,11 +1412,15 @@ def get_practice_session(user_email, lesson_id):
         "progress": progress,
         "session_length": 10,
         "xp_per_question": 10,
+        "access": access_mode,
+        "preview_locked": False,
+        "preview_question_limit": PREVIEW_QUESTION_LIMIT,
+        "preview_attempts": int(attempt_count or 0),
         "question": question
     }
 
 
-def get_next_session_question(user_email, lesson_id=None):
+def get_next_session_question(user_email, lesson_id=None, user_role=None):
     if lesson_id is None:
         return get_next_synonym_question(user_email)
 
@@ -1326,13 +1428,24 @@ def get_next_session_question(user_email, lesson_id=None):
     cur = conn.cursor()
     try:
         user_id = _resolve_user_id(cur, user_email)
+        access_mode = get_words_practice_access_mode(user_email, user_role=user_role)
+        attempt_count = _get_lesson_synonym_attempt_count(cur, user_id, lesson_id) if user_id else 0
     finally:
         cur.close()
         conn.close()
 
-    return _sanitize_pre_submit_question(
-        _get_lesson_synonym_question(lesson_id, user_id=user_id)
-    )
+    if access_mode == "preview" and attempt_count >= PREVIEW_QUESTION_LIMIT:
+        return _build_preview_locked_payload(lesson_id, user_id, attempt_count)
+
+    return {
+        "access": access_mode,
+        "preview_locked": False,
+        "preview_question_limit": PREVIEW_QUESTION_LIMIT,
+        "preview_attempts": int(attempt_count or 0),
+        "question": _sanitize_pre_submit_question(
+            _get_lesson_synonym_question(lesson_id, user_id=user_id)
+        ),
+    }
 
 
 def validate_current_synonym_question(headword, correct_answer, options):

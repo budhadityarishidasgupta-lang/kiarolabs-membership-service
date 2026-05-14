@@ -39,6 +39,7 @@ from app.practice.synonym_engine import (
     get_next_session_question,
     get_latest_synonym_attempt_word_id,
     get_synonym_attempt_summary,
+    get_words_practice_access_mode,
 )
 from app.practice.spelling_engine import (
     get_spelling_question,
@@ -393,6 +394,7 @@ class SynonymAnswerRequest(BaseModel):
     word_id: int
     chosen: str | list[str]
     response_ms: int
+    lesson_id: int | None = None
 
 class SpellingAnswerRequest(BaseModel):
     word_id: int
@@ -407,6 +409,7 @@ class SessionAnswerRequest(BaseModel):
     word_id: int
     chosen: str | list[str]
     response_ms: int
+    lesson_id: int | None = None
 
 
 class RetryIncorrectRequest(BaseModel):
@@ -1582,6 +1585,7 @@ def synonym_question(user=Depends(get_current_user)):
 def synonym_answer(req: SynonymAnswerRequest, user: dict = Depends(get_current_user)):
     user_id = user.get("user_id")
     user_email = user.get("sub")
+    access_mode = get_words_practice_access_mode(user_email, user_role=user.get("role"))
 
     return submit_synonym_answer(
         user_id=user_id,
@@ -1589,6 +1593,8 @@ def synonym_answer(req: SynonymAnswerRequest, user: dict = Depends(get_current_u
         word_id=req.word_id,
         chosen=req.chosen,
         response_ms=req.response_ms,
+        lesson_id=req.lesson_id,
+        access_mode=access_mode,
     )
 
 
@@ -1617,7 +1623,7 @@ def start_session(lesson_id: Optional[int] = 7, user=Depends(get_current_user)):
     if lesson_id is None:
         lesson_id = 7
 
-    return get_practice_session(user["sub"], lesson_id)
+    return get_practice_session(user["sub"], lesson_id, user_role=user.get("role"))
 
 
 @router.post("/session/answer")
@@ -1632,6 +1638,8 @@ def session_answer(req: SessionAnswerRequest, user=Depends(get_current_user)):
         word_id=req.word_id,
         chosen=req.chosen,
         response_ms=req.response_ms,
+        lesson_id=req.lesson_id,
+        access_mode=get_words_practice_access_mode(user["sub"], user_role=user.get("role")),
     )
 
 
@@ -1640,7 +1648,7 @@ def session_next(lesson_id: Optional[int] = None, user=Depends(get_current_user)
     """
     Returns next question in session.
     """
-    return get_next_session_question(user["sub"], lesson_id)
+    return get_next_session_question(user["sub"], lesson_id, user_role=user.get("role"))
 
 
 # -----------------------------
