@@ -846,6 +846,39 @@ def math_test_start(
     )
 
 
+@router.get("/math/test/preview/start")
+def math_test_preview_start(test_id: str):
+    """
+    Public preview start endpoint used by frontend preview mode.
+    """
+    result = start_math_test(test_id, access_mode="preview")
+    if not result or result.get("error") == "Test not found":
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    questions = result.get("questions") or []
+    preview_questions = []
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        preview_questions.append(
+            {
+                "question_id": question.get("question_id"),
+                "stem": question.get("stem"),
+                "options": question.get("options") or [],
+            }
+        )
+
+    return {
+        "test_id": result.get("test_id"),
+        "questions": preview_questions,
+        "access_mode": "preview",
+        "can_submit": False,
+        "preview_question_limit": result.get("preview_question_limit"),
+        "preview_lock_at_question": result.get("preview_lock_at_question"),
+        "preview_locked": False,
+    }
+
+
 @router.post("/math/test/submit")
 def math_test_submit(payload: dict, user=Depends(get_current_user)):
     if not user or not user.get("sub"):
