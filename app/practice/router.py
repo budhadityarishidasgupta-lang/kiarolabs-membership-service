@@ -25,6 +25,7 @@ from app.practice.math_engine import (
 from app.practice.math_test_engine import (
     check_mock_access,
     get_math_tests,
+    get_public_math_tests,
     submit_math_paper,
     start_math_test,
     submit_math_test
@@ -811,6 +812,11 @@ def math_tests(user=Depends(get_current_user)):
         )
 
     return get_math_tests(user)
+
+
+@router.get("/math/tests/public")
+def public_math_tests():
+    return get_public_math_tests()
 
 
 @router.get("/math/test/start")

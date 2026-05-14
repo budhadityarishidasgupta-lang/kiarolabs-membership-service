@@ -368,6 +368,64 @@ def get_math_tests(user):
     }
 
 
+def get_public_math_tests():
+    """
+    Public-safe mock test listing for guest preview cards.
+    No user-specific purchase/progress data, and no answer keys.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT
+                paper_code,
+                paper_name,
+                duration_minutes,
+                total_questions,
+                title,
+                subject,
+                board,
+                difficulty,
+                sort_order
+            FROM math_test_papers
+            WHERE is_active = TRUE
+            ORDER BY sort_order ASC;
+            """
+        )
+        rows = cur.fetchall()
+
+        tests = []
+        for row in rows:
+            tests.append(
+                {
+                    "test_id": row[0],
+                    "name": row[1],
+                    "duration": row[2],
+                    "total_questions": row[3],
+                    "access": "locked",
+                    "paper_code": row[0],
+                    "paper_name": row[1],
+                    "title": row[4],
+                    "subject": row[5],
+                    "board": _normalize_board(row[6]),
+                    "difficulty": row[7],
+                    "sort_order": row[8],
+                    "purchased": False,
+                    "in_progress": False,
+                    "completed": False,
+                    "saved_question_number": None,
+                    "last_score": None,
+                }
+            )
+
+        return {"tests": tests}
+    finally:
+        cur.close()
+        conn.close()
+
+
 def start_math_test(test_id, access_mode: str = "full"):
     conn = get_connection()
     cur = conn.cursor()
