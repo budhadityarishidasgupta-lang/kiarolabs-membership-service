@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -430,13 +431,31 @@ def start_math_test(test_id, access_mode: str = "full"):
     conn = get_connection()
     cur = conn.cursor()
 
+    resolved_test_id = test_id
+    alias_match = re.fullmatch(r"math_paper_(\d+)", str(test_id or "").strip(), re.IGNORECASE)
+    if alias_match:
+        sort_order = int(alias_match.group(1))
+        cur.execute(
+            """
+            SELECT paper_code
+            FROM math_test_papers
+            WHERE is_active = TRUE
+              AND sort_order = %s
+            LIMIT 1
+            """,
+            (sort_order,),
+        )
+        alias_row = cur.fetchone()
+        if alias_row and alias_row[0]:
+            resolved_test_id = alias_row[0]
+
     cur.execute(
         """
         SELECT total_questions
         FROM math_test_papers
         WHERE paper_code = %s
     """,
-        (test_id,),
+        (resolved_test_id,),
     )
 
     row = cur.fetchone()
@@ -493,7 +512,7 @@ def start_math_test(test_id, access_mode: str = "full"):
         questions = questions[:preview_window_size]
 
     return {
-        "test_id": test_id,
+        "test_id": resolved_test_id,
         "questions": questions,
         "access_mode": access_mode,
         "can_submit": access_mode == "full",

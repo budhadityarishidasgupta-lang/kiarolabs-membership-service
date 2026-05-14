@@ -63,3 +63,27 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login", auto_error=False)
+
+
+def get_optional_current_user(token: str | None = Depends(optional_oauth2_scheme)):
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        email = payload.get("sub")
+        if not email:
+            return None
+
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            payload["user_id"] = resolve_verified_learning_user_id(cur, payload)
+        finally:
+            cur.close()
+            conn.close()
+        return payload
+    except JWTError:
+        return None

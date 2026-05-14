@@ -12,7 +12,7 @@ import csv
 import io
 import random
 
-from app.auth import get_current_user, resolve_verified_learning_user_id
+from app.auth import get_current_user, get_optional_current_user, resolve_verified_learning_user_id
 from app.database import get_connection
 
 # Engines
@@ -803,13 +803,10 @@ def math_history(paper_code: str, user=Depends(get_current_user)):
 
 
 @router.get("/math/tests")
-def math_tests(user=Depends(get_current_user)):
-    # 🔒 CRITICAL FIX — prevent None user crash
+def math_tests(user=Depends(get_optional_current_user)):
+    # Guest fallback: keep endpoint safe by returning public listing only.
     if not user or not user.get("sub"):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or missing user"
-        )
+        return get_public_math_tests()
 
     return get_math_tests(user)
 
