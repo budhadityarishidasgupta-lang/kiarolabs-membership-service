@@ -456,6 +456,8 @@ def _fetch_random_synonym_row(cur, excluded_word_ids=None, lesson_id=None):
         row = cur.fetchone()
         if row:
             return row
+        # Never leak across lessons when a specific lesson context is requested.
+        return None
 
     if excluded_word_ids:
         cur.execute(
