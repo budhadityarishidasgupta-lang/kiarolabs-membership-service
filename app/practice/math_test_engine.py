@@ -5,6 +5,8 @@ from fastapi import HTTPException
 
 from app.database import get_connection
 
+PREVIEW_QUESTION_LIMIT = 5
+
 
 def init_math_submission_tables():
     conn = get_connection()
@@ -427,11 +429,19 @@ def start_math_test(test_id, access_mode: str = "full"):
     cur.close()
     conn.close()
 
+    preview_lock_at_question = PREVIEW_QUESTION_LIMIT + 1
+    if access_mode == "preview":
+        preview_window_size = PREVIEW_QUESTION_LIMIT + 1
+        questions = questions[:preview_window_size]
+
     return {
         "test_id": test_id,
         "questions": questions,
         "access_mode": access_mode,
         "can_submit": access_mode == "full",
+        "preview_question_limit": PREVIEW_QUESTION_LIMIT,
+        "preview_lock_at_question": preview_lock_at_question if access_mode == "preview" else None,
+        "preview_locked": False,
     }
 
 
