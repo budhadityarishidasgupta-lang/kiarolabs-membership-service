@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from typing import Optional
 from pydantic import BaseModel
 import csv
@@ -811,27 +811,64 @@ def math_tests(user=Depends(get_current_user)):
 
 
 @router.get("/math/test/start")
-def math_test_start(test_id: str, user=Depends(get_current_user)):
+def math_test_start(
+    test_id: str,
+    mode: str = Query(default="full"),
+    user=Depends(get_current_user),
+):
+    if not user or not user.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid or missing user")
+
+    requested_mode = (mode or "full").strip().lower()
+    if requested_mode not in {"full", "preview"}:
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'full' or 'preview'.")
+
     email = user.get("sub")
+    has_full_access = user.get("role") == "admin" or check_mock_access(email, test_id)
 
-    if user.get("role") == "admin":
-        return start_math_test(test_id)
+    if has_full_access:
+        return start_math_test(test_id, access_mode="full")
 
-    # 🚨 CRITICAL CHECK
-    has_access = check_mock_access(email, test_id)
+    if requested_mode == "preview":
+        return start_math_test(test_id, access_mode="preview")
 
-    if not has_access:
-        raise HTTPException(
-            status_code=403,
-            detail="Mock test not purchased"
-        )
-
-    return start_math_test(test_id)
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "mock_test_purchase_required",
+            "message": "Full mock test access requires purchase.",
+            "access_mode": "denied",
+            "preview_available": True,
+        },
+    )
 
 
 @router.post("/math/test/submit")
-def math_test_submit(payload: dict):
-    return submit_math_test(payload["answers"])
+def math_test_submit(payload: dict, user=Depends(get_current_user)):
+    if not user or not user.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid or missing user")
+
+    test_id = payload.get("test_id")
+    answers = payload.get("answers")
+
+    if not test_id:
+        raise HTTPException(status_code=400, detail="Missing required parameter: test_id")
+    if answers is None:
+        raise HTTPException(status_code=400, detail="Missing required parameter: answers")
+
+    has_full_access = user.get("role") == "admin" or check_mock_access(user.get("sub"), str(test_id))
+    if not has_full_access:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "mock_test_purchase_required",
+                "message": "Full mock test submission requires purchase.",
+                "access_mode": "denied",
+                "preview_available": True,
+            },
+        )
+
+    return submit_math_test(answers)
 
 
 @admin_router.post("/admin/math/printable/upload")

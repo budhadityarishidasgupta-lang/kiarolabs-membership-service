@@ -366,7 +366,7 @@ def get_math_tests(user):
     }
 
 
-def start_math_test(test_id):
+def start_math_test(test_id, access_mode: str = "full"):
     conn = get_connection()
     cur = conn.cursor()
 
@@ -430,6 +430,8 @@ def start_math_test(test_id):
     return {
         "test_id": test_id,
         "questions": questions,
+        "access_mode": access_mode,
+        "can_submit": access_mode == "full",
     }
 
 
