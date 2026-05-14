@@ -390,7 +390,7 @@ def _get_module_resume(cur, module: str, user_id: int):
 
 class SynonymAnswerRequest(BaseModel):
     word_id: int
-    chosen: str
+    chosen: str | list[str]
     response_ms: int
 
 class SpellingAnswerRequest(BaseModel):
@@ -404,7 +404,7 @@ class WordsAnswerRequest(BaseModel):
 
 class SessionAnswerRequest(BaseModel):
     word_id: int
-    chosen: str
+    chosen: str | list[str]
     response_ms: int
 
 

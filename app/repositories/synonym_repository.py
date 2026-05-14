@@ -6,7 +6,7 @@ import random
 logger = logging.getLogger(__name__)
 
 MIN_VISIBLE_OPTIONS = 4
-DISTRACTOR_COUNT = MIN_VISIBLE_OPTIONS - 1
+MIN_DISTRACTOR_BUFFER = 2
 
 
 def _clean_option(value, *, headword=None):
@@ -42,13 +42,28 @@ def normalize_synonym_list(synonyms, *, headword=None):
     return normalized
 
 
-def validate_question_integrity(*, headword, correct_answer, options):
+def _normalize_correct_answers(*, correct_answer=None, correct_answers=None, headword=None):
+    if correct_answers is not None:
+        normalized = normalize_synonym_list(correct_answers, headword=headword)
+    elif correct_answer is not None:
+        normalized = normalize_synonym_list([correct_answer], headword=headword)
+    else:
+        normalized = []
+    return normalized
+
+
+def validate_question_integrity(*, headword, correct_answer=None, correct_answers=None, options=None):
+    normalized_correct_answers = _normalize_correct_answers(
+        correct_answer=correct_answer,
+        correct_answers=correct_answers,
+        headword=headword,
+    )
     issues = []
 
     if not isinstance(options, list):
         return False, ["options_not_list"]
 
-    if not isinstance(correct_answer, str) or not correct_answer.strip():
+    if not normalized_correct_answers:
         issues.append("missing_correct_answer")
 
     cleaned_options = []
@@ -68,30 +83,37 @@ def validate_question_integrity(*, headword, correct_answer, options):
     if len(cleaned_options) < MIN_VISIBLE_OPTIONS:
         issues.append("too_few_options")
 
-    if isinstance(correct_answer, str) and correct_answer.strip():
-        correct_lower = correct_answer.strip().lower()
-        if correct_lower not in {option.lower() for option in cleaned_options}:
+    option_lowers = {option.lower() for option in cleaned_options}
+    for accepted_answer in normalized_correct_answers:
+        if accepted_answer.lower() not in option_lowers:
             issues.append("correct_answer_missing_from_options")
+            break
 
     return len(issues) == 0, issues
 
 
-def audit_synonym_question_integrity(*, headword, correct_answer, options):
+def audit_synonym_question_integrity(*, headword, correct_answer=None, correct_answers=None, options=None):
+    normalized_correct_answers = _normalize_correct_answers(
+        correct_answer=correct_answer,
+        correct_answers=correct_answers,
+        headword=headword,
+    )
     is_valid, issues = validate_question_integrity(
         headword=headword,
-        correct_answer=correct_answer,
+        correct_answers=normalized_correct_answers,
         options=options,
     )
     return {
         "ok": is_valid,
         "issues": issues,
         "headword": headword,
-        "correct_answer": correct_answer,
+        "correct_answer": normalized_correct_answers[0] if normalized_correct_answers else correct_answer,
+        "correct_answers": normalized_correct_answers,
         "options": options,
     }
 
 
-def _build_distractor_pool(cur, *, word_id, correct_answer, headword, randomize):
+def _build_distractor_pool(cur, *, word_id, correct_answers, headword, randomize):
     order_sql = "RANDOM()" if randomize else "word_id ASC"
     cur.execute(
         f"""
@@ -108,10 +130,11 @@ def _build_distractor_pool(cur, *, word_id, correct_answer, headword, randomize)
 
     distractor_pool = []
     seen = set()
+    correct_lowers = {value.lower() for value in correct_answers}
     for row in cur.fetchall():
         for candidate in normalize_synonym_list(row[0], headword=headword):
             lowered = candidate.lower()
-            if lowered == correct_answer.lower():
+            if lowered in correct_lowers:
                 continue
             if lowered in seen:
                 continue
@@ -120,16 +143,18 @@ def _build_distractor_pool(cur, *, word_id, correct_answer, headword, randomize)
     return distractor_pool
 
 
-def _select_options(correct_answer, distractor_pool, *, randomize):
-    if len(distractor_pool) < DISTRACTOR_COUNT:
+def _select_options(correct_answers, distractor_pool, *, randomize):
+    normalized_correct_answers = list(correct_answers)
+    distractor_count = max(MIN_VISIBLE_OPTIONS - len(normalized_correct_answers), MIN_DISTRACTOR_BUFFER)
+    if len(distractor_pool) < distractor_count:
         return None
 
     selected_distractors = (
-        random.sample(distractor_pool, DISTRACTOR_COUNT)
+        random.sample(distractor_pool, distractor_count)
         if randomize
-        else distractor_pool[:DISTRACTOR_COUNT]
+        else distractor_pool[:distractor_count]
     )
-    options = selected_distractors + [correct_answer]
+    options = selected_distractors + normalized_correct_answers
     if randomize:
         random.shuffle(options)
     return options
@@ -153,28 +178,34 @@ def _log_validation_failure(*, word_id, headword, correct_answer, options, issue
 
 
 def build_validated_synonym_question(cur, *, word_id, headword, synonyms):
-    synonym_list = normalize_synonym_list(synonyms, headword=headword)
-    if not synonym_list:
+    correct_answers = normalize_synonym_list(synonyms, headword=headword)
+    if not correct_answers:
         return None
 
-    correct_answer = synonym_list[0]
+    correct_answer = correct_answers[0]
 
     random_pool = _build_distractor_pool(
         cur,
         word_id=word_id,
-        correct_answer=correct_answer,
+        correct_answers=correct_answers,
         headword=headword,
         randomize=True,
     )
-    options = _select_options(correct_answer, random_pool, randomize=True)
+    options = _select_options(correct_answers, random_pool, randomize=True)
     if options:
         ok, issues = validate_question_integrity(
             headword=headword,
-            correct_answer=correct_answer,
+            correct_answers=correct_answers,
             options=options,
         )
         if ok:
-            return {"correct_answer": correct_answer, "options": options}
+            return {
+                "correct_answer": correct_answer,
+                "correct_answers": correct_answers,
+                "options": options,
+                "selection_mode": "multiple" if len(correct_answers) > 1 else "single",
+                "required_answers_count": len(correct_answers),
+            }
         _log_validation_failure(
             word_id=word_id,
             headword=headword,
@@ -187,19 +218,25 @@ def build_validated_synonym_question(cur, *, word_id, headword, synonyms):
     rebuilt_pool = _build_distractor_pool(
         cur,
         word_id=word_id,
-        correct_answer=correct_answer,
+        correct_answers=correct_answers,
         headword=headword,
         randomize=False,
     )
-    rebuilt_options = _select_options(correct_answer, rebuilt_pool, randomize=False)
+    rebuilt_options = _select_options(correct_answers, rebuilt_pool, randomize=False)
     if rebuilt_options:
         ok, issues = validate_question_integrity(
             headword=headword,
-            correct_answer=correct_answer,
+            correct_answers=correct_answers,
             options=rebuilt_options,
         )
         if ok:
-            return {"correct_answer": correct_answer, "options": rebuilt_options}
+            return {
+                "correct_answer": correct_answer,
+                "correct_answers": correct_answers,
+                "options": rebuilt_options,
+                "selection_mode": "multiple" if len(correct_answers) > 1 else "single",
+                "required_answers_count": len(correct_answers),
+            }
         _log_validation_failure(
             word_id=word_id,
             headword=headword,
@@ -209,9 +246,9 @@ def build_validated_synonym_question(cur, *, word_id, headword, synonyms):
             stage="rebuild",
         )
 
-    safe_options = [correct_answer]
+    safe_options = list(correct_answers)
     for candidate in rebuilt_pool:
-        if candidate.lower() == correct_answer.lower():
+        if candidate.lower() in {value.lower() for value in correct_answers}:
             continue
         safe_options.append(candidate)
         if len(safe_options) == MIN_VISIBLE_OPTIONS:
@@ -219,11 +256,17 @@ def build_validated_synonym_question(cur, *, word_id, headword, synonyms):
 
     ok, issues = validate_question_integrity(
         headword=headword,
-        correct_answer=correct_answer,
+        correct_answers=correct_answers,
         options=safe_options,
     )
     if ok:
-        return {"correct_answer": correct_answer, "options": safe_options}
+        return {
+            "correct_answer": correct_answer,
+            "correct_answers": correct_answers,
+            "options": safe_options,
+            "selection_mode": "multiple" if len(correct_answers) > 1 else "single",
+            "required_answers_count": len(correct_answers),
+        }
 
     _log_validation_failure(
         word_id=word_id,

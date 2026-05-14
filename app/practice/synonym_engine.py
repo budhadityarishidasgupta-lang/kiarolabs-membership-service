@@ -61,6 +61,28 @@ def _sanitize_pre_submit_question(payload: dict):
         if key not in PRE_SUBMIT_ANSWER_FIELDS
     }
 
+
+def _normalize_chosen_answers(chosen):
+    if isinstance(chosen, list):
+        raw_values = chosen
+    elif chosen is None:
+        raw_values = []
+    else:
+        raw_values = [chosen]
+
+    normalized = []
+    seen = set()
+    for value in raw_values:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(cleaned)
+    return normalized
+
 # --------------------------------------------------
 # INTERNAL HELPERS
 # --------------------------------------------------
@@ -692,6 +714,8 @@ def get_synonym_question(user_email):
             "word_id": word_id,
             "word": headword,
             "options": validated_question["options"],
+            "selection_mode": validated_question.get("selection_mode", "single"),
+            "required_answers_count": validated_question.get("required_answers_count", 1),
         }
         return _sanitize_pre_submit_question(
             _add_review_metadata(
@@ -737,7 +761,8 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
         if word_id is None:
             raise HTTPException(status_code=400, detail="word_id is required")
 
-        if not (chosen or "").strip():
+        selected_answers = _normalize_chosen_answers(chosen)
+        if not selected_answers:
             raise HTTPException(status_code=400, detail="chosen is required")
 
         cur.execute(
@@ -782,8 +807,25 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
                 detail="Failed to evaluate answer",
             )
 
-        correct = chosen.strip().lower() in synonym_list
-        chosen_normalized = chosen.strip().lower()
+        selected_answer_lowers = {value.lower() for value in selected_answers}
+        matched_answers = [
+            answer for answer in normalized_synonyms
+            if answer.lower() in selected_answer_lowers
+        ]
+        wrong_picks = [
+            value for value in selected_answers
+            if value.lower() not in {answer.lower() for answer in normalized_synonyms}
+        ]
+        fully_correct = (
+            not wrong_picks
+            and len(matched_answers) == len(normalized_synonyms)
+            and len(selected_answers) == len(normalized_synonyms)
+        )
+        partial_correct = (
+            not wrong_picks
+            and 0 < len(matched_answers) < len(normalized_synonyms)
+        )
+        correct = fully_correct or partial_correct
 
         validated_question = build_validated_synonym_question(
             cur,
@@ -794,20 +836,52 @@ def submit_synonym_answer(user_id, user_email, word_id, chosen, response_ms):
 
         if validated_question and validated_question.get("correct_answer"):
             correct_answer = validated_question["correct_answer"]
-        elif chosen_normalized in synonym_list:
-            correct_answer = chosen.strip()
+            correct_answers = list(validated_question.get("correct_answers") or normalized_synonyms)
+        elif matched_answers:
+            correct_answer = matched_answers[0]
+            correct_answers = list(normalized_synonyms)
         else:
             correct_answer = normalized_synonyms[0]
+            correct_answers = list(normalized_synonyms)
 
-        print("INSERT DEBUG:", user_id, word_id, chosen, correct)
+        print("INSERT DEBUG:", user_id, word_id, selected_answers, correct)
 
-        _insert_synonym_attempt(cur, user_id, word_id, chosen, correct, response_ms)
+        _insert_synonym_attempt(cur, user_id, word_id, ", ".join(selected_answers), correct, response_ms)
 
         conn.commit()
 
+        missing_answers = [
+            answer for answer in correct_answers
+            if answer.lower() not in selected_answer_lowers
+        ]
+        if fully_correct:
+            encouragement_message = (
+                "Excellent work - you found all of the correct answers."
+                if len(correct_answers) > 1
+                else "Excellent work - that was exactly right."
+            )
+        elif partial_correct:
+            encouragement_message = (
+                f"Nice job - you found one correct answer. There {'is' if len(missing_answers) == 1 else 'are'} "
+                f"{len(missing_answers)} more."
+            )
+        else:
+            encouragement_message = (
+                f"There {'was' if len(correct_answers) == 1 else 'were'} {len(correct_answers)} correct answer"
+                f"{'' if len(correct_answers) == 1 else 's'} here."
+            )
+
         return {
             "correct": correct,
-            "correct_answer": correct_answer
+            "fully_correct": fully_correct,
+            "partial_correct": partial_correct,
+            "correct_answer": correct_answer,
+            "correct_answers": correct_answers,
+            "matched_answers": matched_answers,
+            "missing_answers": missing_answers,
+            "required_answers_count": len(correct_answers),
+            "score_awarded": 1.0 if fully_correct else 0.5 if partial_correct else 0.0,
+            "encouragement_message": encouragement_message,
         }
     except HTTPException:
         raise
@@ -959,6 +1033,8 @@ def get_next_synonym_question(user_email):
             "word_id": word_id,
             "word": headword,
             "options": validated_question["options"],
+            "selection_mode": validated_question.get("selection_mode", "single"),
+            "required_answers_count": validated_question.get("required_answers_count", 1),
         })
 
     finally:
@@ -1197,6 +1273,8 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
             "word_id": word_id,
             "word": headword,
             "options": validated_question["options"],
+            "selection_mode": validated_question.get("selection_mode", "single"),
+            "required_answers_count": validated_question.get("required_answers_count", 1),
         }
         return _sanitize_pre_submit_question(
             _add_review_metadata(
