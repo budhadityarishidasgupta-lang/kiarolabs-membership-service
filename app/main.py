@@ -220,6 +220,77 @@ def derive_subscription_state(subscription_status: str | None, subscription_end)
     return False, subscription_status or "inactive"
 
 
+def _extract_permalink_from_url(url_value: str | None) -> str:
+    normalized = (url_value or "").strip().rstrip("/")
+    if not normalized:
+        return ""
+    match = re.search(r"/l/([A-Za-z0-9_-]+)$", normalized)
+    return (match.group(1).lower() if match else "")
+
+
+def _resolve_gumroad_product_key(product_name: str, product_permalink: str, product_id: str) -> str | None:
+    permalink = (product_permalink or "").strip().lower()
+    pid = (product_id or "").strip().lower()
+    name = (product_name or "").strip().lower()
+
+    direct_mapping = {
+        "ztwxby": "module_math",
+        "gxvtls": "module_spelling",
+        "sddokb": "module_words",
+        "gckvb": "module_comprehension",
+        "exjlsl": "printable_comprehension_1",
+        "rgznog": "printable_comprehension_2",
+        "rbtolw": "printable_comprehension_3",
+        "dtzldn": "printable_comprehension_4",
+        "afjgni": "printable_comprehension_5",
+        "ilgta": "printable_comprehension_6",
+        "shixax": "printable_comprehension_7",
+        "qoipgs": "printable_vr_1",
+        "hquiw": "printable_vr_2",
+        "nsfah": "printable_vr_3",
+        "fjzif": "printable_vr_4",
+        "kgbqum": "printable_vr_5",
+        "zwfglb": "printable_vr_6",
+        "gsmpyn": "printable_vr_7",
+        "efibzj": "printable_vr_8",
+        "luiiv": "printable_vr_9",
+    }
+
+    for token in (permalink, pid):
+        if token in direct_mapping:
+            return direct_mapping[token]
+
+    comp_match = re.search(r"comprehension.*\((\d+)\)", name)
+    if comp_match:
+        return f"printable_comprehension_{int(comp_match.group(1))}"
+
+    vr_match = re.search(r"verbal reasoning.*\((\d+)\)", name)
+    if vr_match:
+        return f"printable_vr_{int(vr_match.group(1))}"
+
+    if "mathsprint" in name or "math sprint" in name:
+        return "module_math"
+    if "spellingsprint" in name or "spelling sprint" in name:
+        return "module_spelling"
+    if "wordsprint" in name or "word sprint" in name:
+        return "module_words"
+    if "comprehensionsprint" in name or "comprehension sprint" in name:
+        return "module_comprehension"
+
+    if "maths complete pack" in name:
+        return "disabled_bundle_maths_complete"
+    if "maths mock pack" in name:
+        return "disabled_bundle_mock"
+    if "verbal reasoning starter pack" in name:
+        return "disabled_bundle_vr_starter"
+    if "verbal reasoning full pack" in name:
+        return "disabled_bundle_vr_full"
+    if "full 11+ preparation pack" in name:
+        return "disabled_bundle_full"
+
+    return None
+
+
 def _get_table_columns(cur, table_name: str) -> set[str]:
     cur.execute(
         """
@@ -800,27 +871,6 @@ def dashboard(user=Depends(get_current_user)):
         }
 
     # -------------------------
-    # LEGACY USER CHECK
-    # -------------------------
-    created_at = None
-    is_legacy = False
-
-    if member_id:
-        cur.execute("""
-            SELECT created_at
-            FROM kiaro_membership.members
-            WHERE id = %s
-        """, (member_id,))
-
-        row = cur.fetchone()
-
-        if row and row[0]:
-            created_at = row[0]
-            from datetime import datetime
-            cutoff_date = datetime(2026, 4, 3)
-            is_legacy = created_at < cutoff_date
-
-    # -------------------------
     # FETCH ENTITLEMENTS
     # -------------------------
     apps = []
@@ -856,15 +906,17 @@ def dashboard(user=Depends(get_current_user)):
     # -------------------------
     # MODULE ACCESS LOGIC
     # -------------------------
+    is_admin_user = str(user.get("role", "")).lower() == "admin"
+
     modules = {
-        # Learning modules (legacy unlocked)
+        # Learning modules (entitlement-driven for non-admin users)
         "spelling": {
             "attempts": s_total,
             "accuracy": round(s_acc, 2),
             "completed_lessons": s_completed,
             "total_lessons": s_lessons_total,
             "completion_percent": s_completion,
-            "unlocked": True if is_legacy else ("spelling" in apps or "general" in apps)
+            "unlocked": True if is_admin_user else ("spelling" in apps or "general" in apps)
         },
         "words": {
             "attempts": w_total,
@@ -872,7 +924,7 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": w_completed,
             "total_lessons": w_lessons_total,
             "completion_percent": w_completion,
-            "unlocked": True if is_legacy else ("general" in apps)
+            "unlocked": True if is_admin_user else ("general" in apps)
         },
         "math": {
             "attempts": m_total,
@@ -880,23 +932,23 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": m_completed,
             "total_lessons": m_lessons_total,
             "completion_percent": m_completion,
-            "unlocked": True if is_legacy else ("math" in apps)
+            "unlocked": True if is_admin_user else ("math" in apps)
         },
 
-        # Monetised products (NEVER legacy unlocked)
+        # Monetised products
         "practice_papers": {
-            "unlocked": "practice" in apps or any(code in apps for code in ("vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
+            "unlocked": True if is_admin_user else ("practice" in apps or any(code in apps for code in ("vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack")))
         },
         "vr_printables": {
-            "unlocked": any(code in apps for code in ("practice", "vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
+            "unlocked": True if is_admin_user else any(code in apps for code in ("practice", "vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
         },
         "mock_exams": {
-            "unlocked": "mock" in apps
+            "unlocked": True if is_admin_user else ("mock" in apps)
         },
 
         # Future modules
         "nvr": {
-            "unlocked": "nvr" in apps
+            "unlocked": True if is_admin_user else ("nvr" in apps)
         },
         "comprehension": {
             "attempts": c_total,
@@ -904,7 +956,7 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": c_completed,
             "total_lessons": c_lessons_total,
             "completion_percent": c_completion,
-            "unlocked": "comprehension" in apps
+            "unlocked": True if is_admin_user else ("comprehension" in apps)
         }
     }
 
@@ -1634,33 +1686,37 @@ async def gumroad_webhook(request: Request):
 
         email = (form.get("email") or "").strip().lower()
         product_name = (form.get("product_name") or "").strip()
-        event_type = (form.get("event") or "").strip()
+        event_type = (form.get("event") or "").strip().lower()
+        product_permalink = (
+            form.get("product_permalink")
+            or _extract_permalink_from_url(form.get("product_url"))
+            or _extract_permalink_from_url(form.get("short_product_id"))
+            or ""
+        )
+        sale_id = (form.get("sale_id") or form.get("purchase_id") or "").strip()
+        product_id = (form.get("product_id") or "").strip()
 
-        print("GUMROAD EVENT:", email, product_name, event_type)
+        print("GUMROAD EVENT:", email, product_name, event_type, product_permalink, sale_id)
 
         if not email or not product_name:
-            return {"status": "ignored"}
+            return {"status": "ignored", "reason": "missing_identity"}
 
-        # Extract test number
-        match = re.search(r"Maths Mock Exam (\d+)", product_name)
-
-        test_id = None
-        if match:
-            test_number = match.group(1)
-            test_id = f"MATH_MOCK_{test_number}"
+        match = re.search(r"Maths Mock Exam (\d+)", product_name, re.IGNORECASE)
+        test_id = f"MATH_MOCK_{match.group(1)}" if match else None
+        product_key = _resolve_gumroad_product_key(product_name, product_permalink, product_id)
 
         conn = get_connection()
         cur = conn.cursor()
 
         try:
-            # Log incoming event (always)
+            # Log incoming event
             cur.execute(
                 """
                 INSERT INTO math_gumroad_events (email, product_name, event_type, test_id)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id
                 """,
-                (email, product_name, event_type, test_id),
+                (email, f"{product_name} | permalink={product_permalink} | sale_id={sale_id}", event_type, test_id),
             )
             event_id = cur.fetchone()[0]
 
@@ -1682,6 +1738,11 @@ async def gumroad_webhook(request: Request):
                 return {"status": "user_not_found"}
 
             member_id = row[0]
+
+            if product_key and product_key.startswith("disabled_bundle_"):
+                print("BUNDLE PURCHASE LOGGED WITHOUT UNLOCK:", product_key, email)
+                conn.commit()
+                return {"status": "bundle_logged_not_unlocked", "product_key": product_key}
 
             # Handle bundle purchases
             if event_type in ["sale", "purchase"] and product_name == "Maths Mock Pack (6 Tests)":
@@ -1738,6 +1799,58 @@ async def gumroad_webhook(request: Request):
                 )
                 print(f"❌ ACCESS REVOKED → {email} → {test_id}")
 
+            if product_key and event_type in ["sale", "purchase"]:
+                entitlement_by_product_key = {
+                    "module_math": "math",
+                    "module_spelling": "spelling",
+                    "module_words": "general",
+                    "module_comprehension": "comprehension",
+                    "printable_comprehension_1": "practice",
+                    "printable_comprehension_2": "practice",
+                    "printable_comprehension_3": "practice",
+                    "printable_comprehension_4": "practice",
+                    "printable_comprehension_5": "practice",
+                    "printable_comprehension_6": "practice",
+                    "printable_comprehension_7": "practice",
+                    "printable_vr_1": "vr_single_paper",
+                    "printable_vr_2": "vr_single_paper",
+                    "printable_vr_3": "vr_single_paper",
+                    "printable_vr_4": "vr_single_paper",
+                    "printable_vr_5": "vr_single_paper",
+                    "printable_vr_6": "vr_single_paper",
+                    "printable_vr_7": "vr_single_paper",
+                    "printable_vr_8": "vr_single_paper",
+                    "printable_vr_9": "vr_single_paper",
+                }
+                app_code = entitlement_by_product_key.get(product_key)
+                if app_code:
+                    cur.execute(
+                        """
+                        INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (member_id, app_code),
+                    )
+
+            if product_key and event_type in ["refund", "chargeback"]:
+                revoke_by_product_key = {
+                    "module_math": "math",
+                    "module_spelling": "spelling",
+                    "module_words": "general",
+                    "module_comprehension": "comprehension",
+                }
+                app_code = revoke_by_product_key.get(product_key)
+                if app_code:
+                    cur.execute(
+                        """
+                        DELETE FROM kiaro_membership.member_apps
+                        WHERE member_id = %s
+                          AND app_code = %s
+                        """,
+                        (member_id, app_code),
+                    )
+
             # Mark event processed
             cur.execute(
                 """
@@ -1756,6 +1869,61 @@ async def gumroad_webhook(request: Request):
     except Exception as e:
         print("❌ WEBHOOK ERROR:", str(e))
         return {"status": "error"}
+
+
+# =========================
+# Printable Purchases
+# =========================
+@app.get("/purchases/printables")
+def get_printable_purchases(user=Depends(get_current_user)):
+    email = (user.get("sub") or "").strip().lower()
+    if not email:
+        return {"purchased_keys": [], "purchased_permalinks": []}
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT product_name, event_type, id
+            FROM math_gumroad_events
+            WHERE LOWER(email) = LOWER(%s)
+            ORDER BY id ASC
+            """,
+            (email,),
+        )
+        rows = cur.fetchall() or []
+    finally:
+        cur.close()
+        conn.close()
+
+    is_active_by_key: dict[str, bool] = {}
+    permalink_by_key: dict[str, str] = {}
+
+    for product_name, event_type, _event_id in rows:
+        payload = str(product_name or "")
+        permalink_match = re.search(r"permalink=([A-Za-z0-9_-]+)", payload)
+        permalink = (permalink_match.group(1).lower() if permalink_match else "")
+        base_name = payload.split("|", 1)[0].strip()
+        key = _resolve_gumroad_product_key(base_name, permalink, "")
+        if not key:
+            continue
+        if event_type in {"sale", "purchase"}:
+            is_active_by_key[key] = True
+            if permalink:
+                permalink_by_key[key] = permalink
+        elif event_type in {"refund", "chargeback"}:
+            is_active_by_key[key] = False
+
+    purchased_keys = sorted([key for key, active in is_active_by_key.items() if active])
+    purchased_permalinks = sorted(
+        {
+            permalink_by_key[key]
+            for key in purchased_keys
+            if key.startswith("printable_") and permalink_by_key.get(key)
+        }
+    )
+    return {"purchased_keys": purchased_keys, "purchased_permalinks": purchased_permalinks}
 
 
 # =========================

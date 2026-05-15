@@ -1694,11 +1694,13 @@ def session_next(lesson_id: Optional[int] = None, user=Depends(get_current_user)
 def get_dashboard_stats(user):
     user_email = user.get("sub")
     progress = get_synonym_progress(user_email)
+    is_admin_user = str(user.get("role", "")).lower() == "admin"
+    entitled_apps = set()
     modules = {
-        "spelling": {"unlocked": True, "attempts": 0, "accuracy": 0},
-        "words": {"unlocked": True, "attempts": 0, "accuracy": 0},
-        "maths": {"unlocked": True, "attempts": 0, "accuracy": 0},
-        "comprehension": {"unlocked": True, "attempts": 0, "accuracy": 0},
+        "spelling": {"unlocked": False, "attempts": 0, "accuracy": 0},
+        "words": {"unlocked": False, "attempts": 0, "accuracy": 0},
+        "maths": {"unlocked": False, "attempts": 0, "accuracy": 0},
+        "comprehension": {"unlocked": False, "attempts": 0, "accuracy": 0},
     }
 
     conn = None
@@ -1709,6 +1711,25 @@ def get_dashboard_stats(user):
         cursor = conn.cursor()
 
         user_id = _resolve_learning_user_id(cursor, user)
+        member_id = user.get("member_id")
+
+        if is_admin_user:
+            entitled_apps = {"spelling", "general", "math", "comprehension"}
+        elif member_id:
+            cursor.execute(
+                """
+                SELECT app_code
+                FROM kiaro_membership.member_apps
+                WHERE member_id = %s
+                """,
+                (member_id,),
+            )
+            entitled_apps = {str(row[0]).strip().lower() for row in (cursor.fetchall() or []) if row and row[0]}
+
+        modules["spelling"]["unlocked"] = ("spelling" in entitled_apps or "general" in entitled_apps)
+        modules["words"]["unlocked"] = ("general" in entitled_apps)
+        modules["maths"]["unlocked"] = ("math" in entitled_apps)
+        modules["comprehension"]["unlocked"] = ("comprehension" in entitled_apps)
 
         if user_id:
             cursor.execute("""
@@ -1725,7 +1746,7 @@ def get_dashboard_stats(user):
             spelling_accuracy = round(row[1] or 0, 2)
 
             modules["spelling"] = {
-                "unlocked": True,
+                "unlocked": modules["spelling"]["unlocked"],
                 "attempts": spelling_attempts,
                 "accuracy": spelling_accuracy
             }
@@ -1733,7 +1754,7 @@ def get_dashboard_stats(user):
             synonym_summary = get_synonym_attempt_summary(user_id)
 
             modules["words"] = {
-                "unlocked": True,
+                "unlocked": modules["words"]["unlocked"],
                 "attempts": synonym_summary["attempts"],
                 "accuracy": synonym_summary["accuracy"],
             }
@@ -1760,7 +1781,7 @@ def get_dashboard_stats(user):
                 row = (0, 0)
 
             modules["maths"] = {
-                "unlocked": True,
+                "unlocked": modules["maths"]["unlocked"],
                 "attempts": row[0] or 0,
                 "accuracy": round(row[1] or 0, 2)
             }
@@ -1779,7 +1800,7 @@ def get_dashboard_stats(user):
             comprehension_accuracy = round(row[1] or 0, 2)
 
             modules["comprehension"] = {
-                "unlocked": True,
+                "unlocked": modules["comprehension"]["unlocked"],
                 "attempts": comprehension_attempts,
                 "accuracy": comprehension_accuracy
             }
