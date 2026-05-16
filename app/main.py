@@ -22,6 +22,7 @@ from typing import Optional
 from app.comprehension.router import router as comprehension_router
 from app.auth_reset import init_password_reset_tables, router as auth_reset_router
 from app.practice.synonym_engine import get_synonym_attempt_summary
+from app.entitlements import ONLINE_PRACTICE_APP_CODES
 
 
 # =========================
@@ -228,9 +229,21 @@ def _extract_permalink_from_url(url_value: str | None) -> str:
     return (match.group(1).lower() if match else "")
 
 
+def _normalize_gumroad_identifier(value: str | None) -> str:
+    token = (value or "").strip().lower().rstrip("/")
+    if not token:
+        return ""
+    permalink_token = _extract_permalink_from_url(token)
+    if permalink_token:
+        return permalink_token
+    if re.fullmatch(r"[a-z0-9_-]+", token):
+        return token
+    return ""
+
+
 def _resolve_gumroad_product_key(product_name: str, product_permalink: str, product_id: str) -> str | None:
-    permalink = (product_permalink or "").strip().lower()
-    pid = (product_id or "").strip().lower()
+    permalink = _normalize_gumroad_identifier(product_permalink)
+    pid = _normalize_gumroad_identifier(product_id)
     name = (product_name or "").strip().lower()
 
     direct_mapping = {
@@ -289,6 +302,16 @@ def _resolve_gumroad_product_key(product_name: str, product_permalink: str, prod
         return "disabled_bundle_full"
 
     return None
+
+
+def _online_practice_app_code_for_product_key(product_key: str | None) -> str | None:
+    mapping = {
+        "module_math": "math",
+        "module_spelling": "spelling",
+        "module_words": "general",
+        "module_comprehension": "comprehension",
+    }
+    return mapping.get((product_key or "").strip().lower())
 
 
 def _get_table_columns(cur, table_name: str) -> set[str]:
@@ -571,20 +594,31 @@ def _resolve_member_for_admin_update(cur, *, raw_member_id: str, raw_email: str)
     return member
 
 
-def _replace_member_apps(cur, member_id: int, normalized_apps: list[str]):
-    cur.execute(
-        """
-        DELETE FROM kiaro_membership.member_apps
-        WHERE member_id = %s
-        """,
-        (member_id,),
-    )
+def _replace_member_apps(cur, member_id: int, normalized_apps: list[str], *, scope: str = "all"):
+    if scope == "online_practice":
+        cur.execute(
+            """
+            DELETE FROM kiaro_membership.member_apps
+            WHERE member_id = %s
+              AND app_code = ANY(%s)
+            """,
+            (member_id, sorted(ONLINE_PRACTICE_APP_CODES)),
+        )
+    else:
+        cur.execute(
+            """
+            DELETE FROM kiaro_membership.member_apps
+            WHERE member_id = %s
+            """,
+            (member_id,),
+        )
 
     for app_code in normalized_apps:
         cur.execute(
             """
             INSERT INTO kiaro_membership.member_apps (member_id, app_code)
             VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
             """,
             (member_id, app_code),
         )
@@ -1428,6 +1462,7 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
     raw_email = str(payload.get("email", "")).strip().lower()
     raw_member_id = str(payload.get("member_id", "")).strip()
     normalized_apps = _normalize_admin_app_codes(payload.get("apps", []))
+    update_scope = "online_practice" if set(normalized_apps).issubset(ONLINE_PRACTICE_APP_CODES) else "all"
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1439,7 +1474,7 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
             raw_email=raw_email,
         )
         member_id = member[0]
-        _replace_member_apps(cur, member_id, normalized_apps)
+        _replace_member_apps(cur, member_id, normalized_apps, scope=update_scope)
 
         conn.commit()
 
@@ -1448,6 +1483,7 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
             "email": member[1],
             "member_id": member_id,
             "apps": normalized_apps,
+            "scope": update_scope,
         }
     except Exception:
         conn.rollback()
@@ -1467,6 +1503,7 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
         raise HTTPException(status_code=400, detail="At least one user is required")
 
     normalized_apps = _normalize_admin_app_codes(payload.get("apps", []))
+    update_scope = "online_practice" if set(normalized_apps).issubset(ONLINE_PRACTICE_APP_CODES) else "all"
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1492,7 +1529,7 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
             if member_id in seen_member_ids:
                 continue
 
-            _replace_member_apps(cur, member_id, normalized_apps)
+            _replace_member_apps(cur, member_id, normalized_apps, scope=update_scope)
             seen_member_ids.add(member_id)
             updated_users.append(
                 {
@@ -1507,6 +1544,7 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
             "status": "success",
             "updated_count": len(updated_users),
             "apps": normalized_apps,
+            "scope": update_scope,
             "users": updated_users,
         }
     except Exception:
@@ -1687,14 +1725,14 @@ async def gumroad_webhook(request: Request):
         email = (form.get("email") or "").strip().lower()
         product_name = (form.get("product_name") or "").strip()
         event_type = (form.get("event") or "").strip().lower()
-        product_permalink = (
+        product_permalink = _normalize_gumroad_identifier(
             form.get("product_permalink")
-            or _extract_permalink_from_url(form.get("product_url"))
-            or _extract_permalink_from_url(form.get("short_product_id"))
+            or form.get("product_url")
+            or form.get("short_product_id")
             or ""
         )
         sale_id = (form.get("sale_id") or form.get("purchase_id") or "").strip()
-        product_id = (form.get("product_id") or "").strip()
+        product_id = _normalize_gumroad_identifier(form.get("product_id") or "")
 
         print("GUMROAD EVENT:", email, product_name, event_type, product_permalink, sale_id)
 
@@ -1800,29 +1838,8 @@ async def gumroad_webhook(request: Request):
                 print(f"❌ ACCESS REVOKED → {email} → {test_id}")
 
             if product_key and event_type in ["sale", "purchase"]:
-                entitlement_by_product_key = {
-                    "module_math": "math",
-                    "module_spelling": "spelling",
-                    "module_words": "general",
-                    "module_comprehension": "comprehension",
-                    "printable_comprehension_1": "practice",
-                    "printable_comprehension_2": "practice",
-                    "printable_comprehension_3": "practice",
-                    "printable_comprehension_4": "practice",
-                    "printable_comprehension_5": "practice",
-                    "printable_comprehension_6": "practice",
-                    "printable_comprehension_7": "practice",
-                    "printable_vr_1": "vr_single_paper",
-                    "printable_vr_2": "vr_single_paper",
-                    "printable_vr_3": "vr_single_paper",
-                    "printable_vr_4": "vr_single_paper",
-                    "printable_vr_5": "vr_single_paper",
-                    "printable_vr_6": "vr_single_paper",
-                    "printable_vr_7": "vr_single_paper",
-                    "printable_vr_8": "vr_single_paper",
-                    "printable_vr_9": "vr_single_paper",
-                }
-                app_code = entitlement_by_product_key.get(product_key)
+                # V1: webhook-driven app entitlements are only for Online Practice modules.
+                app_code = _online_practice_app_code_for_product_key(product_key)
                 if app_code:
                     cur.execute(
                         """
@@ -1834,13 +1851,7 @@ async def gumroad_webhook(request: Request):
                     )
 
             if product_key and event_type in ["refund", "chargeback"]:
-                revoke_by_product_key = {
-                    "module_math": "math",
-                    "module_spelling": "spelling",
-                    "module_words": "general",
-                    "module_comprehension": "comprehension",
-                }
-                app_code = revoke_by_product_key.get(product_key)
+                app_code = _online_practice_app_code_for_product_key(product_key)
                 if app_code:
                     cur.execute(
                         """

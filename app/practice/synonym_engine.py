@@ -6,6 +6,7 @@ from app.repositories.synonym_repository import (
     build_validated_synonym_question,
     normalize_synonym_list,
 )
+from app.entitlements import email_has_member_app_access
 
 
 REVIEW_ENCOURAGEMENT_MESSAGE = "Let's practise this one again - you were close last time."
@@ -104,42 +105,7 @@ def _resolve_user_id(cur, user_email):
 def get_words_practice_access_mode(user_email, user_role=None):
     if user_role == "admin":
         return "full"
-
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT id, account_type
-            FROM kiaro_membership.members
-            WHERE LOWER(email) = LOWER(%s)
-            LIMIT 1
-            """,
-            (user_email,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return "preview"
-
-        member_id, account_type = row
-        is_legacy = bool(account_type and str(account_type).strip().lower() != "free")
-        if is_legacy:
-            return "full"
-
-        cur.execute(
-            """
-            SELECT 1
-            FROM kiaro_membership.member_apps
-            WHERE member_id = %s
-              AND app_code = 'general'
-            LIMIT 1
-            """,
-            (member_id,),
-        )
-        return "full" if cur.fetchone() else "preview"
-    finally:
-        cur.close()
-        conn.close()
+    return "full" if email_has_member_app_access(user_email, {"general"}) else "preview"
 
 
 def _table_exists(cur, table_name):

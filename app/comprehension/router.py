@@ -2,6 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from app.auth import get_current_user
+from app.entitlements import require_member_app_access
 
 from app.comprehension.service import (
     list_passages,
@@ -49,13 +50,26 @@ def _safe_execute(label: str, func, *args, **kwargs):
         raise HTTPException(status_code=500, detail="Internal error. Please try again.")
 
 
+def _require_comprehension_access(user):
+    require_member_app_access(
+        user,
+        {"comprehension"},
+        detail={
+            "code": "practice_module_access_required",
+            "message": "ComprehensionSprint access required.",
+        },
+    )
+
+
 @router.get("/passages")
 def get_passages(user=Depends(get_current_user)):
+    _require_comprehension_access(user)
     return _safe_execute("get_passages", list_passages)
 
 
 @router.get("/start")
 def start(passage_id: int | None = None, user=Depends(get_current_user)):
+    _require_comprehension_access(user)
     if passage_id is None:
         _missing_param("passage_id")
 
@@ -71,6 +85,7 @@ def start(passage_id: int | None = None, user=Depends(get_current_user)):
 
 @router.post("/answer")
 def answer(payload: dict, user=Depends(get_current_user)):
+    _require_comprehension_access(user)
     user_id = _require_user_id(user)
     passage_id = _require_payload_param(payload, "passage_id")
     question_id = _require_payload_param(payload, "question_id")
