@@ -232,7 +232,7 @@ def _enforce_full_module_access(user, app_code: str):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        require_member_app_access(cur, user, app_code)
+        require_member_app_access(user, app_code)
     finally:
         cur.close()
         conn.close()

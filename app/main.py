@@ -27,6 +27,7 @@ from app.entitlements import (
     ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE,
     DISABLED_OR_IGNORED_PERMALINKS,
     normalize_gumroad_identifier,
+    get_printable_purchase_state_for_email,
 )
 
 
@@ -1750,6 +1751,13 @@ async def gumroad_webhook(request: Request):
         resolved_app_code = _resolve_gumroad_app_code(identifiers, product_name=product_name)
         resolved_mock_test_id = _resolve_mock_test_id(product_name, identifiers)
 
+        # Embed the product_permalink into the stored product_name so that
+        # get_printable_purchase_state_for_email can recover it for per-paper
+        # purchased-state tracking (no schema change required).
+        _raw_permalink = normalize_gumroad_identifier(str(form.get("product_permalink") or ""))
+        if _raw_permalink:
+            product_name = f"{product_name}|permalink={_raw_permalink}"
+
         print(
             "GUMROAD EVENT:",
             email,
@@ -1897,6 +1905,16 @@ async def gumroad_webhook(request: Request):
     except Exception as e:
         print("❌ WEBHOOK ERROR:", str(e))
         return {"status": "error"}
+
+
+# =========================
+# Purchases: Printables
+# =========================
+@app.get("/purchases/printables")
+def get_printable_purchases(user: dict = Depends(get_current_user)):
+    """Return the set of printable paper permalinks purchased by the authenticated user."""
+    _, purchased_permalinks = get_printable_purchase_state_for_email(user.get("email"))
+    return {"purchased_permalinks": sorted(purchased_permalinks)}
 
 
 # =========================
