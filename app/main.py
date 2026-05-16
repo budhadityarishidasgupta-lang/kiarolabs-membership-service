@@ -22,6 +22,12 @@ from typing import Optional
 from app.comprehension.router import router as comprehension_router
 from app.auth_reset import init_password_reset_tables, router as auth_reset_router
 from app.practice.synonym_engine import get_synonym_attempt_summary
+from app.entitlements import (
+    ACTIVE_MATH_MOCK_PERMALINK_TEST_ID,
+    ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE,
+    DISABLED_OR_IGNORED_PERMALINKS,
+    normalize_gumroad_identifier,
+)
 
 
 # =========================
@@ -802,8 +808,7 @@ def dashboard(user=Depends(get_current_user)):
     # -------------------------
     # LEGACY USER CHECK
     # -------------------------
-    created_at = None
-    is_legacy = False
+    is_admin = str(user.get("role", "")).strip().lower() == "admin"
 
     if member_id:
         cur.execute("""
@@ -814,11 +819,9 @@ def dashboard(user=Depends(get_current_user)):
 
         row = cur.fetchone()
 
-        if row and row[0]:
-            created_at = row[0]
-            from datetime import datetime
-            cutoff_date = datetime(2026, 4, 3)
-            is_legacy = created_at < cutoff_date
+        # created_at is still queried to preserve existing audit/debug expectations,
+        # but unlocks for non-admin users are always sourced from member_apps.
+        _ = row[0] if row else None
 
     # -------------------------
     # FETCH ENTITLEMENTS
@@ -864,7 +867,7 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": s_completed,
             "total_lessons": s_lessons_total,
             "completion_percent": s_completion,
-            "unlocked": True if is_legacy else ("spelling" in apps or "general" in apps)
+            "unlocked": is_admin or ("spelling" in apps)
         },
         "words": {
             "attempts": w_total,
@@ -872,7 +875,7 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": w_completed,
             "total_lessons": w_lessons_total,
             "completion_percent": w_completion,
-            "unlocked": True if is_legacy else ("general" in apps)
+            "unlocked": is_admin or ("general" in apps)
         },
         "math": {
             "attempts": m_total,
@@ -880,23 +883,23 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": m_completed,
             "total_lessons": m_lessons_total,
             "completion_percent": m_completion,
-            "unlocked": True if is_legacy else ("math" in apps)
+            "unlocked": is_admin or ("math" in apps)
         },
 
         # Monetised products (NEVER legacy unlocked)
         "practice_papers": {
-            "unlocked": "practice" in apps or any(code in apps for code in ("vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
+            "unlocked": is_admin or ("practice" in apps or any(code in apps for code in ("vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack")))
         },
         "vr_printables": {
-            "unlocked": any(code in apps for code in ("practice", "vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
+            "unlocked": is_admin or any(code in apps for code in ("practice", "vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
         },
         "mock_exams": {
-            "unlocked": "mock" in apps
+            "unlocked": is_admin or ("mock" in apps)
         },
 
         # Future modules
         "nvr": {
-            "unlocked": "nvr" in apps
+            "unlocked": is_admin or ("nvr" in apps)
         },
         "comprehension": {
             "attempts": c_total,
@@ -904,7 +907,7 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": c_completed,
             "total_lessons": c_lessons_total,
             "completion_percent": c_completion,
-            "unlocked": "comprehension" in apps
+            "unlocked": is_admin or ("comprehension" in apps)
         }
     }
 
@@ -1627,59 +1630,60 @@ def set_user_role(payload: dict, user=Depends(get_current_user)):
 # =========================
 # Gumroad Webhook
 # =========================
-GUMROAD_APP_CODE_BY_IDENTIFIER = {
-    "ztwxby": "math",
-    "gxvtls": "spelling",
-    "sddokb": "general",
-    "gckvb": "comprehension",
-    "https://kiarolabs.gumroad.com/l/ztwxby": "math",
-    "https://kiarolabs.gumroad.com/l/gxvtls": "spelling",
-    "https://kiarolabs.gumroad.com/l/sddokb": "general",
-    "https://kiarolabs.gumroad.com/l/gckvb": "comprehension",
+MOCK_PACK_IDENTIFIERS_V1: set[str] = {
+    normalize_gumroad_identifier(token)
+    for token in DISABLED_OR_IGNORED_PERMALINKS
 }
-
-MOCK_PACK_IDENTIFIERS_V1: set[str] = set()
 
 
 def _collect_gumroad_identifiers(form) -> set[str]:
     identifiers: set[str] = set()
-    for field_name in ("product_permalink", "short_product_id", "product_id", "product_url"):
+    for field_name in (
+        "product_permalink",
+        "short_product_id",
+        "product_id",
+        "product_url",
+        "sale[product_permalink]",
+        "sale[short_product_id]",
+        "sale[product_id]",
+        "sale[product_url]",
+    ):
         raw_value = form.get(field_name)
         if raw_value is None:
             continue
-        value = str(raw_value).strip().lower()
+        value = normalize_gumroad_identifier(str(raw_value))
         if value:
             identifiers.add(value)
-
-    product_url = str(form.get("product_url") or "").strip().lower()
-    permalink_match = re.search(r"/l/([a-z0-9]+)", product_url)
-    if permalink_match:
-        identifiers.add(permalink_match.group(1))
 
     return identifiers
 
 
 def _resolve_gumroad_app_code(identifiers: set[str], product_name: str = "") -> str | None:
     for identifier in identifiers:
-        app_code = GUMROAD_APP_CODE_BY_IDENTIFIER.get(identifier)
+        app_code = ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE.get(identifier)
         if app_code:
             return app_code
 
     normalized_name = (product_name or "").strip().lower()
-    if normalized_name == "wordsprint":
+    if "wordsprint" in normalized_name:
         return "general"
-    if normalized_name == "spellingsprint":
+    if "spellingsprint" in normalized_name:
         return "spelling"
-    if normalized_name == "mathsprint":
+    if "mathsprint" in normalized_name or "maths sprint" in normalized_name:
         return "math"
-    if normalized_name == "comprehensionsprint":
+    if "comprehensionsprint" in normalized_name:
         return "comprehension"
 
     return None
 
 
 def _resolve_mock_test_id(product_name: str, identifiers: set[str]) -> str | None:
-    source_values = [product_name.lower(), *identifiers]
+    for identifier in identifiers:
+        mapped_test_id = ACTIVE_MATH_MOCK_PERMALINK_TEST_ID.get(identifier)
+        if mapped_test_id:
+            return mapped_test_id
+
+    source_values = [(product_name or "").lower(), *identifiers]
 
     for value in source_values:
         if value in MOCK_PACK_IDENTIFIERS_V1:
@@ -1695,6 +1699,26 @@ def _resolve_mock_test_id(product_name: str, identifiers: set[str]) -> str | Non
                 return f"MATH_MOCK_{int(trailing_match.group(1))}"
 
     return None
+
+
+def _resolve_gumroad_product_key(identifiers: set[str], product_name: str = "") -> str | None:
+    """
+    Backward-compatible resolver contract used by legacy validation checks.
+    """
+    app_code = _resolve_gumroad_app_code(identifiers, product_name=product_name)
+    if app_code:
+        return app_code
+    return _resolve_mock_test_id(product_name, identifiers)
+
+
+def _is_purchase_event(event_type: str) -> bool:
+    normalized = (event_type or "").strip().lower()
+    return normalized in {"sale", "purchase", "sale.created", "purchase.created"}
+
+
+def _is_refund_event(event_type: str) -> bool:
+    normalized = (event_type or "").strip().lower()
+    return normalized in {"refund", "chargeback", "refund.created", "chargeback.created"}
 
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
@@ -1753,8 +1777,17 @@ async def gumroad_webhook(request: Request):
 
             member_id = row[0]
 
-            # Handle bundle purchases
-            if event_type in ["sale", "purchase"] and any(identifier in MOCK_PACK_IDENTIFIERS_V1 for identifier in identifiers):
+            is_purchase_event = _is_purchase_event(event_type)
+            is_refund_event = _is_refund_event(event_type)
+
+            # Bundle/packs stay disabled for V1 and must never unlock individual mock entitlements.
+            if is_purchase_event and any(identifier in MOCK_PACK_IDENTIFIERS_V1 for identifier in identifiers):
+                print(f"ℹ️ IGNORED DISABLED PACK PURCHASE → {email} → {sorted(identifiers)}")
+                conn.commit()
+                return {"status": "disabled_pack_ignored"}
+
+            # Handle bundle purchases (inactive placeholder; retained for backward-compatible structure)
+            if is_purchase_event and any(identifier in MOCK_PACK_IDENTIFIERS_V1 for identifier in identifiers):
                 for i in range(1, 7):
                     bundle_test_id = f"MATH_MOCK_{i}"
                     cur.execute(
@@ -1769,7 +1802,7 @@ async def gumroad_webhook(request: Request):
                 conn.commit()
                 return {"status": "6_pack_unlocked"}
 
-            if event_type in ["sale", "purchase"] and any(identifier in MOCK_PACK_IDENTIFIERS_V1 for identifier in identifiers):
+            if is_purchase_event and any(identifier in MOCK_PACK_IDENTIFIERS_V1 for identifier in identifiers):
                 for i in range(1, 13):
                     bundle_test_id = f"MATH_MOCK_{i}"
                     cur.execute(
@@ -1784,7 +1817,7 @@ async def gumroad_webhook(request: Request):
                 conn.commit()
                 return {"status": "full_pack_unlocked"}
 
-            if event_type in ["sale", "purchase"] and resolved_app_code:
+            if is_purchase_event and resolved_app_code:
                 cur.execute(
                     """
                     INSERT INTO kiaro_membership.member_apps (member_id, app_code)
@@ -1795,7 +1828,7 @@ async def gumroad_webhook(request: Request):
                 )
 
             # Handle single-test purchase
-            if event_type in ["sale", "purchase"] and resolved_mock_test_id:
+            if is_purchase_event and resolved_mock_test_id:
                 cur.execute(
                     """
                     INSERT INTO math_user_test_access (member_id, test_id)
@@ -1807,7 +1840,7 @@ async def gumroad_webhook(request: Request):
                 print(f"✅ ACCESS GRANTED → {email} → {resolved_mock_test_id}")
 
             # Handle refund
-            if event_type in ["refund", "chargeback"] and resolved_mock_test_id:
+            if is_refund_event and resolved_mock_test_id:
                 cur.execute(
                     """
                     DELETE FROM math_user_test_access
@@ -1818,7 +1851,7 @@ async def gumroad_webhook(request: Request):
                 )
                 print(f"❌ ACCESS REVOKED → {email} → {resolved_mock_test_id}")
 
-            if event_type in ["refund", "chargeback"] and resolved_app_code:
+            if is_refund_event and resolved_app_code:
                 cur.execute(
                     """
                     DELETE FROM kiaro_membership.member_apps

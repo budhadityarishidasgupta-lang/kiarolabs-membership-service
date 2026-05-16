@@ -1179,6 +1179,7 @@ def words_micro_challenge(
     word_id: int,
     user=Depends(get_current_user)
 ):
+    _enforce_full_module_access(user, "general")
     from app.practice.words_engine import build_words_micro_challenge
     return build_words_micro_challenge(user["user_id"], word_id)
 
@@ -1393,6 +1394,7 @@ def submit_words_micro_challenge(
     payload: dict,
     user=Depends(get_current_user)
 ):
+    _enforce_full_module_access(user, "general")
     """
     payload:
     {
@@ -1457,6 +1459,7 @@ def submit_micro_challenge(
     payload: dict,
     user=Depends(get_current_user)
 ):
+    _enforce_full_module_access(user, "spelling")
     from app.database import get_connection
 
     conn = get_connection()
