@@ -2025,7 +2025,12 @@ async def gumroad_webhook(request: Request):
 @app.get("/purchases/printables")
 def get_printable_purchases(user: dict = Depends(get_current_user)):
     """Return the set of printable paper permalinks purchased by the authenticated user."""
-    _, purchased_permalinks = get_printable_purchase_state_for_email(user.get("email"))
+    user_email = (
+        (user.get("sub") or user.get("member_email") or user.get("email") or "")
+        .strip()
+        .lower()
+    )
+    _, purchased_permalinks = get_printable_purchase_state_for_email(user_email)
     return {"purchased_permalinks": sorted(purchased_permalinks)}
 
 
