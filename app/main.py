@@ -1568,6 +1568,97 @@ def user_detail(email: str, user=Depends(get_current_user)):
         conn.close()
 
 
+@app.get("/admin/debug/member-access")
+def admin_debug_member_access(email: str, limit: int = 20, user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    target_email = str(email or "").strip().lower()
+    if not target_email:
+        raise HTTPException(status_code=400, detail="email is required")
+
+    safe_limit = max(1, min(int(limit or 20), 100))
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT id, email
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (target_email,),
+        )
+        member_row = cur.fetchone()
+        if not member_row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        member_id = int(member_row[0])
+        member_email = str(member_row[1] or "").strip().lower()
+
+        cur.execute(
+            """
+            SELECT app_code
+            FROM kiaro_membership.member_apps
+            WHERE member_id = %s
+            ORDER BY app_code
+            """,
+            (member_id,),
+        )
+        member_apps = [str(row[0]) for row in (cur.fetchall() or []) if row and row[0]]
+
+        cur.execute(
+            """
+            SELECT test_id
+            FROM math_user_test_access
+            WHERE member_id = %s
+            ORDER BY test_id
+            """,
+            (member_id,),
+        )
+        mock_test_ids = [str(row[0]) for row in (cur.fetchall() or []) if row and row[0]]
+
+        cur.execute(
+            """
+            SELECT id, event_type, product_name, test_id, processed
+            FROM math_gumroad_events
+            WHERE LOWER(email) = LOWER(%s)
+            ORDER BY id DESC
+            LIMIT %s
+            """,
+            (member_email, safe_limit),
+        )
+        raw_events = cur.fetchall() or []
+        last_gumroad_events = [
+            {
+                "id": int(row[0]),
+                "event_type": str(row[1] or ""),
+                "product_name": str(row[2] or ""),
+                "test_id": str(row[3] or ""),
+                "processed": bool(row[4]),
+            }
+            for row in raw_events
+        ]
+    finally:
+        cur.close()
+        conn.close()
+
+    purchased_keys, purchased_permalinks = get_printable_purchase_state_for_email(member_email)
+
+    return {
+        "email": member_email,
+        "member_id": member_id,
+        "member_apps": member_apps,
+        "mock_test_ids": mock_test_ids,
+        "printable_purchase_keys": sorted(purchased_keys),
+        "printable_permalinks": sorted(purchased_permalinks),
+        "last_gumroad_events": last_gumroad_events,
+    }
+
+
 @app.post("/admin/set-role")
 def set_user_role(payload: dict, user=Depends(get_current_user)):
     if user.get("role") != "admin":
