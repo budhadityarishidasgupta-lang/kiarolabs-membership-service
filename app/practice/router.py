@@ -2071,6 +2071,7 @@ def spelling_test(user=Depends(get_current_user)):
     - generates stats
     - validates recommendations
     """
+    _enforce_full_module_access(user, "spelling")
 
     from app.testing.spelling_test_agent import run_spelling_test
 

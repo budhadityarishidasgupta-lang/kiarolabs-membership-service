@@ -539,12 +539,20 @@ def root():
 
 @app.get("/health")
 def health_check():
+    release_sha = os.getenv("RENDER_GIT_COMMIT", "") or os.getenv("GIT_SHA", "")
     try:
         conn = get_connection()
         conn.close()
-        return {"database": "connected"}
+        return {
+            "database": "connected",
+            "release_sha": release_sha,
+        }
     except Exception as e:
-        return {"database": "error", "details": str(e)}
+        return {
+            "database": "error",
+            "details": str(e),
+            "release_sha": release_sha,
+        }
 
 
 # =========================
@@ -1664,6 +1672,11 @@ def _resolve_gumroad_app_code(identifiers: set[str], product_name: str = "") -> 
         if app_code:
             return app_code
 
+    # Identifier-bearing payloads are authoritative; unknown identifiers must not
+    # fall back to name-based module unlocks (prevents printable/mock name drift).
+    if identifiers:
+        return None
+
     normalized_name = re.sub(r"[^a-z0-9]+", "", (product_name or "").strip().lower())
     if normalized_name == "wordsprint":
         return "general"
@@ -1682,6 +1695,11 @@ def _resolve_mock_test_id(product_name: str, identifiers: set[str]) -> str | Non
         mapped_test_id = ACTIVE_MATH_MOCK_PERMALINK_TEST_ID.get(identifier)
         if mapped_test_id:
             return mapped_test_id
+
+    # Identifier-bearing payloads are authoritative; do not infer a mock test
+    # from product name when identifiers do not map to an active mock permalink.
+    if identifiers:
+        return None
 
     source_values = [(product_name or "").lower(), *identifiers]
 
