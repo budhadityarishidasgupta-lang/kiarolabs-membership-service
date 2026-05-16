@@ -22,7 +22,15 @@ from typing import Optional
 from app.comprehension.router import router as comprehension_router
 from app.auth_reset import init_password_reset_tables, router as auth_reset_router
 from app.practice.synonym_engine import get_synonym_attempt_summary
-from app.entitlements import ONLINE_PRACTICE_APP_CODES
+from app.entitlements import (
+    ONLINE_PRACTICE_APP_CODES,
+    ACTIVE_MATH_MOCK_PERMALINK_TEST_ID,
+    ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE,
+    ACTIVE_VR_PERMALINK_TO_KEY,
+    ACTIVE_COMPREHENSION_PERMALINK_TO_KEY,
+    DISABLED_OR_IGNORED_PERMALINKS,
+    get_printable_purchase_state_for_email,
+)
 
 
 # =========================
@@ -241,33 +249,54 @@ def _normalize_gumroad_identifier(value: str | None) -> str:
     return ""
 
 
+# Active V1 products only. Disabled/coming-soon products are intentionally excluded from unlock wiring.
+ACTIVE_GUMROAD_PRODUCT_MAPPINGS = [
+    {"permalink": "ztwxby", "product_url": "https://kiarolabs.gumroad.com/l/ztwxby", "product_name": "MathSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "math"},
+    {"permalink": "gxvtls", "product_url": "https://kiarolabs.gumroad.com/l/gxvtls", "product_name": "SpellingSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "spelling"},
+    {"permalink": "sddokb", "product_url": "https://kiarolabs.gumroad.com/l/sddokb", "product_name": "WordSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "general"},
+    {"permalink": "gckvb", "product_url": "https://kiarolabs.gumroad.com/l/gckvb", "product_name": "ComprehensionSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "comprehension"},
+    {"permalink": "zqwlsf", "product_url": "https://kiarolabs.gumroad.com/l/zqwlsf", "product_name": "Maths Mock Exam 1", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_1"},
+    {"permalink": "ohnryj", "product_url": "https://kiarolabs.gumroad.com/l/ohnryj", "product_name": "Maths Mock Exam 2", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_2"},
+    {"permalink": "edaol", "product_url": "https://kiarolabs.gumroad.com/l/edaol", "product_name": "Maths Mock Exam 3", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_3"},
+    {"permalink": "vrkrb", "product_url": "https://kiarolabs.gumroad.com/l/vrkrb", "product_name": "Maths Mock Exam 4", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_4"},
+    {"permalink": "etswx", "product_url": "https://kiarolabs.gumroad.com/l/etswx", "product_name": "Maths Mock Exam 5", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_5"},
+    {"permalink": "ptyyuo", "product_url": "https://kiarolabs.gumroad.com/l/ptyyuo", "product_name": "Maths Mock Exam 6", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_6"},
+    {"permalink": "rwzwvf", "product_url": "https://kiarolabs.gumroad.com/l/rwzwvf", "product_name": "Maths Mock Exam 7", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_7"},
+    {"permalink": "xgupvl", "product_url": "https://kiarolabs.gumroad.com/l/xgupvl", "product_name": "Maths Mock Exam 8", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_8"},
+    {"permalink": "enjhd", "product_url": "https://kiarolabs.gumroad.com/l/enjhd", "product_name": "Maths Mock Exam 9", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_9"},
+    {"permalink": "gbveam", "product_url": "https://kiarolabs.gumroad.com/l/gbveam", "product_name": "Maths Mock Exam 10", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_10"},
+    {"permalink": "wnqoqg", "product_url": "https://kiarolabs.gumroad.com/l/wnqoqg", "product_name": "Maths Mock Exam 11", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_11"},
+    {"permalink": "xkgiqu", "product_url": "https://kiarolabs.gumroad.com/l/xkgiqu", "product_name": "Maths Mock Exam 12", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_12"},
+    {"permalink": "qoipgs", "product_url": "https://kiarolabs.gumroad.com/l/qoipgs", "product_name": "VR Practice Paper 1", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_1"},
+    {"permalink": "hquiw", "product_url": "https://kiarolabs.gumroad.com/l/hquiw", "product_name": "VR Practice Paper 2", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_2"},
+    {"permalink": "nsfah", "product_url": "https://kiarolabs.gumroad.com/l/nsfah", "product_name": "VR Practice Paper 3", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_3"},
+    {"permalink": "fjzif", "product_url": "https://kiarolabs.gumroad.com/l/fjzif", "product_name": "VR Practice Paper 4", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_4"},
+    {"permalink": "kgbqum", "product_url": "https://kiarolabs.gumroad.com/l/kgbqum", "product_name": "VR Practice Paper 5", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_5"},
+    {"permalink": "zwfglb", "product_url": "https://kiarolabs.gumroad.com/l/zwfglb", "product_name": "VR Practice Paper 6", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_6"},
+    {"permalink": "gsmpyn", "product_url": "https://kiarolabs.gumroad.com/l/gsmpyn", "product_name": "VR Practice Paper 7", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_7"},
+    {"permalink": "efibzj", "product_url": "https://kiarolabs.gumroad.com/l/efibzj", "product_name": "VR Practice Paper 8", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_8"},
+    {"permalink": "luiiv", "product_url": "https://kiarolabs.gumroad.com/l/luiiv", "product_name": "VR Practice Paper 9", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_9"},
+    {"permalink": "exjlsl", "product_url": "https://kiarolabs.gumroad.com/l/exjlsl", "product_name": "Comprehension Practice Set 1", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_1"},
+    {"permalink": "rgznog", "product_url": "https://kiarolabs.gumroad.com/l/rgznog", "product_name": "Comprehension Practice Set 2", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_2"},
+    {"permalink": "rbtolw", "product_url": "https://kiarolabs.gumroad.com/l/rbtolw", "product_name": "Comprehension Practice Set 3", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_3"},
+    {"permalink": "dtzldn", "product_url": "https://kiarolabs.gumroad.com/l/dtzldn", "product_name": "Comprehension Practice Set 4", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_4"},
+    {"permalink": "afjgni", "product_url": "https://kiarolabs.gumroad.com/l/afjgni", "product_name": "Comprehension Practice Set 5", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_5"},
+    {"permalink": "ilgta", "product_url": "https://kiarolabs.gumroad.com/l/ilgta", "product_name": "Comprehension Practice Set 6", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_6"},
+    {"permalink": "shixax", "product_url": "https://kiarolabs.gumroad.com/l/shixax", "product_name": "Comprehension Practice Set 7", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_7"},
+]
+
+
 def _resolve_gumroad_product_key(product_name: str, product_permalink: str, product_id: str) -> str | None:
     permalink = _normalize_gumroad_identifier(product_permalink)
     pid = _normalize_gumroad_identifier(product_id)
     name = (product_name or "").strip().lower()
 
-    direct_mapping = {
-        "ztwxby": "module_math",
-        "gxvtls": "module_spelling",
-        "sddokb": "module_words",
-        "gckvb": "module_comprehension",
-        "exjlsl": "printable_comprehension_1",
-        "rgznog": "printable_comprehension_2",
-        "rbtolw": "printable_comprehension_3",
-        "dtzldn": "printable_comprehension_4",
-        "afjgni": "printable_comprehension_5",
-        "ilgta": "printable_comprehension_6",
-        "shixax": "printable_comprehension_7",
-        "qoipgs": "printable_vr_1",
-        "hquiw": "printable_vr_2",
-        "nsfah": "printable_vr_3",
-        "fjzif": "printable_vr_4",
-        "kgbqum": "printable_vr_5",
-        "zwfglb": "printable_vr_6",
-        "gsmpyn": "printable_vr_7",
-        "efibzj": "printable_vr_8",
-        "luiiv": "printable_vr_9",
-    }
+    direct_mapping = {}
+    direct_mapping.update({token: f"module_{app}" for token, app in ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE.items()})
+    direct_mapping.update({token: f"mock_{test_id}" for token, test_id in ACTIVE_MATH_MOCK_PERMALINK_TEST_ID.items()})
+    direct_mapping.update(ACTIVE_COMPREHENSION_PERMALINK_TO_KEY)
+    direct_mapping.update(ACTIVE_VR_PERMALINK_TO_KEY)
+    direct_mapping.update({token: "disabled_ignored_product" for token in DISABLED_OR_IGNORED_PERMALINKS})
 
     for token in (permalink, pid):
         if token in direct_mapping:
@@ -289,6 +318,10 @@ def _resolve_gumroad_product_key(product_name: str, product_permalink: str, prod
         return "module_words"
     if "comprehensionsprint" in name or "comprehension sprint" in name:
         return "module_comprehension"
+
+    mock_match = re.search(r"maths mock exam\s*(\d+)", name)
+    if mock_match:
+        return f"mock_MATH_MOCK_{int(mock_match.group(1))}"
 
     if "maths complete pack" in name:
         return "disabled_bundle_maths_complete"
@@ -312,6 +345,13 @@ def _online_practice_app_code_for_product_key(product_key: str | None) -> str | 
         "module_comprehension": "comprehension",
     }
     return mapping.get((product_key or "").strip().lower())
+
+
+def _mock_test_id_for_product_key(product_key: str | None) -> str | None:
+    raw = (product_key or "").strip()
+    if raw.startswith("mock_"):
+        return raw.replace("mock_", "", 1)
+    return None
 
 
 def _get_table_columns(cur, table_name: str) -> set[str]:
@@ -1736,12 +1776,11 @@ async def gumroad_webhook(request: Request):
 
         print("GUMROAD EVENT:", email, product_name, event_type, product_permalink, sale_id)
 
-        if not email or not product_name:
+        if not email or not (product_name or product_permalink or product_id):
             return {"status": "ignored", "reason": "missing_identity"}
 
-        match = re.search(r"Maths Mock Exam (\d+)", product_name, re.IGNORECASE)
-        test_id = f"MATH_MOCK_{match.group(1)}" if match else None
         product_key = _resolve_gumroad_product_key(product_name, product_permalink, product_id)
+        test_id = _mock_test_id_for_product_key(product_key)
 
         conn = get_connection()
         cur = conn.cursor()
@@ -1777,41 +1816,10 @@ async def gumroad_webhook(request: Request):
 
             member_id = row[0]
 
-            if product_key and product_key.startswith("disabled_bundle_"):
-                print("BUNDLE PURCHASE LOGGED WITHOUT UNLOCK:", product_key, email)
+            if product_key == "disabled_ignored_product" or (product_key and product_key.startswith("disabled_bundle_")):
+                print("DISABLED PRODUCT PURCHASE LOGGED WITHOUT UNLOCK:", product_key, email)
                 conn.commit()
-                return {"status": "bundle_logged_not_unlocked", "product_key": product_key}
-
-            # Handle bundle purchases
-            if event_type in ["sale", "purchase"] and product_name == "Maths Mock Pack (6 Tests)":
-                for i in range(1, 7):
-                    bundle_test_id = f"MATH_MOCK_{i}"
-                    cur.execute(
-                        """
-                        INSERT INTO math_user_test_access (member_id, test_id)
-                        VALUES (%s, %s)
-                        ON CONFLICT DO NOTHING
-                        """,
-                        (member_id, bundle_test_id),
-                    )
-                print(f"✅ ACCESS GRANTED → {email} → 6-pack")
-                conn.commit()
-                return {"status": "6_pack_unlocked"}
-
-            if event_type in ["sale", "purchase"] and product_name == "Maths Complete Pack (12 Tests)":
-                for i in range(1, 13):
-                    bundle_test_id = f"MATH_MOCK_{i}"
-                    cur.execute(
-                        """
-                        INSERT INTO math_user_test_access (member_id, test_id)
-                        VALUES (%s, %s)
-                        ON CONFLICT DO NOTHING
-                        """,
-                        (member_id, bundle_test_id),
-                    )
-                print(f"✅ ACCESS GRANTED → {email} → full-pack")
-                conn.commit()
-                return {"status": "full_pack_unlocked"}
+                return {"status": "ignored_disabled_product", "product_key": product_key}
 
             # Handle single-test purchase
             if event_type in ["sale", "purchase"] and test_id:
@@ -1890,51 +1898,11 @@ def get_printable_purchases(user=Depends(get_current_user)):
     email = (user.get("sub") or "").strip().lower()
     if not email:
         return {"purchased_keys": [], "purchased_permalinks": []}
-
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT product_name, event_type, id
-            FROM math_gumroad_events
-            WHERE LOWER(email) = LOWER(%s)
-            ORDER BY id ASC
-            """,
-            (email,),
-        )
-        rows = cur.fetchall() or []
-    finally:
-        cur.close()
-        conn.close()
-
-    is_active_by_key: dict[str, bool] = {}
-    permalink_by_key: dict[str, str] = {}
-
-    for product_name, event_type, _event_id in rows:
-        payload = str(product_name or "")
-        permalink_match = re.search(r"permalink=([A-Za-z0-9_-]+)", payload)
-        permalink = (permalink_match.group(1).lower() if permalink_match else "")
-        base_name = payload.split("|", 1)[0].strip()
-        key = _resolve_gumroad_product_key(base_name, permalink, "")
-        if not key:
-            continue
-        if event_type in {"sale", "purchase"}:
-            is_active_by_key[key] = True
-            if permalink:
-                permalink_by_key[key] = permalink
-        elif event_type in {"refund", "chargeback"}:
-            is_active_by_key[key] = False
-
-    purchased_keys = sorted([key for key, active in is_active_by_key.items() if active])
-    purchased_permalinks = sorted(
-        {
-            permalink_by_key[key]
-            for key in purchased_keys
-            if key.startswith("printable_") and permalink_by_key.get(key)
-        }
-    )
-    return {"purchased_keys": purchased_keys, "purchased_permalinks": purchased_permalinks}
+    purchased_keys, purchased_permalinks = get_printable_purchase_state_for_email(email)
+    return {
+        "purchased_keys": sorted(purchased_keys),
+        "purchased_permalinks": sorted(purchased_permalinks),
+    }
 
 
 # =========================

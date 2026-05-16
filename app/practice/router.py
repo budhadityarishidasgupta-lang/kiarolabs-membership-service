@@ -14,7 +14,13 @@ import random
 
 from app.auth import get_current_user, get_optional_current_user, resolve_verified_learning_user_id
 from app.database import get_connection
-from app.entitlements import require_member_app_access, user_has_member_app_access
+from app.entitlements import (
+    require_member_app_access,
+    user_has_member_app_access,
+    email_has_printable_key_access,
+    get_printable_purchase_state_for_email,
+    VR_PAPER_CODE_TO_KEY,
+)
 
 # Engines
 from app.practice.math_engine import (
@@ -617,6 +623,8 @@ def get_vr_papers(user=Depends(get_current_user)):
         user_email=user.get("sub", ""),
         user_role=user.get("role"),
     )
+    user_email = user.get("sub", "")
+    purchased_keys, _ = get_printable_purchase_state_for_email(user_email)
     papers = get_active_vr_papers()
     return [
         {
@@ -630,7 +638,13 @@ def get_vr_papers(user=Depends(get_current_user)):
             "answer_count": paper["answers_count"],
             "answers_count": paper["answers_count"],
             "ready": paper["ready"],
-            "unlocked": accessible,
+            "unlocked": (
+                True
+                if user.get("role") == "admin" or accessible
+                else (
+                    VR_PAPER_CODE_TO_KEY.get(normalize_vr_paper_code(paper["paper_code"]), "") in purchased_keys
+                )
+            ),
         }
         for paper in papers
     ]
@@ -638,15 +652,19 @@ def get_vr_papers(user=Depends(get_current_user)):
 
 @router.get("/vr/questions")
 def get_vr_question_numbers(paper_code: str, user=Depends(get_current_user)):
-    if not user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role")):
+    normalized_code = normalize_vr_paper_code(paper_code)
+    printable_key = VR_PAPER_CODE_TO_KEY.get(normalized_code, "")
+    has_global_vr = user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role"))
+    has_single_paper = email_has_printable_key_access(user.get("sub", ""), printable_key) if printable_key else False
+    if not has_global_vr and not has_single_paper and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="VR printable access required")
 
-    questions = get_vr_questions_for_paper(paper_code)
+    questions = get_vr_questions_for_paper(normalized_code)
     if not questions:
         raise HTTPException(status_code=404, detail="Paper questions not available")
 
     return {
-        "paper_code": normalize_vr_paper_code(paper_code),
+        "paper_code": normalized_code,
         "questions": [int(question["question_number"]) for question in questions],
     }
 
@@ -657,7 +675,10 @@ def submit_vr_answers(payload: dict, user=Depends(get_current_user)):
     paper_code = normalize_vr_paper_code(_require_payload_param(payload, "paper_code"))
     answers_payload = _require_payload_param(payload, "answers")
 
-    if not user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role")):
+    printable_key = VR_PAPER_CODE_TO_KEY.get(paper_code, "")
+    has_global_vr = user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role"))
+    has_single_paper = email_has_printable_key_access(user.get("sub", ""), printable_key) if printable_key else False
+    if not has_global_vr and not has_single_paper and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="VR printable access required")
 
     stored_answers = get_vr_answers_for_paper(paper_code)
