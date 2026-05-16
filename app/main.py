@@ -1,8 +1,7 @@
 import os
 import re
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request, HTTPException, Depends, Body, Query
-from fastapi.responses import Response
+from fastapi import FastAPI, Request, HTTPException, Depends, Body
 #from fastapi.security import OAuth2PasswordBearer
 from app.auth import get_current_user, resolve_verified_learning_user_id
 from pydantic import BaseModel, EmailStr
@@ -23,19 +22,6 @@ from typing import Optional
 from app.comprehension.router import router as comprehension_router
 from app.auth_reset import init_password_reset_tables, router as auth_reset_router
 from app.practice.synonym_engine import get_synonym_attempt_summary
-from app.entitlements import (
-    ONLINE_PRACTICE_APP_CODES,
-    ACTIVE_MATH_MOCK_PERMALINK_TEST_ID,
-    ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE,
-    ACTIVE_VR_PERMALINK_TO_KEY,
-    ACTIVE_COMPREHENSION_PERMALINK_TO_KEY,
-    DISABLED_OR_IGNORED_PERMALINKS,
-    get_printable_purchase_state_for_email,
-)
-from app.repositories.purchase_reporting_repository import (
-    list_purchase_events,
-    render_purchase_events_csv,
-)
 
 
 # =========================
@@ -232,131 +218,6 @@ def derive_subscription_state(subscription_status: str | None, subscription_end)
         return True, "cancelled"
 
     return False, subscription_status or "inactive"
-
-
-def _extract_permalink_from_url(url_value: str | None) -> str:
-    normalized = (url_value or "").strip().rstrip("/")
-    if not normalized:
-        return ""
-    match = re.search(r"/l/([A-Za-z0-9_-]+)$", normalized)
-    return (match.group(1).lower() if match else "")
-
-
-def _normalize_gumroad_identifier(value: str | None) -> str:
-    token = (value or "").strip().lower().rstrip("/")
-    if not token:
-        return ""
-    permalink_token = _extract_permalink_from_url(token)
-    if permalink_token:
-        return permalink_token
-    if re.fullmatch(r"[a-z0-9_-]+", token):
-        return token
-    return ""
-
-
-# Active V1 products only. Disabled/coming-soon products are intentionally excluded from unlock wiring.
-ACTIVE_GUMROAD_PRODUCT_MAPPINGS = [
-    {"permalink": "ztwxby", "product_url": "https://kiarolabs.gumroad.com/l/ztwxby", "product_name": "MathSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "math"},
-    {"permalink": "gxvtls", "product_url": "https://kiarolabs.gumroad.com/l/gxvtls", "product_name": "SpellingSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "spelling"},
-    {"permalink": "sddokb", "product_url": "https://kiarolabs.gumroad.com/l/sddokb", "product_name": "WordSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "general"},
-    {"permalink": "gckvb", "product_url": "https://kiarolabs.gumroad.com/l/gckvb", "product_name": "ComprehensionSprint", "category": "online_practice", "target_table": "kiaro_membership.member_apps", "target_key": "comprehension"},
-    {"permalink": "zqwlsf", "product_url": "https://kiarolabs.gumroad.com/l/zqwlsf", "product_name": "Maths Mock Exam 1", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_1"},
-    {"permalink": "ohnryj", "product_url": "https://kiarolabs.gumroad.com/l/ohnryj", "product_name": "Maths Mock Exam 2", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_2"},
-    {"permalink": "edaol", "product_url": "https://kiarolabs.gumroad.com/l/edaol", "product_name": "Maths Mock Exam 3", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_3"},
-    {"permalink": "vrkrb", "product_url": "https://kiarolabs.gumroad.com/l/vrkrb", "product_name": "Maths Mock Exam 4", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_4"},
-    {"permalink": "etswx", "product_url": "https://kiarolabs.gumroad.com/l/etswx", "product_name": "Maths Mock Exam 5", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_5"},
-    {"permalink": "ptyyuo", "product_url": "https://kiarolabs.gumroad.com/l/ptyyuo", "product_name": "Maths Mock Exam 6", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_6"},
-    {"permalink": "rwzwvf", "product_url": "https://kiarolabs.gumroad.com/l/rwzwvf", "product_name": "Maths Mock Exam 7", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_7"},
-    {"permalink": "xgupvl", "product_url": "https://kiarolabs.gumroad.com/l/xgupvl", "product_name": "Maths Mock Exam 8", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_8"},
-    {"permalink": "enjhd", "product_url": "https://kiarolabs.gumroad.com/l/enjhd", "product_name": "Maths Mock Exam 9", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_9"},
-    {"permalink": "gbveam", "product_url": "https://kiarolabs.gumroad.com/l/gbveam", "product_name": "Maths Mock Exam 10", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_10"},
-    {"permalink": "wnqoqg", "product_url": "https://kiarolabs.gumroad.com/l/wnqoqg", "product_name": "Maths Mock Exam 11", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_11"},
-    {"permalink": "xkgiqu", "product_url": "https://kiarolabs.gumroad.com/l/xkgiqu", "product_name": "Maths Mock Exam 12", "category": "mock_exam", "target_table": "math_user_test_access", "target_key": "MATH_MOCK_12"},
-    {"permalink": "qoipgs", "product_url": "https://kiarolabs.gumroad.com/l/qoipgs", "product_name": "VR Practice Paper 1", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_1"},
-    {"permalink": "hquiw", "product_url": "https://kiarolabs.gumroad.com/l/hquiw", "product_name": "VR Practice Paper 2", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_2"},
-    {"permalink": "nsfah", "product_url": "https://kiarolabs.gumroad.com/l/nsfah", "product_name": "VR Practice Paper 3", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_3"},
-    {"permalink": "fjzif", "product_url": "https://kiarolabs.gumroad.com/l/fjzif", "product_name": "VR Practice Paper 4", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_4"},
-    {"permalink": "kgbqum", "product_url": "https://kiarolabs.gumroad.com/l/kgbqum", "product_name": "VR Practice Paper 5", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_5"},
-    {"permalink": "zwfglb", "product_url": "https://kiarolabs.gumroad.com/l/zwfglb", "product_name": "VR Practice Paper 6", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_6"},
-    {"permalink": "gsmpyn", "product_url": "https://kiarolabs.gumroad.com/l/gsmpyn", "product_name": "VR Practice Paper 7", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_7"},
-    {"permalink": "efibzj", "product_url": "https://kiarolabs.gumroad.com/l/efibzj", "product_name": "VR Practice Paper 8", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_8"},
-    {"permalink": "luiiv", "product_url": "https://kiarolabs.gumroad.com/l/luiiv", "product_name": "VR Practice Paper 9", "category": "vr_printable", "target_table": "math_gumroad_events", "target_key": "printable_vr_9"},
-    {"permalink": "exjlsl", "product_url": "https://kiarolabs.gumroad.com/l/exjlsl", "product_name": "Comprehension Practice Set 1", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_1"},
-    {"permalink": "rgznog", "product_url": "https://kiarolabs.gumroad.com/l/rgznog", "product_name": "Comprehension Practice Set 2", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_2"},
-    {"permalink": "rbtolw", "product_url": "https://kiarolabs.gumroad.com/l/rbtolw", "product_name": "Comprehension Practice Set 3", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_3"},
-    {"permalink": "dtzldn", "product_url": "https://kiarolabs.gumroad.com/l/dtzldn", "product_name": "Comprehension Practice Set 4", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_4"},
-    {"permalink": "afjgni", "product_url": "https://kiarolabs.gumroad.com/l/afjgni", "product_name": "Comprehension Practice Set 5", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_5"},
-    {"permalink": "ilgta", "product_url": "https://kiarolabs.gumroad.com/l/ilgta", "product_name": "Comprehension Practice Set 6", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_6"},
-    {"permalink": "shixax", "product_url": "https://kiarolabs.gumroad.com/l/shixax", "product_name": "Comprehension Practice Set 7", "category": "comprehension_printable", "target_table": "math_gumroad_events", "target_key": "printable_comprehension_7"},
-]
-
-
-def _resolve_gumroad_product_key(product_name: str, product_permalink: str, product_id: str) -> str | None:
-    permalink = _normalize_gumroad_identifier(product_permalink)
-    pid = _normalize_gumroad_identifier(product_id)
-    name = (product_name or "").strip().lower()
-
-    direct_mapping = {}
-    direct_mapping.update({token: f"module_{app}" for token, app in ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE.items()})
-    direct_mapping.update({token: f"mock_{test_id}" for token, test_id in ACTIVE_MATH_MOCK_PERMALINK_TEST_ID.items()})
-    direct_mapping.update(ACTIVE_COMPREHENSION_PERMALINK_TO_KEY)
-    direct_mapping.update(ACTIVE_VR_PERMALINK_TO_KEY)
-    direct_mapping.update({token: "disabled_ignored_product" for token in DISABLED_OR_IGNORED_PERMALINKS})
-
-    for token in (permalink, pid):
-        if token in direct_mapping:
-            return direct_mapping[token]
-
-    comp_match = re.search(r"comprehension.*\((\d+)\)", name)
-    if comp_match:
-        return f"printable_comprehension_{int(comp_match.group(1))}"
-
-    vr_match = re.search(r"verbal reasoning.*\((\d+)\)", name)
-    if vr_match:
-        return f"printable_vr_{int(vr_match.group(1))}"
-
-    if "mathsprint" in name or "math sprint" in name:
-        return "module_math"
-    if "spellingsprint" in name or "spelling sprint" in name:
-        return "module_spelling"
-    if "wordsprint" in name or "word sprint" in name:
-        return "module_words"
-    if "comprehensionsprint" in name or "comprehension sprint" in name:
-        return "module_comprehension"
-
-    mock_match = re.search(r"maths mock exam\s*(\d+)", name)
-    if mock_match:
-        return f"mock_MATH_MOCK_{int(mock_match.group(1))}"
-
-    if "maths complete pack" in name:
-        return "disabled_bundle_maths_complete"
-    if "maths mock pack" in name:
-        return "disabled_bundle_mock"
-    if "verbal reasoning starter pack" in name:
-        return "disabled_bundle_vr_starter"
-    if "verbal reasoning full pack" in name:
-        return "disabled_bundle_vr_full"
-    if "full 11+ preparation pack" in name:
-        return "disabled_bundle_full"
-
-    return None
-
-
-def _online_practice_app_code_for_product_key(product_key: str | None) -> str | None:
-    mapping = {
-        "module_math": "math",
-        "module_spelling": "spelling",
-        "module_words": "general",
-        "module_comprehension": "comprehension",
-    }
-    return mapping.get((product_key or "").strip().lower())
-
-
-def _mock_test_id_for_product_key(product_key: str | None) -> str | None:
-    raw = (product_key or "").strip()
-    if raw.startswith("mock_"):
-        return raw.replace("mock_", "", 1)
-    return None
 
 
 def _get_table_columns(cur, table_name: str) -> set[str]:
@@ -639,31 +500,20 @@ def _resolve_member_for_admin_update(cur, *, raw_member_id: str, raw_email: str)
     return member
 
 
-def _replace_member_apps(cur, member_id: int, normalized_apps: list[str], *, scope: str = "all"):
-    if scope == "online_practice":
-        cur.execute(
-            """
-            DELETE FROM kiaro_membership.member_apps
-            WHERE member_id = %s
-              AND app_code = ANY(%s)
-            """,
-            (member_id, sorted(ONLINE_PRACTICE_APP_CODES)),
-        )
-    else:
-        cur.execute(
-            """
-            DELETE FROM kiaro_membership.member_apps
-            WHERE member_id = %s
-            """,
-            (member_id,),
-        )
+def _replace_member_apps(cur, member_id: int, normalized_apps: list[str]):
+    cur.execute(
+        """
+        DELETE FROM kiaro_membership.member_apps
+        WHERE member_id = %s
+        """,
+        (member_id,),
+    )
 
     for app_code in normalized_apps:
         cur.execute(
             """
             INSERT INTO kiaro_membership.member_apps (member_id, app_code)
             VALUES (%s, %s)
-            ON CONFLICT DO NOTHING
             """,
             (member_id, app_code),
         )
@@ -950,6 +800,27 @@ def dashboard(user=Depends(get_current_user)):
         }
 
     # -------------------------
+    # LEGACY USER CHECK
+    # -------------------------
+    created_at = None
+    is_legacy = False
+
+    if member_id:
+        cur.execute("""
+            SELECT created_at
+            FROM kiaro_membership.members
+            WHERE id = %s
+        """, (member_id,))
+
+        row = cur.fetchone()
+
+        if row and row[0]:
+            created_at = row[0]
+            from datetime import datetime
+            cutoff_date = datetime(2026, 4, 3)
+            is_legacy = created_at < cutoff_date
+
+    # -------------------------
     # FETCH ENTITLEMENTS
     # -------------------------
     apps = []
@@ -985,17 +856,15 @@ def dashboard(user=Depends(get_current_user)):
     # -------------------------
     # MODULE ACCESS LOGIC
     # -------------------------
-    is_admin_user = str(user.get("role", "")).lower() == "admin"
-
     modules = {
-        # Learning modules (entitlement-driven for non-admin users)
+        # Learning modules (legacy unlocked)
         "spelling": {
             "attempts": s_total,
             "accuracy": round(s_acc, 2),
             "completed_lessons": s_completed,
             "total_lessons": s_lessons_total,
             "completion_percent": s_completion,
-            "unlocked": True if is_admin_user else ("spelling" in apps or "general" in apps)
+            "unlocked": True if is_legacy else ("spelling" in apps or "general" in apps)
         },
         "words": {
             "attempts": w_total,
@@ -1003,7 +872,7 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": w_completed,
             "total_lessons": w_lessons_total,
             "completion_percent": w_completion,
-            "unlocked": True if is_admin_user else ("general" in apps)
+            "unlocked": True if is_legacy else ("general" in apps)
         },
         "math": {
             "attempts": m_total,
@@ -1011,23 +880,23 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": m_completed,
             "total_lessons": m_lessons_total,
             "completion_percent": m_completion,
-            "unlocked": True if is_admin_user else ("math" in apps)
+            "unlocked": True if is_legacy else ("math" in apps)
         },
 
-        # Monetised products
+        # Monetised products (NEVER legacy unlocked)
         "practice_papers": {
-            "unlocked": True if is_admin_user else ("practice" in apps or any(code in apps for code in ("vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack")))
+            "unlocked": "practice" in apps or any(code in apps for code in ("vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
         },
         "vr_printables": {
-            "unlocked": True if is_admin_user else any(code in apps for code in ("practice", "vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
+            "unlocked": any(code in apps for code in ("practice", "vr_printables", "vr_single_paper", "vr_starter_pack", "vr_complete_pack"))
         },
         "mock_exams": {
-            "unlocked": True if is_admin_user else ("mock" in apps)
+            "unlocked": "mock" in apps
         },
 
         # Future modules
         "nvr": {
-            "unlocked": True if is_admin_user else ("nvr" in apps)
+            "unlocked": "nvr" in apps
         },
         "comprehension": {
             "attempts": c_total,
@@ -1035,7 +904,7 @@ def dashboard(user=Depends(get_current_user)):
             "completed_lessons": c_completed,
             "total_lessons": c_lessons_total,
             "completion_percent": c_completion,
-            "unlocked": True if is_admin_user else ("comprehension" in apps)
+            "unlocked": "comprehension" in apps
         }
     }
 
@@ -1507,7 +1376,6 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
     raw_email = str(payload.get("email", "")).strip().lower()
     raw_member_id = str(payload.get("member_id", "")).strip()
     normalized_apps = _normalize_admin_app_codes(payload.get("apps", []))
-    update_scope = "online_practice" if set(normalized_apps).issubset(ONLINE_PRACTICE_APP_CODES) else "all"
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1519,7 +1387,7 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
             raw_email=raw_email,
         )
         member_id = member[0]
-        _replace_member_apps(cur, member_id, normalized_apps, scope=update_scope)
+        _replace_member_apps(cur, member_id, normalized_apps)
 
         conn.commit()
 
@@ -1528,7 +1396,6 @@ def set_admin_user_apps(payload: dict = Body(...), user=Depends(get_current_user
             "email": member[1],
             "member_id": member_id,
             "apps": normalized_apps,
-            "scope": update_scope,
         }
     except Exception:
         conn.rollback()
@@ -1548,7 +1415,6 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
         raise HTTPException(status_code=400, detail="At least one user is required")
 
     normalized_apps = _normalize_admin_app_codes(payload.get("apps", []))
-    update_scope = "online_practice" if set(normalized_apps).issubset(ONLINE_PRACTICE_APP_CODES) else "all"
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1574,7 +1440,7 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
             if member_id in seen_member_ids:
                 continue
 
-            _replace_member_apps(cur, member_id, normalized_apps, scope=update_scope)
+            _replace_member_apps(cur, member_id, normalized_apps)
             seen_member_ids.add(member_id)
             updated_users.append(
                 {
@@ -1589,7 +1455,6 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
             "status": "success",
             "updated_count": len(updated_users),
             "apps": normalized_apps,
-            "scope": update_scope,
             "users": updated_users,
         }
     except Exception:
@@ -1691,67 +1556,6 @@ def user_detail(email: str, user=Depends(get_current_user)):
         conn.close()
 
 
-@app.get("/admin/purchases/events")
-def admin_purchase_events(
-    user=Depends(get_current_user),
-    student_email: Optional[str] = Query(default=None),
-    category: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    permalink: Optional[str] = Query(default=None),
-    date_from: Optional[str] = Query(default=None),
-    date_to: Optional[str] = Query(default=None),
-):
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    rows = list_purchase_events(
-        resolve_product_key=_resolve_gumroad_product_key,
-        email=student_email,
-        category=category,
-        status=status,
-        permalink=permalink,
-        date_from=date_from,
-        date_to=date_to,
-    )
-    return {
-        "items": rows,
-        "count": len(rows),
-        "reporting_gaps": [
-            "price/currency/vat/total are not persisted in current webhook event table and are returned empty until payload logging is expanded.",
-        ],
-    }
-
-
-@app.get("/admin/purchases/events/export.csv")
-def admin_purchase_events_csv(
-    user=Depends(get_current_user),
-    student_email: Optional[str] = Query(default=None),
-    category: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    permalink: Optional[str] = Query(default=None),
-    date_from: Optional[str] = Query(default=None),
-    date_to: Optional[str] = Query(default=None),
-):
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    rows = list_purchase_events(
-        resolve_product_key=_resolve_gumroad_product_key,
-        email=student_email,
-        category=category,
-        status=status,
-        permalink=permalink,
-        date_from=date_from,
-        date_to=date_to,
-    )
-    csv_text = render_purchase_events_csv(rows)
-    return Response(
-        content=csv_text,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=kiarolabs_purchase_events.csv"},
-    )
-
-
 @app.post("/admin/set-role")
 def set_user_role(payload: dict, user=Depends(get_current_user)):
     if user.get("role") != "admin":
@@ -1823,6 +1627,75 @@ def set_user_role(payload: dict, user=Depends(get_current_user)):
 # =========================
 # Gumroad Webhook
 # =========================
+GUMROAD_APP_CODE_BY_IDENTIFIER = {
+    "ztwxby": "math",
+    "gxvtls": "spelling",
+    "sddokb": "general",
+    "gckvb": "comprehension",
+    "https://kiarolabs.gumroad.com/l/ztwxby": "math",
+    "https://kiarolabs.gumroad.com/l/gxvtls": "spelling",
+    "https://kiarolabs.gumroad.com/l/sddokb": "general",
+    "https://kiarolabs.gumroad.com/l/gckvb": "comprehension",
+}
+
+MOCK_PACK_IDENTIFIERS_V1: set[str] = set()
+
+
+def _collect_gumroad_identifiers(form) -> set[str]:
+    identifiers: set[str] = set()
+    for field_name in ("product_permalink", "short_product_id", "product_id", "product_url"):
+        raw_value = form.get(field_name)
+        if raw_value is None:
+            continue
+        value = str(raw_value).strip().lower()
+        if value:
+            identifiers.add(value)
+
+    product_url = str(form.get("product_url") or "").strip().lower()
+    permalink_match = re.search(r"/l/([a-z0-9]+)", product_url)
+    if permalink_match:
+        identifiers.add(permalink_match.group(1))
+
+    return identifiers
+
+
+def _resolve_gumroad_app_code(identifiers: set[str], product_name: str = "") -> str | None:
+    for identifier in identifiers:
+        app_code = GUMROAD_APP_CODE_BY_IDENTIFIER.get(identifier)
+        if app_code:
+            return app_code
+
+    normalized_name = (product_name or "").strip().lower()
+    if normalized_name == "wordsprint":
+        return "general"
+    if normalized_name == "spellingsprint":
+        return "spelling"
+    if normalized_name == "mathsprint":
+        return "math"
+    if normalized_name == "comprehensionsprint":
+        return "comprehension"
+
+    return None
+
+
+def _resolve_mock_test_id(product_name: str, identifiers: set[str]) -> str | None:
+    source_values = [product_name.lower(), *identifiers]
+
+    for value in source_values:
+        if value in MOCK_PACK_IDENTIFIERS_V1:
+            return None
+
+        explicit_match = re.search(r"(?:math|maths)[-_ ]?(?:mock|paper|exam)[-_ ]*(\d{1,2})", value)
+        if explicit_match:
+            return f"MATH_MOCK_{int(explicit_match.group(1))}"
+
+        if "mock" in value or "paper" in value:
+            trailing_match = re.search(r"(?:^|[_-])(\d{1,2})(?:$|[^0-9])", value)
+            if trailing_match:
+                return f"MATH_MOCK_{int(trailing_match.group(1))}"
+
+    return None
+
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
     try:
@@ -1830,36 +1703,34 @@ async def gumroad_webhook(request: Request):
 
         email = (form.get("email") or "").strip().lower()
         product_name = (form.get("product_name") or "").strip()
-        event_type = (form.get("event") or "").strip().lower()
-        product_permalink = _normalize_gumroad_identifier(
-            form.get("product_permalink")
-            or form.get("product_url")
-            or form.get("short_product_id")
-            or ""
+        event_type = (form.get("event") or "").strip()
+        identifiers = _collect_gumroad_identifiers(form)
+        resolved_app_code = _resolve_gumroad_app_code(identifiers, product_name=product_name)
+        resolved_mock_test_id = _resolve_mock_test_id(product_name, identifiers)
+
+        print(
+            "GUMROAD EVENT:",
+            email,
+            product_name,
+            event_type,
+            {"identifiers": sorted(identifiers), "app_code": resolved_app_code, "test_id": resolved_mock_test_id},
         )
-        sale_id = (form.get("sale_id") or form.get("purchase_id") or "").strip()
-        product_id = _normalize_gumroad_identifier(form.get("product_id") or "")
 
-        print("GUMROAD EVENT:", email, product_name, event_type, product_permalink, sale_id)
-
-        if not email or not (product_name or product_permalink or product_id):
-            return {"status": "ignored", "reason": "missing_identity"}
-
-        product_key = _resolve_gumroad_product_key(product_name, product_permalink, product_id)
-        test_id = _mock_test_id_for_product_key(product_key)
+        if not email or not product_name:
+            return {"status": "ignored"}
 
         conn = get_connection()
         cur = conn.cursor()
 
         try:
-            # Log incoming event
+            # Log incoming event (always)
             cur.execute(
                 """
                 INSERT INTO math_gumroad_events (email, product_name, event_type, test_id)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id
                 """,
-                (email, f"{product_name} | permalink={product_permalink} | sale_id={sale_id}", event_type, test_id),
+                (email, product_name, event_type, resolved_mock_test_id),
             )
             event_id = cur.fetchone()[0]
 
@@ -1882,59 +1753,80 @@ async def gumroad_webhook(request: Request):
 
             member_id = row[0]
 
-            if product_key == "disabled_ignored_product" or (product_key and product_key.startswith("disabled_bundle_")):
-                print("DISABLED PRODUCT PURCHASE LOGGED WITHOUT UNLOCK:", product_key, email)
+            # Handle bundle purchases
+            if event_type in ["sale", "purchase"] and any(identifier in MOCK_PACK_IDENTIFIERS_V1 for identifier in identifiers):
+                for i in range(1, 7):
+                    bundle_test_id = f"MATH_MOCK_{i}"
+                    cur.execute(
+                        """
+                        INSERT INTO math_user_test_access (member_id, test_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (member_id, bundle_test_id),
+                    )
+                print(f"✅ ACCESS GRANTED → {email} → 6-pack")
                 conn.commit()
-                return {"status": "ignored_disabled_product", "product_key": product_key}
+                return {"status": "6_pack_unlocked"}
+
+            if event_type in ["sale", "purchase"] and any(identifier in MOCK_PACK_IDENTIFIERS_V1 for identifier in identifiers):
+                for i in range(1, 13):
+                    bundle_test_id = f"MATH_MOCK_{i}"
+                    cur.execute(
+                        """
+                        INSERT INTO math_user_test_access (member_id, test_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (member_id, bundle_test_id),
+                    )
+                print(f"✅ ACCESS GRANTED → {email} → full-pack")
+                conn.commit()
+                return {"status": "full_pack_unlocked"}
+
+            if event_type in ["sale", "purchase"] and resolved_app_code:
+                cur.execute(
+                    """
+                    INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (member_id, resolved_app_code),
+                )
 
             # Handle single-test purchase
-            if event_type in ["sale", "purchase"] and test_id:
+            if event_type in ["sale", "purchase"] and resolved_mock_test_id:
                 cur.execute(
                     """
                     INSERT INTO math_user_test_access (member_id, test_id)
                     VALUES (%s, %s)
                     ON CONFLICT DO NOTHING
                     """,
-                    (member_id, test_id),
+                    (member_id, resolved_mock_test_id),
                 )
-                print(f"✅ ACCESS GRANTED → {email} → {test_id}")
+                print(f"✅ ACCESS GRANTED → {email} → {resolved_mock_test_id}")
 
             # Handle refund
-            if event_type in ["refund", "chargeback"] and test_id:
+            if event_type in ["refund", "chargeback"] and resolved_mock_test_id:
                 cur.execute(
                     """
                     DELETE FROM math_user_test_access
                     WHERE member_id = %s
                     AND test_id = %s
                     """,
-                    (member_id, test_id),
+                    (member_id, resolved_mock_test_id),
                 )
-                print(f"❌ ACCESS REVOKED → {email} → {test_id}")
+                print(f"❌ ACCESS REVOKED → {email} → {resolved_mock_test_id}")
 
-            if product_key and event_type in ["sale", "purchase"]:
-                # V1: webhook-driven app entitlements are only for Online Practice modules.
-                app_code = _online_practice_app_code_for_product_key(product_key)
-                if app_code:
-                    cur.execute(
-                        """
-                        INSERT INTO kiaro_membership.member_apps (member_id, app_code)
-                        VALUES (%s, %s)
-                        ON CONFLICT DO NOTHING
-                        """,
-                        (member_id, app_code),
-                    )
-
-            if product_key and event_type in ["refund", "chargeback"]:
-                app_code = _online_practice_app_code_for_product_key(product_key)
-                if app_code:
-                    cur.execute(
-                        """
-                        DELETE FROM kiaro_membership.member_apps
-                        WHERE member_id = %s
-                          AND app_code = %s
-                        """,
-                        (member_id, app_code),
-                    )
+            if event_type in ["refund", "chargeback"] and resolved_app_code:
+                cur.execute(
+                    """
+                    DELETE FROM kiaro_membership.member_apps
+                    WHERE member_id = %s
+                      AND app_code = %s
+                    """,
+                    (member_id, resolved_app_code),
+                )
 
             # Mark event processed
             cur.execute(
@@ -1954,21 +1846,6 @@ async def gumroad_webhook(request: Request):
     except Exception as e:
         print("❌ WEBHOOK ERROR:", str(e))
         return {"status": "error"}
-
-
-# =========================
-# Printable Purchases
-# =========================
-@app.get("/purchases/printables")
-def get_printable_purchases(user=Depends(get_current_user)):
-    email = (user.get("sub") or "").strip().lower()
-    if not email:
-        return {"purchased_keys": [], "purchased_permalinks": []}
-    purchased_keys, purchased_permalinks = get_printable_purchase_state_for_email(email)
-    return {
-        "purchased_keys": sorted(purchased_keys),
-        "purchased_permalinks": sorted(purchased_permalinks),
-    }
 
 
 # =========================

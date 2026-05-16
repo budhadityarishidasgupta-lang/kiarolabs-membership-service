@@ -87,3 +87,63 @@ def get_optional_current_user(token: str | None = Depends(optional_oauth2_scheme
         return payload
     except JWTError:
         return None
+
+
+def resolve_member_id(cur, user) -> int | None:
+    token_member_id = user.get("member_id")
+    if token_member_id is not None:
+        try:
+            return int(token_member_id)
+        except (TypeError, ValueError):
+            pass
+
+    email = user.get("sub") or user.get("email")
+    if not email:
+        return None
+
+    cur.execute(
+        """
+        SELECT id
+        FROM kiaro_membership.members
+        WHERE LOWER(email) = LOWER(%s)
+        LIMIT 1
+        """,
+        (email,),
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
+def user_has_member_app_access(cur, user, app_code: str) -> bool:
+    if user.get("role") == "admin":
+        return True
+
+    member_id = resolve_member_id(cur, user)
+    if not member_id:
+        return False
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM kiaro_membership.member_apps
+        WHERE member_id = %s
+          AND app_code = %s
+        LIMIT 1
+        """,
+        (member_id, app_code),
+    )
+    return cur.fetchone() is not None
+
+
+def require_member_app_access(cur, user, app_code: str):
+    if user_has_member_app_access(cur, user, app_code):
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "access_denied",
+            "message": f"{app_code} access is required.",
+            "required_app_code": app_code,
+        },
+    )

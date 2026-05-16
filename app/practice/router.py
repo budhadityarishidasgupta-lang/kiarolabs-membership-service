@@ -12,15 +12,13 @@ import csv
 import io
 import random
 
-from app.auth import get_current_user, get_optional_current_user, resolve_verified_learning_user_id
-from app.database import get_connection
-from app.entitlements import (
+from app.auth import (
+    get_current_user,
+    get_optional_current_user,
     require_member_app_access,
-    user_has_member_app_access,
-    email_has_printable_key_access,
-    get_printable_purchase_state_for_email,
-    VR_PAPER_CODE_TO_KEY,
+    resolve_verified_learning_user_id,
 )
+from app.database import get_connection
 
 # Engines
 from app.practice.math_engine import (
@@ -214,17 +212,6 @@ def is_admin(user):
     return user.get("role") == "admin"
 
 
-def _require_practice_access(user: dict, app_codes: str | list[str] | tuple[str, ...] | set[str], *, module_label: str):
-    require_member_app_access(
-        user,
-        app_codes,
-        detail={
-            "code": "practice_module_access_required",
-            "message": f"{module_label} access required.",
-        },
-    )
-
-
 def _missing_param(name: str):
     logger.warning("Practice endpoint missing required parameter: %s", name)
     raise HTTPException(status_code=400, detail=f"Missing required parameter: {name}")
@@ -236,6 +223,19 @@ def _require_user_id(user):
         logger.warning("Practice endpoint rejected request because user_id is missing")
         raise HTTPException(status_code=400, detail="User not provisioned in learning system")
     return user_id
+
+
+def _enforce_full_module_access(user, app_code: str):
+    if user.get("role") == "admin":
+        return
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        require_member_app_access(cur, user, app_code)
+    finally:
+        cur.close()
+        conn.close()
 
 
 def _resolve_learning_user_id(cur, user) -> int | None:
@@ -455,7 +455,6 @@ def get_courses(user=Depends(get_current_user)):
     used by the curriculum sidebar
     """
 
-    _require_practice_access(user, {"general"}, module_label="WordSprint")
     conn = get_connection()
 
     try:
@@ -508,7 +507,7 @@ def get_courses(user=Depends(get_current_user)):
 
 @router.get("/math/lessons")
 def math_lessons(user=Depends(get_current_user)):
-    _require_practice_access(user, {"math"}, module_label="MathSprint")
+    _enforce_full_module_access(user, "math")
     return get_math_lessons()
 
 
@@ -518,7 +517,7 @@ def math_question(
     session_id: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    _require_practice_access(user, {"math"}, module_label="MathSprint")
+    _enforce_full_module_access(user, "math")
     if lesson_id is None:
         _missing_param("lesson_id")
 
@@ -538,7 +537,7 @@ def math_question(
 
 @router.post("/math/submit")
 def math_submit(payload: dict, user=Depends(get_current_user)):
-    _require_practice_access(user, {"math"}, module_label="MathSprint")
+    _enforce_full_module_access(user, "math")
     user_id = _require_user_id(user)
     session_id = payload.get("session_id") or str(uuid.uuid4())
 
@@ -623,8 +622,6 @@ def get_vr_papers(user=Depends(get_current_user)):
         user_email=user.get("sub", ""),
         user_role=user.get("role"),
     )
-    user_email = user.get("sub", "")
-    purchased_keys, _ = get_printable_purchase_state_for_email(user_email)
     papers = get_active_vr_papers()
     return [
         {
@@ -638,13 +635,7 @@ def get_vr_papers(user=Depends(get_current_user)):
             "answer_count": paper["answers_count"],
             "answers_count": paper["answers_count"],
             "ready": paper["ready"],
-            "unlocked": (
-                True
-                if user.get("role") == "admin" or accessible
-                else (
-                    VR_PAPER_CODE_TO_KEY.get(normalize_vr_paper_code(paper["paper_code"]), "") in purchased_keys
-                )
-            ),
+            "unlocked": accessible,
         }
         for paper in papers
     ]
@@ -652,19 +643,15 @@ def get_vr_papers(user=Depends(get_current_user)):
 
 @router.get("/vr/questions")
 def get_vr_question_numbers(paper_code: str, user=Depends(get_current_user)):
-    normalized_code = normalize_vr_paper_code(paper_code)
-    printable_key = VR_PAPER_CODE_TO_KEY.get(normalized_code, "")
-    has_global_vr = user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role"))
-    has_single_paper = email_has_printable_key_access(user.get("sub", ""), printable_key) if printable_key else False
-    if not has_global_vr and not has_single_paper and user.get("role") != "admin":
+    if not user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role")):
         raise HTTPException(status_code=403, detail="VR printable access required")
 
-    questions = get_vr_questions_for_paper(normalized_code)
+    questions = get_vr_questions_for_paper(paper_code)
     if not questions:
         raise HTTPException(status_code=404, detail="Paper questions not available")
 
     return {
-        "paper_code": normalized_code,
+        "paper_code": normalize_vr_paper_code(paper_code),
         "questions": [int(question["question_number"]) for question in questions],
     }
 
@@ -675,10 +662,7 @@ def submit_vr_answers(payload: dict, user=Depends(get_current_user)):
     paper_code = normalize_vr_paper_code(_require_payload_param(payload, "paper_code"))
     answers_payload = _require_payload_param(payload, "answers")
 
-    printable_key = VR_PAPER_CODE_TO_KEY.get(paper_code, "")
-    has_global_vr = user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role"))
-    has_single_paper = email_has_printable_key_access(user.get("sub", ""), printable_key) if printable_key else False
-    if not has_global_vr and not has_single_paper and user.get("role") != "admin":
+    if not user_has_vr_access(user_email=user.get("sub", ""), user_role=user.get("role")):
         raise HTTPException(status_code=403, detail="VR printable access required")
 
     stored_answers = get_vr_answers_for_paper(paper_code)
@@ -1084,7 +1068,7 @@ def upload_math_printable_csv(
 
 @router.get("/spelling/courses")
 def get_spelling_courses(user=Depends(get_current_user)):
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
+    _enforce_full_module_access(user, "spelling")
 
     conn = get_connection()
 
@@ -1152,7 +1136,7 @@ def spelling_question(
     Returns the next spelling word for a lesson
     """
     user_id = _require_user_id(user)
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
+    _enforce_full_module_access(user, "spelling")
 
     if word_id is not None:
         from app.practice.spelling_engine import get_word_by_id
@@ -1183,7 +1167,7 @@ def spelling_micro_challenge(
     word_id: int,
     user=Depends(get_current_user)
 ):
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
+    _enforce_full_module_access(user, "spelling")
     from app.practice.spelling_engine import build_micro_challenge
     return build_micro_challenge(user["user_id"], word_id)
 
@@ -1473,7 +1457,6 @@ def submit_micro_challenge(
     payload: dict,
     user=Depends(get_current_user)
 ):
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
     from app.database import get_connection
 
     conn = get_connection()
@@ -1529,8 +1512,8 @@ def spelling_answer(payload: dict, user=Depends(get_current_user)):
     """
     Saves spelling attempt and validates answer
     """
+    _enforce_full_module_access(user, "spelling")
     user_id = _require_user_id(user)
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
     word_id = _require_payload_param(payload, "word_id")
     answer = _require_payload_param(payload, "answer")
     lesson_id = payload.get("lesson_id")
@@ -1556,7 +1539,7 @@ def spelling_answer(payload: dict, user=Depends(get_current_user)):
 
 @router.post("/spelling/submit")
 def spelling_submit(payload: dict, user=Depends(get_current_user)):
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
+    _enforce_full_module_access(user, "spelling")
     user_id = _require_user_id(user)
     word_id = _require_payload_param(payload, "word_id")
     answer = _require_payload_param(payload, "answer")
@@ -1588,14 +1571,14 @@ def spelling_submit(payload: dict, user=Depends(get_current_user)):
 
 @router.get("/spelling/recommendations")
 def spelling_recommendations(user=Depends(get_current_user)):
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
+    _enforce_full_module_access(user, "spelling")
     from app.intelligence.spelling_recommendations import generate_spelling_recommendations
     return generate_spelling_recommendations(user["user_id"])
 
 
 @router.get("/spelling/dashboard")
 def spelling_dashboard(user=Depends(get_current_user)):
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
+    _enforce_full_module_access(user, "spelling")
     if not user.get("user_id"):
         raise HTTPException(
             status_code=400,
@@ -1611,11 +1594,13 @@ def spelling_dashboard(user=Depends(get_current_user)):
 
 @router.get("/words/courses")
 def words_courses(user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "general")
     return get_words_courses()
 
 
 @router.get("/words/question")
 def words_question(lesson_id: Optional[int] = None, user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "general")
     user_id = _require_user_id(user)
 
     if lesson_id is None:
@@ -1636,6 +1621,7 @@ def words_question(lesson_id: Optional[int] = None, user=Depends(get_current_use
 
 @router.post("/words/submit")
 def words_submit(payload: dict, user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "general")
     user_id = _require_user_id(user)
     word_id = _require_payload_param(payload, "word_id")
     answer = _require_payload_param(payload, "answer")
@@ -1659,11 +1645,13 @@ def words_submit(payload: dict, user=Depends(get_current_user)):
 
 @router.get("/synonym/question")
 def synonym_question(user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "general")
     return get_synonym_question(user["sub"])
 
 
 @router.post("/synonym/answer")
 def synonym_answer(req: SynonymAnswerRequest, user: dict = Depends(get_current_user)):
+    _enforce_full_module_access(user, "general")
     user_id = user.get("user_id")
     user_email = user.get("sub")
     access_mode = get_words_practice_access_mode(user_email, user_role=user.get("role"))
@@ -1681,11 +1669,13 @@ def synonym_answer(req: SynonymAnswerRequest, user: dict = Depends(get_current_u
 
 @router.get("/synonym/progress")
 def synonym_progress(user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "general")
     return get_synonym_progress(user["sub"])
 
 
 @router.get("/synonym/next-question")
 def synonym_next(user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "general")
     return get_next_synonym_question(user["sub"])
 
 
@@ -1701,6 +1691,7 @@ def start_session(lesson_id: Optional[int] = 7, user=Depends(get_current_user)):
     - first question
     - session metadata
     """
+    _enforce_full_module_access(user, "general")
     if lesson_id is None:
         lesson_id = 7
 
@@ -1713,6 +1704,7 @@ def session_answer(req: SessionAnswerRequest, user=Depends(get_current_user)):
     Unified answer endpoint for frontend session handling.
     Currently routes to synonym engine.
     """
+    _enforce_full_module_access(user, "general")
     return submit_synonym_answer(
         user_id=user["user_id"],
         user_email=user["sub"],
@@ -1729,6 +1721,7 @@ def session_next(lesson_id: Optional[int] = None, user=Depends(get_current_user)
     """
     Returns next question in session.
     """
+    _enforce_full_module_access(user, "general")
     return get_next_session_question(user["sub"], lesson_id, user_role=user.get("role"))
 
 
@@ -1739,8 +1732,8 @@ def session_next(lesson_id: Optional[int] = None, user=Depends(get_current_user)
 def get_dashboard_stats(user):
     user_email = user.get("sub")
     progress = get_synonym_progress(user_email)
-    is_admin_user = str(user.get("role", "")).lower() == "admin"
-    entitled_apps = set()
+    is_admin = user.get("role") == "admin"
+    entitled_apps: set[str] = set()
     modules = {
         "spelling": {"unlocked": False, "attempts": 0, "accuracy": 0},
         "words": {"unlocked": False, "attempts": 0, "accuracy": 0},
@@ -1757,8 +1750,20 @@ def get_dashboard_stats(user):
 
         user_id = _resolve_learning_user_id(cursor, user)
         member_id = user.get("member_id")
+        if not member_id and user_email:
+            cursor.execute(
+                """
+                SELECT id
+                FROM kiaro_membership.members
+                WHERE LOWER(email) = LOWER(%s)
+                LIMIT 1
+                """,
+                (user_email,),
+            )
+            member_row = cursor.fetchone()
+            member_id = member_row[0] if member_row else None
 
-        if is_admin_user:
+        if is_admin:
             entitled_apps = {"spelling", "general", "math", "comprehension"}
         elif member_id:
             cursor.execute(
@@ -1769,12 +1774,7 @@ def get_dashboard_stats(user):
                 """,
                 (member_id,),
             )
-            entitled_apps = {str(row[0]).strip().lower() for row in (cursor.fetchall() or []) if row and row[0]}
-
-        modules["spelling"]["unlocked"] = ("spelling" in entitled_apps or "general" in entitled_apps)
-        modules["words"]["unlocked"] = ("general" in entitled_apps)
-        modules["maths"]["unlocked"] = ("math" in entitled_apps)
-        modules["comprehension"]["unlocked"] = ("comprehension" in entitled_apps)
+            entitled_apps = {row[0] for row in cursor.fetchall() if row and row[0]}
 
         if user_id:
             cursor.execute("""
@@ -1791,7 +1791,7 @@ def get_dashboard_stats(user):
             spelling_accuracy = round(row[1] or 0, 2)
 
             modules["spelling"] = {
-                "unlocked": modules["spelling"]["unlocked"],
+                "unlocked": ("spelling" in entitled_apps),
                 "attempts": spelling_attempts,
                 "accuracy": spelling_accuracy
             }
@@ -1799,7 +1799,7 @@ def get_dashboard_stats(user):
             synonym_summary = get_synonym_attempt_summary(user_id)
 
             modules["words"] = {
-                "unlocked": modules["words"]["unlocked"],
+                "unlocked": ("general" in entitled_apps),
                 "attempts": synonym_summary["attempts"],
                 "accuracy": synonym_summary["accuracy"],
             }
@@ -1826,7 +1826,7 @@ def get_dashboard_stats(user):
                 row = (0, 0)
 
             modules["maths"] = {
-                "unlocked": modules["maths"]["unlocked"],
+                "unlocked": ("math" in entitled_apps),
                 "attempts": row[0] or 0,
                 "accuracy": round(row[1] or 0, 2)
             }
@@ -1845,7 +1845,7 @@ def get_dashboard_stats(user):
             comprehension_accuracy = round(row[1] or 0, 2)
 
             modules["comprehension"] = {
-                "unlocked": modules["comprehension"]["unlocked"],
+                "unlocked": ("comprehension" in entitled_apps),
                 "attempts": comprehension_attempts,
                 "accuracy": comprehension_accuracy
             }
@@ -1937,96 +1937,87 @@ def get_resume_learning(user=Depends(get_current_user)):
         if not user_id:
             return result
 
-        can_spelling = user_has_member_app_access(user, {"spelling"})
-        can_words = user_has_member_app_access(user, {"general"})
-        can_math = user_has_member_app_access(user, {"math"})
-        can_comprehension = user_has_member_app_access(user, {"comprehension"})
-
         # SPELLING
-        if can_spelling:
-            try:
-                cur.execute("""
-                    SELECT word_id
-                    FROM spelling_attempts
-                    WHERE user_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                """, (user_id,))
-                row = cur.fetchone()
+        try:
+            cur.execute("""
+                SELECT word_id
+                FROM spelling_attempts
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (user_id,))
+            row = cur.fetchone()
 
-                if row:
-                    result["spelling"] = {
-                        "word_id": row[0],
-                        "next_action": "continue"
-                    }
-            except:
-                result["spelling"] = None
+            if row:
+                result["spelling"] = {
+                    "word_id": row[0],
+                    "next_action": "continue"
+                }
+        except:
+            result["spelling"] = None
 
         # WORDSPRINT
-        if can_words:
-            try:
-                latest_word_id = get_latest_synonym_attempt_word_id(user_id)
+        try:
+            latest_word_id = get_latest_synonym_attempt_word_id(user_id)
 
-                if latest_word_id:
-                    result["words"] = {
-                        "word_id": latest_word_id,
-                        "next_action": "continue"
-                    }
-            except:
-                result["words"] = None
+            if latest_word_id:
+                result["words"] = {
+                    "word_id": latest_word_id,
+                    "next_action": "continue"
+                }
+        except:
+            result["words"] = None
 
         # MATHSPRINT
-        if can_math:
-            try:
-                math_attempt_columns = _get_table_columns(cur, "math_attempts")
-                math_user_columns = [column for column in ("student_id", "user_id") if column in math_attempt_columns]
-                math_timestamp_column = _first_matching_column(math_attempt_columns, ["created_at", "submitted_at"])
+        try:
+            math_attempt_columns = _get_table_columns(cur, "math_attempts")
+            math_user_columns = [column for column in ("student_id", "user_id") if column in math_attempt_columns]
+            math_timestamp_column = _first_matching_column(math_attempt_columns, ["created_at", "submitted_at"])
 
-                if math_user_columns and math_timestamp_column and "question_id" in math_attempt_columns:
-                    math_where_clause = " OR ".join(f"{column} = %s" for column in math_user_columns)
-                    math_params = tuple(user_id for _ in math_user_columns)
-                    cur.execute(
-                        f"""
-                            SELECT question_id
-                            FROM math_attempts
-                            WHERE {math_where_clause}
-                            ORDER BY {math_timestamp_column} DESC
-                            LIMIT 1
-                        """,
-                        math_params,
-                    )
-                    row = cur.fetchone()
-                else:
-                    row = None
+            if math_user_columns and math_timestamp_column and "question_id" in math_attempt_columns:
+                math_where_clause = " OR ".join(f"{column} = %s" for column in math_user_columns)
+                math_params = tuple(user_id for _ in math_user_columns)
+                cur.execute(
+                    f"""
+                        SELECT question_id
+                        FROM math_attempts
+                        WHERE {math_where_clause}
+                        ORDER BY {math_timestamp_column} DESC
+                        LIMIT 1
+                    """,
+                    math_params,
+                )
+                row = cur.fetchone()
+            else:
+                row = None
 
-                if row:
-                    result["maths"] = {
-                        "question_id": row[0],
-                        "next_action": "continue"
-                    }
-            except:
-                result["maths"] = None
+            if row:
+                result["maths"] = {
+                    "question_id": row[0],
+                    "next_action": "continue"
+                }
+        except:
+            result["maths"] = None
 
         # COMPREHENSION
-        if can_comprehension:
-            try:
-                cur.execute("""
-                    SELECT passage_id, question_id
-                    FROM comprehension_attempts
-                    WHERE user_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                """, (user_id,))
-                row = cur.fetchone()
+        try:
+            cur.execute("""
+                SELECT passage_id, question_id
+                FROM comprehension_attempts
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (user_id,))
+            row = cur.fetchone()
 
-                if row:
-                    result["comprehension"] = {
-                        "passage_id": row[0],
-                        "question_id": row[1],
-                        "next_action": "continue"
-                    }
-            except:
-                result["comprehension"] = None
+            if row:
+                result["comprehension"] = {
+                    "passage_id": row[0],
+                    "question_id": row[1],
+                    "next_action": "continue"
+                }
+        except:
+            result["comprehension"] = None
 
         return result
 
@@ -2037,18 +2028,18 @@ def get_resume_learning(user=Depends(get_current_user)):
 
 @router.get("/{module}/resume")
 def get_module_resume(module: str, user=Depends(get_current_user)):
-    user_id = _require_user_id(user)
-    module_key = (module or "").strip().lower()
-    module_to_access = {
-        "spelling": {"spelling"},
-        "words": {"general"},
-        "word": {"general"},
-        "math": {"math"},
-        "maths": {"math"},
-        "comprehension": {"comprehension"},
+    module_access_map = {
+        "spelling": "spelling",
+        "words": "general",
+        "math": "math",
+        "maths": "math",
+        "comprehension": "comprehension",
     }
-    if module_key in module_to_access:
-        _require_practice_access(user, module_to_access[module_key], module_label=f"{module_key.title()} module")
+    required_app_code = module_access_map.get((module or "").strip().lower())
+    if required_app_code:
+        _enforce_full_module_access(user, required_app_code)
+
+    user_id = _require_user_id(user)
 
     conn = get_connection()
     cur = conn.cursor()
@@ -2093,7 +2084,7 @@ def spelling_dashboard_v2(user=Depends(get_current_user)):
     - recommendations
     """
 
-    _require_practice_access(user, {"spelling"}, module_label="SpellingSprint")
+    _enforce_full_module_access(user, "spelling")
     from app.dashboard.spelling_dashboard import get_spelling_dashboard
 
     return get_spelling_dashboard(user["user_id"])
@@ -2105,11 +2096,12 @@ def spelling_dashboard_v2(user=Depends(get_current_user)):
 
 @router.get("/comprehension/passages")
 def get_comprehension_passages(user=Depends(get_current_user)):
-    _require_practice_access(user, {"comprehension"}, module_label="ComprehensionSprint")
+    _enforce_full_module_access(user, "comprehension")
     return _safe_execute("get_comprehension_passages", list_passages)
 
 @router.get("/comprehension/courses")
 def get_comprehension_courses(user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "comprehension")
     """
     Returns comprehension passages grouped like:
     - Foundation
@@ -2190,7 +2182,7 @@ def start_comprehension(
     exclude_question_id: Optional[int] = None,
     user=Depends(get_current_user),
 ):
-    _require_practice_access(user, {"comprehension"}, module_label="ComprehensionSprint")
+    _enforce_full_module_access(user, "comprehension")
     if passage_id is None:
         _missing_param("passage_id")
 
@@ -2236,7 +2228,7 @@ def get_comprehension_question(
     exclude_question_id: Optional[int] = None,
     user=Depends(get_current_user),
 ):
-    _require_practice_access(user, {"comprehension"}, module_label="ComprehensionSprint")
+    _enforce_full_module_access(user, "comprehension")
     if passage_id is None:
         _missing_param("passage_id")
 
@@ -2388,7 +2380,7 @@ def get_comprehension_question(
 
 @router.get("/comprehension/passage-summary")
 def passage_summary(passage_id: int, user=Depends(get_current_user)):
-    _require_practice_access(user, {"comprehension"}, module_label="ComprehensionSprint")
+    _enforce_full_module_access(user, "comprehension")
     user_id = user["user_id"]
 
     conn = get_connection()
@@ -2427,7 +2419,7 @@ def passage_summary(passage_id: int, user=Depends(get_current_user)):
 
 @router.get("/comprehension/next-passage")
 def get_next_passage(current_passage_id: int, user=Depends(get_current_user)):
-    _require_practice_access(user, {"comprehension"}, module_label="ComprehensionSprint")
+    _enforce_full_module_access(user, "comprehension")
     user_id = user["user_id"]
 
     conn = get_connection()
@@ -2485,7 +2477,7 @@ def get_next_passage(current_passage_id: int, user=Depends(get_current_user)):
 
 @router.post("/comprehension/answer")
 def submit_comprehension_answer(payload: dict, user=Depends(get_current_user)):
-    _require_practice_access(user, {"comprehension"}, module_label="ComprehensionSprint")
+    _enforce_full_module_access(user, "comprehension")
     user_id = _require_user_id(user)
     passage_id = _require_payload_param(payload, "passage_id")
     question_id = _require_payload_param(payload, "question_id")
@@ -2576,4 +2568,3 @@ def upload_comprehension_csv(
         print(traceback.format_exc())
 
         raise HTTPException(status_code=500, detail=str(e))
-    _require_practice_access(user, {"comprehension"}, module_label="ComprehensionSprint")
