@@ -232,7 +232,59 @@ def _enforce_full_module_access(user, app_code: str):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        require_member_app_access(cur, user, app_code)
+        user_email = str(user.get("sub") or user.get("email") or "").strip().lower()
+        if not user_email:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "access_denied",
+                    "message": f"{app_code} access is required.",
+                    "required_app_code": app_code,
+                },
+            )
+
+        cur.execute(
+            """
+            SELECT id
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_email,),
+        )
+        member_row = cur.fetchone()
+        if not member_row:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "access_denied",
+                    "message": f"{app_code} access is required.",
+                    "required_app_code": app_code,
+                },
+            )
+
+        member_id = int(member_row[0])
+        cur.execute(
+            """
+            SELECT 1
+            FROM kiaro_membership.member_apps
+            WHERE member_id = %s
+              AND app_code = %s
+            LIMIT 1
+            """,
+            (member_id, app_code),
+        )
+        has_access = cur.fetchone() is not None
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "access_denied",
+                    "message": f"{app_code} access is required.",
+                    "required_app_code": app_code,
+                },
+            )
     finally:
         cur.close()
         conn.close()
@@ -1753,8 +1805,8 @@ def get_dashboard_stats(user):
         cursor = conn.cursor()
 
         user_id = _resolve_learning_user_id(cursor, user)
-        member_id = user.get("member_id")
-        if not member_id and user_email:
+        member_id = None
+        if user_email:
             cursor.execute(
                 """
                 SELECT id

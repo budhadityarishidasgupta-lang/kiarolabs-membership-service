@@ -797,7 +797,7 @@ def dashboard(user=Depends(get_current_user)):
     # SAFE USER RESOLUTION
     # -------------------------
     user_id = resolve_verified_learning_user_id(cur, user)
-    member_id = user.get("member_id")
+    member_id = None
     if not user_id:
         cur.close()
         conn.close()
@@ -822,6 +822,21 @@ def dashboard(user=Depends(get_current_user)):
     # LEGACY USER CHECK
     # -------------------------
     is_admin = str(user.get("role", "")).strip().lower() == "admin"
+
+    user_email = str(user.get("sub") or user.get("email") or "").strip().lower()
+    if user_email:
+        cur.execute(
+            """
+            SELECT id
+            FROM kiaro_membership.members
+            WHERE LOWER(email) = LOWER(%s)
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_email,),
+        )
+        member_row = cur.fetchone()
+        member_id = member_row[0] if member_row else None
 
     if member_id:
         cur.execute("""
