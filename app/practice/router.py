@@ -454,6 +454,7 @@ def get_courses(user=Depends(get_current_user)):
     Returns WordSprint courses and lessons
     used by the curriculum sidebar
     """
+    _enforce_full_module_access(user, "general")
 
     conn = get_connection()
 

@@ -1664,14 +1664,14 @@ def _resolve_gumroad_app_code(identifiers: set[str], product_name: str = "") -> 
         if app_code:
             return app_code
 
-    normalized_name = (product_name or "").strip().lower()
-    if "wordsprint" in normalized_name:
+    normalized_name = re.sub(r"[^a-z0-9]+", "", (product_name or "").strip().lower())
+    if normalized_name == "wordsprint":
         return "general"
-    if "spellingsprint" in normalized_name:
+    if normalized_name == "spellingsprint":
         return "spelling"
-    if "mathsprint" in normalized_name or "maths sprint" in normalized_name:
+    if normalized_name in {"mathsprint", "mathsprintmodule", "mathsprintaccess"}:
         return "math"
-    if "comprehensionsprint" in normalized_name:
+    if normalized_name == "comprehensionsprint":
         return "comprehension"
 
     return None
@@ -1689,11 +1689,11 @@ def _resolve_mock_test_id(product_name: str, identifiers: set[str]) -> str | Non
         if value in MOCK_PACK_IDENTIFIERS_V1:
             return None
 
-        explicit_match = re.search(r"(?:math|maths)[-_ ]?(?:mock|paper|exam)[-_ ]*(\d{1,2})", value)
+        explicit_match = re.search(r"(?:math|maths)[-_ ]?(?:mock|exam)[-_ ]*(\d{1,2})", value)
         if explicit_match:
             return f"MATH_MOCK_{int(explicit_match.group(1))}"
 
-        if "mock" in value or "paper" in value:
+        if "mock" in value:
             trailing_match = re.search(r"(?:^|[_-])(\d{1,2})(?:$|[^0-9])", value)
             if trailing_match:
                 return f"MATH_MOCK_{int(trailing_match.group(1))}"
