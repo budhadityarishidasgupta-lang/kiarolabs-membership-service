@@ -1,7 +1,8 @@
 import os
 import re
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request, HTTPException, Depends, Body
+from fastapi import FastAPI, Request, HTTPException, Depends, Body, Query
+from fastapi.responses import Response
 #from fastapi.security import OAuth2PasswordBearer
 from app.auth import get_current_user, resolve_verified_learning_user_id
 from pydantic import BaseModel, EmailStr
@@ -30,6 +31,10 @@ from app.entitlements import (
     ACTIVE_COMPREHENSION_PERMALINK_TO_KEY,
     DISABLED_OR_IGNORED_PERMALINKS,
     get_printable_purchase_state_for_email,
+)
+from app.repositories.purchase_reporting_repository import (
+    list_purchase_events,
+    render_purchase_events_csv,
 )
 
 
@@ -1684,6 +1689,67 @@ def user_detail(email: str, user=Depends(get_current_user)):
     finally:
         cur.close()
         conn.close()
+
+
+@app.get("/admin/purchases/events")
+def admin_purchase_events(
+    user=Depends(get_current_user),
+    student_email: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    permalink: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    rows = list_purchase_events(
+        resolve_product_key=_resolve_gumroad_product_key,
+        email=student_email,
+        category=category,
+        status=status,
+        permalink=permalink,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return {
+        "items": rows,
+        "count": len(rows),
+        "reporting_gaps": [
+            "price/currency/vat/total are not persisted in current webhook event table and are returned empty until payload logging is expanded.",
+        ],
+    }
+
+
+@app.get("/admin/purchases/events/export.csv")
+def admin_purchase_events_csv(
+    user=Depends(get_current_user),
+    student_email: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    permalink: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    rows = list_purchase_events(
+        resolve_product_key=_resolve_gumroad_product_key,
+        email=student_email,
+        category=category,
+        status=status,
+        permalink=permalink,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    csv_text = render_purchase_events_csv(rows)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=kiarolabs_purchase_events.csv"},
+    )
 
 
 @app.post("/admin/set-role")
