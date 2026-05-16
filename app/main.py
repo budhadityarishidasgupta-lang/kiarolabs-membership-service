@@ -1667,6 +1667,21 @@ def _collect_gumroad_identifiers(form) -> set[str]:
     return identifiers
 
 
+def _extract_webhook_permalink(form) -> str:
+    for field_name in (
+        "product_permalink",
+        "sale[product_permalink]",
+        "short_product_id",
+        "sale[short_product_id]",
+        "product_url",
+        "sale[product_url]",
+    ):
+        token = normalize_gumroad_identifier(form.get(field_name))
+        if token:
+            return token
+    return ""
+
+
 def _resolve_gumroad_app_code(identifiers: set[str], product_name: str = "") -> str | None:
     for identifier in identifiers:
         app_code = ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE.get(identifier)
@@ -1748,8 +1763,14 @@ async def gumroad_webhook(request: Request):
         product_name = (form.get("product_name") or "").strip()
         event_type = (form.get("event") or "").strip()
         identifiers = _collect_gumroad_identifiers(form)
+        webhook_permalink = _extract_webhook_permalink(form)
         resolved_app_code = _resolve_gumroad_app_code(identifiers, product_name=product_name)
         resolved_mock_test_id = _resolve_mock_test_id(product_name, identifiers)
+        event_product_payload = (
+            f"{product_name} | permalink={webhook_permalink}"
+            if webhook_permalink
+            else product_name
+        )
 
         # Embed the product_permalink into the stored product_name so that
         # get_printable_purchase_state_for_email can recover it for per-paper
@@ -1780,7 +1801,7 @@ async def gumroad_webhook(request: Request):
                 VALUES (%s, %s, %s, %s)
                 RETURNING id
                 """,
-                (email, product_name, event_type, resolved_mock_test_id),
+                (email, event_product_payload, event_type, resolved_mock_test_id),
             )
             event_id = cur.fetchone()[0]
 

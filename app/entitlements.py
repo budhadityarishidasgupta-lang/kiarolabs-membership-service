@@ -133,7 +133,7 @@ def _extract_permalink_from_url(url_value: str | None) -> str:
     normalized = (url_value or "").strip().rstrip("/")
     if not normalized:
         return ""
-    match = re.search(r"/l/([A-Za-z0-9_-]+)$", normalized)
+    match = re.search(r"/l/([A-Za-z0-9_-]+)(?:[/?#].*)?$", normalized)
     return (match.group(1).lower() if match else "")
 
 
@@ -144,9 +144,21 @@ def normalize_gumroad_identifier(value: str | None) -> str:
     permalink_token = _extract_permalink_from_url(token)
     if permalink_token:
         return permalink_token
-    if re.fullmatch(r"[a-z0-9_-]+", token):
+    # Keep slug-like identifiers only (must include at least one letter).
+    # Raw numeric product IDs are not stable entitlement keys in this service.
+    if re.fullmatch(r"[a-z0-9_-]+", token) and re.search(r"[a-z]", token):
         return token
     return ""
+
+
+def _is_purchase_event_type(event_type: str | None) -> bool:
+    normalized = str(event_type or "").strip().lower()
+    return normalized in {"sale", "purchase", "sale.created", "purchase.created"}
+
+
+def _is_refund_event_type(event_type: str | None) -> bool:
+    normalized = str(event_type or "").strip().lower()
+    return normalized in {"refund", "chargeback", "refund.created", "chargeback.created"}
 
 
 def _resolve_printable_or_active_key(product_name: str, product_permalink: str, product_id: str) -> str | None:
@@ -210,11 +222,11 @@ def get_printable_purchase_state_for_email(user_email: str | None) -> tuple[set[
         key = _resolve_printable_or_active_key(base_name, permalink, "")
         if not key:
             continue
-        if event_type in {"sale", "purchase"}:
+        if _is_purchase_event_type(event_type):
             is_active_by_key[key] = True
             if permalink:
                 permalink_by_key[key] = permalink
-        elif event_type in {"refund", "chargeback"}:
+        elif _is_refund_event_type(event_type):
             is_active_by_key[key] = False
 
     purchased_keys = {key for key, active in is_active_by_key.items() if active}
