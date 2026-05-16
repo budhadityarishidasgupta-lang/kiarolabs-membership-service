@@ -1760,6 +1760,7 @@ def get_dashboard_stats(user):
                 SELECT id
                 FROM kiaro_membership.members
                 WHERE LOWER(email) = LOWER(%s)
+                ORDER BY id DESC
                 LIMIT 1
                 """,
                 (user_email,),

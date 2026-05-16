@@ -54,6 +54,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         cur = conn.cursor()
         try:
             payload["user_id"] = resolve_verified_learning_user_id(cur, payload)
+            payload["member_id"] = resolve_member_id(cur, payload)
         finally:
             cur.close()
             conn.close()
@@ -81,6 +82,7 @@ def get_optional_current_user(token: str | None = Depends(optional_oauth2_scheme
         cur = conn.cursor()
         try:
             payload["user_id"] = resolve_verified_learning_user_id(cur, payload)
+            payload["member_id"] = resolve_member_id(cur, payload)
         finally:
             cur.close()
             conn.close()
@@ -90,13 +92,6 @@ def get_optional_current_user(token: str | None = Depends(optional_oauth2_scheme
 
 
 def resolve_member_id(cur, user) -> int | None:
-    token_member_id = user.get("member_id")
-    if token_member_id is not None:
-        try:
-            return int(token_member_id)
-        except (TypeError, ValueError):
-            pass
-
     email = user.get("sub") or user.get("email")
     if not email:
         return None
@@ -106,6 +101,7 @@ def resolve_member_id(cur, user) -> int | None:
         SELECT id
         FROM kiaro_membership.members
         WHERE LOWER(email) = LOWER(%s)
+        ORDER BY id DESC
         LIMIT 1
         """,
         (email,),

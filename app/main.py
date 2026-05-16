@@ -496,7 +496,7 @@ def _resolve_member_for_admin_update(cur, *, raw_member_id: str, raw_email: str)
         FROM kiaro_membership.members
         WHERE (%s <> '' AND id::text = %s)
            OR (%s <> '' AND LOWER(email) = LOWER(%s))
-        ORDER BY id
+        ORDER BY id DESC
         LIMIT 1
         """,
         (raw_member_id, raw_member_id, raw_email, raw_email),
@@ -678,6 +678,8 @@ async def login(request: Request):
             SELECT email, password_hash, account_type
             FROM kiaro_membership.members
             WHERE LOWER(email) = LOWER(%s)
+            ORDER BY id DESC
+            LIMIT 1
             """,
             (email,),
         )
@@ -734,6 +736,8 @@ async def login(request: Request):
                 SELECT id
                 FROM kiaro_membership.members
                 WHERE LOWER(email) = LOWER(%s)
+                ORDER BY id DESC
+                LIMIT 1
                 """,
                 (email,),
             )
@@ -1587,7 +1591,7 @@ def admin_debug_member_access(email: str, limit: int = 20, user=Depends(get_curr
             SELECT id, email
             FROM kiaro_membership.members
             WHERE LOWER(email) = LOWER(%s)
-            ORDER BY id ASC
+            ORDER BY id DESC
             LIMIT 1
             """,
             (target_email,),
@@ -1711,6 +1715,8 @@ def set_user_role(payload: dict, user=Depends(get_current_user)):
                 """
                 SELECT id FROM kiaro_membership.members
                 WHERE LOWER(email) = LOWER(%s)
+                ORDER BY id DESC
+                LIMIT 1
                 """,
                 (target_email,),
             )
@@ -1902,6 +1908,8 @@ async def gumroad_webhook(request: Request):
                 SELECT id
                 FROM kiaro_membership.members
                 WHERE LOWER(email) = LOWER(%s)
+                ORDER BY id DESC
+                LIMIT 1
                 """,
                 (email,),
             )
