@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.auth import get_current_user
 from app.database import get_connection
 from app.ingestion.comprehension.service import ingest_comprehension_file
+from app.ingestion.english_printable.service import upload_english_answer_csv
 from app.ingestion.maths.service import ingest_math_pdf
 from app.ingestion.verbal_reasoning.parser import (
     convert_vr_pdf_to_review_rows,
@@ -30,6 +31,12 @@ from app.repositories.vr_repository import (
     get_vr_paper_meta,
     get_vr_questions_for_paper,
     normalize_vr_paper_code,
+)
+from app.repositories.english_printable_repository import (
+    ENGLISH_EXPECTED_QUESTION_COUNT,
+    get_active_english_papers,
+    get_english_paper_meta,
+    get_english_questions_for_paper,
 )
 
 
@@ -723,6 +730,50 @@ def get_verbal_reasoning_printable_questions(paper_code: str):
     }
 
 
+@printable_router.get("/practice/english/printable/papers")
+def get_english_printable_papers():
+    papers = get_active_english_papers()
+    return [
+        {
+            "paper_code": paper["paper_code"],
+            "paper_name": paper["title"],
+            "title": paper["title"],
+            "description": paper["description"],
+            "pdf_url": paper["pdf_url"],
+            "questions_count": paper["questions_count"],
+            "answers_count": paper["answers_count"],
+            "ready": paper["ready"],
+        }
+        for paper in papers
+    ]
+
+
+@printable_router.get("/practice/english/printable/questions/meta")
+def get_english_printable_questions_meta(paper_code: str):
+    meta = get_english_paper_meta(paper_code)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    effective_count = max(meta["questions_count"], meta["answers_count"])
+    return {
+        "paper_code": meta["paper_code"],
+        "question_count": effective_count,
+        "questions_count": meta["questions_count"],
+        "answer_count": meta["answers_count"],
+        "answers_count": meta["answers_count"],
+        "expected_question_count": ENGLISH_EXPECTED_QUESTION_COUNT,
+        "ready": effective_count == ENGLISH_EXPECTED_QUESTION_COUNT and meta["answers_count"] == ENGLISH_EXPECTED_QUESTION_COUNT,
+    }
+
+
+@printable_router.get("/practice/english/printable/questions")
+def get_english_printable_questions(paper_code: str):
+    questions = get_english_questions_for_paper(paper_code)
+    return {
+        "paper_code": paper_code,
+        "questions": questions,
+    }
+
+
 @printable_router.get("/admin/verbal-reasoning/printable/questions")
 def get_admin_verbal_reasoning_printable_questions(paper_code: str, _user=Depends(require_admin)):
     return get_verbal_reasoning_printable_questions(paper_code)
@@ -914,6 +965,18 @@ def upload_verbal_reasoning_answer_key_csv(
         raise HTTPException(status_code=400, detail="CSV file required")
 
     return upload_verbal_reasoning_answer_csv(file, paper_code or None)
+
+
+@router.post("/english/upload-answer-csv")
+def upload_english_answer_key_csv(
+    paper_code: str = Form(""),
+    file: UploadFile = File(...),
+    _user=Depends(require_admin),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="CSV file required")
+
+    return upload_english_answer_csv(file, paper_code or None)
 
 
 @router.post("/admin/vr/upload-answer-key")

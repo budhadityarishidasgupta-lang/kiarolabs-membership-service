@@ -75,6 +75,13 @@ from app.repositories.vr_repository import (
     record_vr_attempt_batch,
     user_has_vr_access,
 )
+from app.repositories.english_printable_repository import (
+    ENGLISH_EXPECTED_QUESTION_COUNT,
+    get_english_answers_for_paper,
+    normalize_english_paper_code,
+    record_english_attempt_batch,
+    user_has_english_printable_access,
+)
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 admin_router = APIRouter(tags=["admin"])
@@ -366,6 +373,13 @@ def _safe_execute(label: str, func, *args, **kwargs):
     except Exception:
         logger.exception("Unexpected practice endpoint failure in %s", label)
         raise HTTPException(status_code=500, detail="Internal error. Please try again.")
+
+
+def _normalize_english_submission_answer(value) -> str:
+    normalized = str(value or "").strip()
+    if len(normalized) == 1 and normalized.isalpha():
+        return normalized.upper()
+    return normalized
 
 
 def _get_module_resume(cur, module: str, user_id: int):
@@ -817,6 +831,96 @@ def verbal_reasoning_retry_incorrect(req: RetryIncorrectRequest, user=Depends(ge
             for question in questions
             if int(question["question_number"]) in allowed
         ]
+    }
+
+
+@router.post("/english/submit")
+def submit_english_answers(payload: dict, user=Depends(get_current_user)):
+    user_id = _require_user_id(user)
+    paper_code = normalize_english_paper_code(_require_payload_param(payload, "paper_code"))
+    answers_payload = _require_payload_param(payload, "answers")
+
+    if not user_has_english_printable_access(
+        user_email=user.get("sub", ""),
+        user_role=user.get("role"),
+    ):
+        raise HTTPException(status_code=403, detail="English printable access required")
+
+    stored_answers = get_english_answers_for_paper(paper_code)
+    if not stored_answers:
+        raise HTTPException(status_code=400, detail="Paper is not ready for submission")
+
+    question_numbers = [int(item["question_number"]) for item in stored_answers]
+    question_count = len(question_numbers)
+    if question_count != ENGLISH_EXPECTED_QUESTION_COUNT:
+        raise HTTPException(status_code=400, detail="English paper answer key is incomplete")
+
+    if isinstance(answers_payload, list) and answers_payload and isinstance(answers_payload[0], dict):
+        submitted_map: dict[int, str] = {}
+        for item in answers_payload:
+            try:
+                question_number = int(item.get("question_number"))
+            except Exception:
+                raise HTTPException(status_code=400, detail="Each answer must include a valid question_number")
+            submitted_map[question_number] = _normalize_english_submission_answer(item.get("student_answer"))
+    elif isinstance(answers_payload, list):
+        if len(answers_payload) != question_count:
+            raise HTTPException(status_code=400, detail="All questions must be answered")
+        submitted_map = {
+            question_number: _normalize_english_submission_answer(answers_payload[index])
+            for index, question_number in enumerate(question_numbers)
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Answers must be a list")
+
+    missing = [q for q in question_numbers if not submitted_map.get(q)]
+    if missing:
+        raise HTTPException(status_code=400, detail="All questions must be answered")
+
+    results = []
+    batch_rows = []
+    score = 0
+    for answer in stored_answers:
+        question_number = int(answer["question_number"])
+        correct_answer = _normalize_english_submission_answer(answer["correct_answer"])
+        student_answer = submitted_map.get(question_number, "")
+        is_correct = student_answer.lower() == correct_answer.lower()
+        if is_correct:
+            score += 1
+        batch_rows.append(
+            {
+                "question_number": question_number,
+                "student_answer": student_answer,
+                "is_correct": is_correct,
+            }
+        )
+        results.append(
+            {
+                "question_number": question_number,
+                "user_answer": student_answer,
+                "correct_answer": answer["correct_answer"],
+                "is_correct": is_correct,
+                "correct": is_correct,
+            }
+        )
+
+    record_english_attempt_batch(
+        user_id=user_id,
+        paper_code=paper_code,
+        answers=batch_rows,
+    )
+
+    percentage = round((score * 100.0 / question_count), 2) if question_count else 0.0
+    return {
+        "paper_code": paper_code,
+        "score": score,
+        "total": question_count,
+        "total_questions": question_count,
+        "answered": question_count,
+        "answered_questions": question_count,
+        "correct": score,
+        "percentage": percentage,
+        "breakdown": results,
     }
 
 
