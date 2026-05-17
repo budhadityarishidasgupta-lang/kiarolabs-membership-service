@@ -1239,6 +1239,7 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
         selected_as_review_return = False
         attempt_count = 0
         lesson_word_ids = []
+        lesson_item_count = 0
 
         if user_id:
             attempt_count = _get_lesson_synonym_attempt_count(cur, user_id, lesson_id)
@@ -1256,8 +1257,12 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
                 latest_attempt_word_id,
                 recent_attempted_word_ids,
             )
+            lesson_item_count = len(lesson_word_ids)
         else:
             latest_attempt_word_id = None
+
+        if lesson_item_count == 0:
+            lesson_item_count = len(_get_lesson_word_ids(cur, lesson_id))
 
         if selected_word_id is not None:
             row = _fetch_synonym_row_by_word_id(cur, selected_word_id, lesson_id=lesson_id)
@@ -1316,6 +1321,7 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
             "options": validated_question["options"],
             "selection_mode": validated_question.get("selection_mode", "single"),
             "required_answers_count": validated_question.get("required_answers_count", 1),
+            "lesson_item_count": lesson_item_count,
         }
         return _sanitize_pre_submit_question(
             _add_review_metadata(

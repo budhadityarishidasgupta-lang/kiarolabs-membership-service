@@ -55,6 +55,28 @@ def get_spelling_micro_challenge_data(word_id: int):
         conn.close()
 
 
+def get_spelling_lesson_item_count(lesson_id: int, conn=None) -> int:
+    owns_connection = conn is None
+    active_conn = conn or get_connection()
+    cur = active_conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM spelling_lesson_items
+            WHERE lesson_id = %s
+            """,
+            (lesson_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0] or 0) if row else 0
+    finally:
+        cur.close()
+        if owns_connection:
+            active_conn.close()
+
+
 def get_resume_word_id(user_id, lesson_id, conn):
     """
     Returns next word_id based on last correct attempt.

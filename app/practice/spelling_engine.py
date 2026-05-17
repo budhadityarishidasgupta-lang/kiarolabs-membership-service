@@ -9,6 +9,7 @@ from app.repositories.spelling_repository import (
     get_resume_word_id,
     get_weak_word_id,
     get_lesson_id_for_word,
+    get_spelling_lesson_item_count,
     get_session_recent_word_ids,
     get_session_word_positions,
     get_latest_attempt_summary,
@@ -351,6 +352,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
         print("Lesson ID:", lesson_id)
         conn = get_connection()
         try:
+            lesson_item_count = get_spelling_lesson_item_count(lesson_id, conn=conn)
             latest_attempt_summary = get_latest_attempt_summary(
                 user_id=user_id,
                 lesson_id=lesson_id,
@@ -479,6 +481,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     "masked_word": "",
                     "hint": "",
                     "example_sentence": None,
+                    "lesson_item_count": lesson_item_count,
                     "weak_word_id": weak_word_id,
                     "resume_from_word_id": resume_word_id,
                     "next_unmastered_word_id": next_unmastered_word_id,
@@ -554,6 +557,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "masked_word": mask_word(item["word"], patterns, blanks_count=3),
                 "hint": clean_text(item["hint"]),
                 "example_sentence": None,
+                "lesson_item_count": lesson_item_count,
                 "weak_word_id": weak_word_id,
                 "resume_from_word_id": resume_word_id,
                 "next_unmastered_word_id": next_unmastered_word_id,
@@ -582,6 +586,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             "masked_word": "",
             "hint": "",
             "example_sentence": None,
+            "lesson_item_count": 0,
         }
 
 

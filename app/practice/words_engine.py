@@ -2,6 +2,7 @@ import random
 from app.repositories.words_repository import (
     get_word_details,
     get_words_courses_tree,
+    get_words_lesson_item_count,
     get_words_micro_challenge_data,
     get_words_next_item,
     record_words_attempt,
@@ -69,12 +70,14 @@ def _sanitize_pre_submit_question(payload: dict):
 
 def get_words_question(lesson_id: int, user_id: int):
     item = get_words_next_item(user_id, lesson_id)
+    lesson_item_count = get_words_lesson_item_count(lesson_id)
     if not item:
         return {
             "word_id": None,
             "masked_word": "",
             "hint": "",
             "example": "",
+            "lesson_item_count": lesson_item_count,
         }
 
     return _sanitize_pre_submit_question({
@@ -82,6 +85,7 @@ def get_words_question(lesson_id: int, user_id: int):
         "masked_word": mask_word(item["word"]),
         "hint": clean_text(item["hint"]),
         "example": clean_text(item["example"]),
+        "lesson_item_count": lesson_item_count,
     })
 
 

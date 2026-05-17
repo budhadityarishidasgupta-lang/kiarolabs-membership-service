@@ -329,6 +329,7 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
             candidate_pool = _avoid_immediate_repeat(candidate_pool, last_question_id)
             if candidate_pool:
                 selected = dict(candidate_pool[0])
+                selected["_lesson_item_count"] = len(items)
                 selected["_selection_strategy"] = strategy
                 selected["_has_prior_incorrect_attempt"] = selected["question_id"] in incorrect_question_ids
                 selected["_recent_question_ids"] = recent_question_ids
@@ -336,6 +337,7 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
                 return selected
 
         selected = dict(items[0])
+        selected["_lesson_item_count"] = len(items)
         selected["_selection_strategy"] = "fallback"
         selected["_has_prior_incorrect_attempt"] = selected["question_id"] in incorrect_question_ids
         selected["_recent_question_ids"] = recent_question_ids

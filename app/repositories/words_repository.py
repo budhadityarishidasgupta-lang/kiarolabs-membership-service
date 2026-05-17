@@ -4,6 +4,26 @@ from app.database import get_connection
 from app.repositories.words_stats_repository import update_words_stats_from_attempt
 
 
+def get_words_lesson_item_count(lesson_id: int) -> int:
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM words_lesson_words
+            WHERE lesson_id = %s
+            """,
+            (lesson_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0] or 0) if row else 0
+    finally:
+        cur.close()
+        conn.close()
+
+
 def get_words_courses_tree():
     conn = get_connection()
     cur = conn.cursor()
