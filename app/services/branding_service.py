@@ -16,6 +16,7 @@ def generate_branded_pdf(
         "paper_code": payload.get("paper_code", ""),
         "title": payload.get("title", ""),
         "subtitle": payload.get("subtitle", ""),
+        "paper_type": payload.get("paper_type", "vr"),
         "logo_url": payload.get("logo_url", ""),
         "footer_text": payload.get("footer_text", ""),
         "branding_theme": payload.get("branding_theme", "default"),

@@ -7,6 +7,7 @@ from app.services.branding_service import generate_branded_pdf
 
 
 router = APIRouter(prefix="/admin/branding", tags=["admin-branding"])
+ALLOWED_PAPER_TYPES = {"vr", "maths", "english", "comprehension"}
 
 
 def require_admin(user=Depends(get_current_user)):
@@ -20,16 +21,21 @@ async def generate_branding_material(
     paper_code: str = Form(""),
     title: str = Form(...),
     subtitle: str = Form(""),
+    paper_type: str = Form("vr"),
     source_pdf: UploadFile = File(...),
     _user=Depends(require_admin),
 ):
     if not source_pdf.filename or not source_pdf.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Source PDF is required")
+    normalized_paper_type = paper_type.strip().lower() or "vr"
+    if normalized_paper_type not in ALLOWED_PAPER_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported paper type")
 
     payload = {
         "paper_code": paper_code.strip(),
         "title": title.strip(),
         "subtitle": subtitle.strip(),
+        "paper_type": normalized_paper_type,
         "logo_url": "",
         "footer_text": "",
         "branding_theme": "default",
