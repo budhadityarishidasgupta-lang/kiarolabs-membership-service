@@ -783,6 +783,7 @@ def submit_vr_answers(payload: dict, user=Depends(get_current_user)):
                 "question_number": question_number,
                 "user_answer": student_answer,
                 "correct_answer": answer["correct_answer"],
+                "explanation": answer.get("explanation", ""),
                 "is_correct": is_correct,
                 "correct": is_correct,
             }
@@ -899,6 +900,7 @@ def submit_english_answers(payload: dict, user=Depends(get_current_user)):
                 "question_number": question_number,
                 "user_answer": student_answer,
                 "correct_answer": answer["correct_answer"],
+                "explanation": answer.get("explanation", ""),
                 "is_correct": is_correct,
                 "correct": is_correct,
             }

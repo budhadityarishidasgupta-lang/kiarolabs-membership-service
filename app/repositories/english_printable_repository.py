@@ -76,6 +76,7 @@ def init_english_printable_tables(conn=None) -> None:
                 paper_code TEXT NOT NULL REFERENCES english_papers(paper_code) ON DELETE CASCADE,
                 question_number INTEGER NOT NULL,
                 correct_answer TEXT NOT NULL,
+                explanation TEXT,
                 answer_source TEXT NOT NULL DEFAULT 'admin_csv',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -83,6 +84,7 @@ def init_english_printable_tables(conn=None) -> None:
             )
             """
         )
+        cur.execute("ALTER TABLE english_answers ADD COLUMN IF NOT EXISTS explanation TEXT")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS english_attempts (
@@ -175,10 +177,11 @@ def bulk_upsert_english_answers(rows: list[dict], conn=None) -> dict:
             paper_code = normalize_english_paper_code(row["paper_code"])
             question_number = int(row["question_number"])
             correct_answer = str(row["correct_answer"]).strip()
+            explanation = str(row.get("explanation") or "").strip()
             answer_source = str(row.get("answer_source") or "admin_csv").strip()
             cur.execute(
                 """
-                SELECT correct_answer
+                SELECT correct_answer, COALESCE(explanation, '')
                 FROM english_answers
                 WHERE paper_code = %s AND question_number = %s
                 """,
@@ -188,24 +191,25 @@ def bulk_upsert_english_answers(rows: list[dict], conn=None) -> dict:
             if not existing_row:
                 cur.execute(
                     """
-                    INSERT INTO english_answers (paper_code, question_number, correct_answer, answer_source)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO english_answers (paper_code, question_number, correct_answer, explanation, answer_source)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (paper_code, question_number, correct_answer, answer_source),
+                    (paper_code, question_number, correct_answer, explanation, answer_source),
                 )
                 inserted += 1
-            elif str(existing_row[0] or "").strip().lower() == correct_answer.lower():
+            elif str(existing_row[0] or "").strip().lower() == correct_answer.lower() and str(existing_row[1] or "").strip() == explanation:
                 unchanged += 1
             else:
                 cur.execute(
                     """
                     UPDATE english_answers
                     SET correct_answer = %s,
+                        explanation = %s,
                         answer_source = %s,
                         updated_at = NOW()
                     WHERE paper_code = %s AND question_number = %s
                     """,
-                    (correct_answer, answer_source, paper_code, question_number),
+                    (correct_answer, explanation, answer_source, paper_code, question_number),
                 )
                 updated += 1
 
@@ -395,7 +399,7 @@ def get_english_answers_for_paper(paper_code: str, *, conn=None) -> list[dict]:
     try:
         cur.execute(
             """
-            SELECT question_number, correct_answer, answer_source
+            SELECT question_number, correct_answer, COALESCE(explanation, ''), answer_source
             FROM english_answers
             WHERE paper_code = %s
             ORDER BY question_number ASC
@@ -403,7 +407,7 @@ def get_english_answers_for_paper(paper_code: str, *, conn=None) -> list[dict]:
             (normalize_english_paper_code(paper_code),),
         )
         return [
-            {"question_number": int(row[0]), "correct_answer": row[1], "answer_source": row[2]}
+            {"question_number": int(row[0]), "correct_answer": row[1], "explanation": row[2], "answer_source": row[3]}
             for row in cur.fetchall()
         ]
     finally:

@@ -619,7 +619,7 @@ def submit_math_paper(user_id, paper_code, answers, session_id: str | None = Non
 
         cur.execute(
             """
-            SELECT question_number, correct_answer
+            SELECT question_number, correct_answer, COALESCE(explanation, '')
             FROM math_printable_answer_keys
             WHERE paper_code = %s
             ORDER BY question_number
@@ -650,6 +650,7 @@ def submit_math_paper(user_id, paper_code, answers, session_id: str | None = Non
         for i, row in enumerate(rows):
             question_number = row[0]
             correct_answer = _normalize_answer(row[1])
+            explanation = str(row[2] or "").strip()
 
             user_answer = ""
             if i < len(user_answers):
@@ -665,6 +666,7 @@ def submit_math_paper(user_id, paper_code, answers, session_id: str | None = Non
                     "question_number": question_number,
                     "user_answer": user_answer,
                     "correct_answer": correct_answer,
+                    "explanation": explanation,
                     "is_correct": is_correct,
                 }
             )

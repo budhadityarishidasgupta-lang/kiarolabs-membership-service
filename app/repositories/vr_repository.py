@@ -89,6 +89,7 @@ def init_vr_tables(conn=None) -> None:
                 paper_code TEXT NOT NULL REFERENCES vr_papers(paper_code) ON DELETE CASCADE,
                 question_number INTEGER NOT NULL,
                 correct_answer TEXT NOT NULL,
+                explanation TEXT,
                 answer_source TEXT NOT NULL DEFAULT 'admin_csv',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -96,6 +97,7 @@ def init_vr_tables(conn=None) -> None:
             )
             """
         )
+        cur.execute("ALTER TABLE vr_answers ADD COLUMN IF NOT EXISTS explanation TEXT")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS vr_attempts (
@@ -262,10 +264,11 @@ def bulk_upsert_vr_answers(rows: list[dict], conn=None) -> dict:
             paper_code = normalize_vr_paper_code(row["paper_code"])
             question_number = int(row["question_number"])
             correct_answer = str(row["correct_answer"]).strip().upper()
+            explanation = str(row.get("explanation") or "").strip()
             answer_source = row.get("answer_source") or "admin_csv"
             cur.execute(
                 """
-                SELECT id, correct_answer
+                SELECT id, correct_answer, COALESCE(explanation, '')
                 FROM vr_answers
                 WHERE paper_code = %s AND question_number = %s
                 """,
@@ -275,24 +278,25 @@ def bulk_upsert_vr_answers(rows: list[dict], conn=None) -> dict:
             if not existing:
                 cur.execute(
                     """
-                    INSERT INTO vr_answers (paper_code, question_number, correct_answer, answer_source)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO vr_answers (paper_code, question_number, correct_answer, explanation, answer_source)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (paper_code, question_number, correct_answer, answer_source),
+                    (paper_code, question_number, correct_answer, explanation, answer_source),
                 )
                 inserted += 1
-            elif (existing[1] or "").strip().upper() == correct_answer:
+            elif (existing[1] or "").strip().upper() == correct_answer and (existing[2] or "").strip() == explanation:
                 unchanged += 1
             else:
                 cur.execute(
                     """
                     UPDATE vr_answers
                     SET correct_answer = %s,
+                        explanation = %s,
                         answer_source = %s,
                         updated_at = NOW()
                     WHERE paper_code = %s AND question_number = %s
                     """,
-                    (correct_answer, answer_source, paper_code, question_number),
+                    (correct_answer, explanation, answer_source, paper_code, question_number),
                 )
                 updated += 1
 
@@ -509,7 +513,7 @@ def get_vr_answers_for_paper(paper_code: str, *, conn=None) -> list[dict]:
     try:
         cur.execute(
             """
-            SELECT question_number, correct_answer, answer_source
+            SELECT question_number, correct_answer, COALESCE(explanation, ''), answer_source
             FROM vr_answers
             WHERE paper_code = %s
             ORDER BY question_number ASC
@@ -517,7 +521,7 @@ def get_vr_answers_for_paper(paper_code: str, *, conn=None) -> list[dict]:
             (normalize_vr_paper_code(paper_code),),
         )
         return [
-            {"question_number": row[0], "correct_answer": row[1], "answer_source": row[2]}
+            {"question_number": row[0], "correct_answer": row[1], "explanation": row[2], "answer_source": row[3]}
             for row in cur.fetchall()
         ]
     finally:

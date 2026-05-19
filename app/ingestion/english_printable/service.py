@@ -64,6 +64,7 @@ def upload_english_answer_csv(file: UploadFile, selected_paper_code: str | None 
             paper_code = selected_normalized_code or csv_paper_code
             question_number_raw = str(clean.get("question_number") or "").strip()
             correct_answer = _normalize_english_answer(clean.get("correct_answer"))
+            explanation = str(clean.get("explanation") or "").strip()
 
             if not paper_code or not question_number_raw or not correct_answer:
                 row_errors.append(
@@ -94,6 +95,9 @@ def upload_english_answer_csv(file: UploadFile, selected_paper_code: str | None 
             if len(correct_answer) > 64:
                 row_errors.append({"row": idx, "detail": "correct_answer is too long"})
                 continue
+            if len(explanation) > 2000:
+                row_errors.append({"row": idx, "detail": "explanation is too long"})
+                continue
 
             pair = (paper_code, question_number)
             previous = seen_pairs.get(pair)
@@ -118,6 +122,7 @@ def upload_english_answer_csv(file: UploadFile, selected_paper_code: str | None 
                     "paper_code": paper_code,
                     "question_number": question_number,
                     "correct_answer": correct_answer,
+                    "explanation": explanation,
                     "answer_source": "admin_csv",
                 }
             )

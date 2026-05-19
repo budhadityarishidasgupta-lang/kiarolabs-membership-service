@@ -169,6 +169,7 @@ def _upload_math_answer_csv(file: UploadFile, selected_paper_code: str | None = 
     seen_pairs: dict[tuple[str, int], str] = {}
 
     try:
+        cur.execute("ALTER TABLE math_printable_answer_keys ADD COLUMN IF NOT EXISTS explanation TEXT")
         for idx, row in enumerate(reader, start=2):
             clean = {
                 (key.strip() if key else key): (value.strip() if isinstance(value, str) else value)
@@ -178,6 +179,7 @@ def _upload_math_answer_csv(file: UploadFile, selected_paper_code: str | None = 
             paper_code = str(clean.get("paper_code") or "").strip().lower()
             question_number_raw = str(clean.get("question_number") or "").strip()
             correct_answer = str(clean.get("correct_answer") or "").strip().upper()
+            explanation = str(clean.get("explanation") or "").strip()
 
             if not paper_code or not question_number_raw or not correct_answer:
                 raise HTTPException(
@@ -241,25 +243,41 @@ def _upload_math_answer_csv(file: UploadFile, selected_paper_code: str | None = 
                 cur.execute(
                     """
                     INSERT INTO math_printable_answer_keys
-                    (paper_code, question_number, correct_answer)
-                    VALUES (%s, %s, %s)
+                    (paper_code, question_number, correct_answer, explanation)
+                    VALUES (%s, %s, %s, %s)
                     """,
-                    (paper_code, question_number, correct_answer),
+                    (paper_code, question_number, correct_answer, explanation),
                 )
                 inserted += 1
-            elif (existing[0] or "").strip() == correct_answer:
-                unchanged += 1
             else:
                 cur.execute(
                     """
-                    UPDATE math_printable_answer_keys
-                    SET correct_answer = %s
+                    SELECT correct_answer, COALESCE(explanation, '')
+                    FROM math_printable_answer_keys
                     WHERE paper_code = %s
                       AND question_number = %s
                     """,
-                    (correct_answer, paper_code, question_number),
+                    (paper_code, question_number),
                 )
-                updated += 1
+                existing_full = cur.fetchone()
+                if (
+                    existing_full
+                    and (existing_full[0] or "").strip() == correct_answer
+                    and (existing_full[1] or "").strip() == explanation
+                ):
+                    unchanged += 1
+                else:
+                    cur.execute(
+                        """
+                        UPDATE math_printable_answer_keys
+                        SET correct_answer = %s,
+                            explanation = %s
+                        WHERE paper_code = %s
+                          AND question_number = %s
+                        """,
+                        (correct_answer, explanation, paper_code, question_number),
+                    )
+                    updated += 1
 
             rows_processed += 1
 
@@ -432,7 +450,7 @@ def get_admin_math_printable_answers(paper_code: str, _user=Depends(require_admi
     try:
         cur.execute(
             """
-            SELECT question_number, correct_answer
+            SELECT question_number, correct_answer, COALESCE(explanation, '')
             FROM math_printable_answer_keys
             WHERE paper_code = %s
             ORDER BY question_number
@@ -447,6 +465,7 @@ def get_admin_math_printable_answers(paper_code: str, _user=Depends(require_admi
                 {
                     "question_number": row[0],
                     "correct_answer": row[1],
+                    "explanation": row[2],
                 }
                 for row in rows
             ],
