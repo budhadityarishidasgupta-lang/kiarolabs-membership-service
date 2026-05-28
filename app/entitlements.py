@@ -51,6 +51,32 @@ ACTIVE_COMPREHENSION_PERMALINK_TO_KEY = {
     "shixax": "printable_comprehension_7",
 }
 
+ACTIVE_ENGLISH_PERMALINK_TO_KEY = {
+    "phekgk": "printable_english_1",
+    "cclsi": "printable_english_2",
+    "urrvk": "printable_english_3",
+    "wuwrog": "printable_english_4",
+    "srvxaj": "printable_english_5",
+    "reesgh": "printable_english_6",
+    "zsioja": "printable_english_7",
+    "vhprd": "printable_english_8",
+    "aihlvo": "printable_english_9",
+    "bweqr": "printable_english_10",
+}
+
+ACTIVE_MATHS_PRINTABLE_PERMALINK_TO_KEY = {
+    "snvrji": "printable_maths_1",
+    "dhylz": "printable_maths_2",
+    "kgqflr": "printable_maths_3",
+    "rbkiw": "printable_maths_4",
+    "uhlkh": "printable_maths_5",
+    "cjbvx": "printable_maths_6",
+    "ytldyf": "printable_maths_7",
+    "unnopn": "printable_maths_8",
+    "wehuf": "printable_maths_9",
+    "pnmquw": "printable_maths_10",
+}
+
 DISABLED_OR_IGNORED_PERMALINKS = {
     # Bundles / packs (disabled for V1)
     "akizdp",
@@ -70,6 +96,32 @@ VR_PAPER_CODE_TO_KEY = {
     "vr-p7": "printable_vr_7",
     "vr-p8": "printable_vr_8",
     "vr-p9": "printable_vr_9",
+}
+
+ENGLISH_PAPER_CODE_TO_KEY = {
+    "eng-p1": "printable_english_1",
+    "eng-p2": "printable_english_2",
+    "eng-p3": "printable_english_3",
+    "eng-p4": "printable_english_4",
+    "eng-p5": "printable_english_5",
+    "eng-p6": "printable_english_6",
+    "eng-p7": "printable_english_7",
+    "eng-p8": "printable_english_8",
+    "eng-p9": "printable_english_9",
+    "eng-p10": "printable_english_10",
+}
+
+MATHS_PAPER_CODE_TO_KEY = {
+    "maths-01": "printable_maths_1",
+    "maths-02": "printable_maths_2",
+    "maths-03": "printable_maths_3",
+    "maths-04": "printable_maths_4",
+    "maths-05": "printable_maths_5",
+    "maths-06": "printable_maths_6",
+    "maths-07": "printable_maths_7",
+    "maths-08": "printable_maths_8",
+    "maths-09": "printable_maths_9",
+    "maths-10": "printable_maths_10",
 }
 
 
@@ -171,6 +223,10 @@ def _resolve_printable_or_active_key(product_name: str, product_permalink: str, 
             return ACTIVE_VR_PERMALINK_TO_KEY[token]
         if token in ACTIVE_COMPREHENSION_PERMALINK_TO_KEY:
             return ACTIVE_COMPREHENSION_PERMALINK_TO_KEY[token]
+        if token in ACTIVE_ENGLISH_PERMALINK_TO_KEY:
+            return ACTIVE_ENGLISH_PERMALINK_TO_KEY[token]
+        if token in ACTIVE_MATHS_PRINTABLE_PERMALINK_TO_KEY:
+            return ACTIVE_MATHS_PRINTABLE_PERMALINK_TO_KEY[token]
         if token in ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE:
             return f"module_{ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE[token]}"
         if token in ACTIVE_MATH_MOCK_PERMALINK_TEST_ID:
@@ -185,6 +241,14 @@ def _resolve_printable_or_active_key(product_name: str, product_permalink: str, 
     vr_match = re.search(r"verbal reasoning.*\((\d+)\)", name)
     if vr_match:
         return f"printable_vr_{int(vr_match.group(1))}"
+
+    english_match = re.search(r"english exam practice pack.*\((\d+)\)", name)
+    if english_match:
+        return f"printable_english_{int(english_match.group(1))}"
+
+    maths_match = re.search(r"maths exam practice pack.*\((\d+)\)", name)
+    if maths_match:
+        return f"printable_maths_{int(maths_match.group(1))}"
 
     return None
 
