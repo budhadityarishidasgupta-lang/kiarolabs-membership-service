@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.database import get_connection
+from app.product_catalog import user_has_product_prefix_access
 
 
 DEFAULT_ENGLISH_PAPERS = [
@@ -448,6 +449,8 @@ def record_english_attempt_batch(*, user_id: int, paper_code: str, answers: list
 
 def user_has_english_printable_access(*, user_email: str, user_role: str | None = None, conn=None) -> bool:
     if (user_role or "").lower() == "admin":
+        return True
+    if user_has_product_prefix_access(user_email=user_email, prefixes={"EPP"}, conn=conn):
         return True
 
     owns_connection = conn is None

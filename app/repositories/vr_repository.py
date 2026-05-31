@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.database import get_connection
+from app.product_catalog import user_has_product_prefix_access
 
 
 DEFAULT_VR_PAPERS = [
@@ -643,6 +644,8 @@ def get_vr_score_for_user(*, user_id: int, paper_code: str, conn=None) -> dict:
 
 def user_has_vr_access(*, user_email: str, user_role: str | None = None, conn=None) -> bool:
     if (user_role or "").lower() == "admin":
+        return True
+    if user_has_product_prefix_access(user_email=user_email, prefixes={"VRPP"}, conn=conn):
         return True
     owns_connection = conn is None
     if owns_connection:

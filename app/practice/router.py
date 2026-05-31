@@ -82,6 +82,7 @@ from app.repositories.english_printable_repository import (
     record_english_attempt_batch,
     user_has_english_printable_access,
 )
+from app.product_catalog import user_has_product_code_access
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 admin_router = APIRouter(tags=["admin"])
@@ -604,13 +605,21 @@ def math_question(
 
 @router.post("/math/submit")
 def math_submit(payload: dict, user=Depends(get_current_user)):
-    _enforce_full_module_access(user, "math")
     user_id = _require_user_id(user)
     session_id = payload.get("session_id") or str(uuid.uuid4())
 
     if "paper_code" in payload or "answers" in payload:
         paper_code = _require_payload_param(payload, "paper_code")
         answers = _require_payload_param(payload, "answers")
+        normalized_paper_code = str(paper_code or "").strip().upper()
+        if normalized_paper_code.startswith("MPP"):
+            if user.get("role") != "admin" and not user_has_product_code_access(
+                user_email=user.get("sub", ""),
+                product_codes={normalized_paper_code},
+            ):
+                raise HTTPException(status_code=403, detail="Maths printable access required")
+        else:
+            _enforce_full_module_access(user, "math")
         return _safe_execute(
             "math_submit_paper",
             submit_math_paper,
@@ -620,6 +629,7 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
             session_id=session_id,
         )
 
+    _enforce_full_module_access(user, "math")
     lesson_id = _require_payload_param(payload, "lesson_id")
     question_id = _require_payload_param(payload, "question_id")
     selected_option = _require_payload_param(payload, "selected_option")

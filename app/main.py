@@ -30,6 +30,13 @@ from app.entitlements import (
     normalize_gumroad_identifier,
     get_printable_purchase_state_for_email,
 )
+from app.product_catalog import (
+    get_current_printable_catalog,
+    get_owned_product_codes_for_email,
+    init_product_catalog_tables,
+    resolve_product_by_provider_identifier,
+    upsert_member_product_access,
+)
 
 
 # =========================
@@ -79,6 +86,12 @@ def startup_event():
         print("english paper printable tables initialized")
     except Exception as e:
         print("english paper printable init failed:", e)
+
+    try:
+        init_product_catalog_tables()
+        print("product catalog tables initialized")
+    except Exception as e:
+        print("product catalog init failed:", e)
 
 # =========================
 # CORS
@@ -1873,6 +1886,25 @@ def _is_refund_event(event_type: str) -> bool:
     normalized = (event_type or "").strip().lower()
     return normalized in {"refund", "chargeback", "refund.created", "chargeback.created"}
 
+
+def _legacy_product_code_from_entitlement(app_code: str | None, mock_test_id: str | None) -> str | None:
+    app_map = {
+        "math": "MSM",
+        "spelling": "SSM",
+        "general": "WSM",
+        "comprehension": "CHM",
+    }
+    normalized_app_code = str(app_code or "").strip().lower()
+    if normalized_app_code in app_map:
+        return app_map[normalized_app_code]
+
+    normalized_mock_test_id = str(mock_test_id or "").strip().upper()
+    if normalized_mock_test_id.startswith("MATH_MOCK_"):
+        suffix = normalized_mock_test_id.removeprefix("MATH_MOCK_")
+        if suffix.isdigit():
+            return f"MME{int(suffix)}"
+    return None
+
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
     try:
@@ -1881,10 +1913,24 @@ async def gumroad_webhook(request: Request):
         email = (form.get("email") or "").strip().lower()
         product_name = (form.get("product_name") or "").strip()
         event_type = (form.get("event") or "").strip()
+        sale_id = (form.get("sale_id") or form.get("sale[id]") or "").strip()
         identifiers = _collect_gumroad_identifiers(form)
         webhook_permalink = _extract_webhook_permalink(form)
+        resolved_catalog_product = resolve_product_by_provider_identifier(identifiers)
         resolved_app_code = _resolve_gumroad_app_code(identifiers, product_name=product_name)
         resolved_mock_test_id = _resolve_mock_test_id(product_name, identifiers)
+        if resolved_catalog_product:
+            if resolved_catalog_product.get("entitlement_type") == "member_app":
+                resolved_app_code = resolved_catalog_product.get("entitlement_value") or resolved_app_code
+            elif resolved_catalog_product.get("entitlement_type") == "mock_test_access":
+                resolved_mock_test_id = resolved_catalog_product.get("entitlement_value") or resolved_mock_test_id
+        else:
+            legacy_product_code = _legacy_product_code_from_entitlement(resolved_app_code, resolved_mock_test_id)
+            if legacy_product_code:
+                resolved_catalog_product = {
+                    "product_code": legacy_product_code,
+                    "provider_product_key": webhook_permalink,
+                }
         event_product_payload = (
             f"{product_name} | permalink={webhook_permalink}"
             if webhook_permalink
@@ -1903,7 +1949,12 @@ async def gumroad_webhook(request: Request):
             email,
             product_name,
             event_type,
-            {"identifiers": sorted(identifiers), "app_code": resolved_app_code, "test_id": resolved_mock_test_id},
+            {
+                "identifiers": sorted(identifiers),
+                "product_code": (resolved_catalog_product or {}).get("product_code"),
+                "app_code": resolved_app_code,
+                "test_id": resolved_mock_test_id,
+            },
         )
 
         if not email or not product_name:
@@ -1995,6 +2046,17 @@ async def gumroad_webhook(request: Request):
                     (member_id, resolved_app_code),
                 )
 
+            if resolved_catalog_product:
+                upsert_member_product_access(
+                    member_id=member_id,
+                    purchase_email=email,
+                    product_code=resolved_catalog_product["product_code"],
+                    provider_product_key=resolved_catalog_product.get("provider_product_key"),
+                    sale_id=sale_id or None,
+                    status="active" if is_purchase_event else "refunded" if is_refund_event else "active",
+                    conn=conn,
+                )
+
             # Handle single-test purchase
             if is_purchase_event and resolved_mock_test_id:
                 cur.execute(
@@ -2061,7 +2123,19 @@ def get_printable_purchases(user: dict = Depends(get_current_user)):
         .lower()
     )
     _, purchased_permalinks = get_printable_purchase_state_for_email(user_email)
-    return {"purchased_permalinks": sorted(purchased_permalinks)}
+    owned_product_codes = get_owned_product_codes_for_email(
+        user_email,
+        families={"printable_paper"},
+    )
+    return {
+        "purchased_permalinks": sorted(purchased_permalinks),
+        "owned_product_codes": sorted(owned_product_codes),
+    }
+
+
+@app.get("/catalog/printables")
+def get_printable_catalog():
+    return {"products": get_current_printable_catalog()}
 
 
 # =========================

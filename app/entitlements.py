@@ -4,6 +4,7 @@ import re
 from fastapi import HTTPException
 
 from app.database import get_connection
+from app.product_catalog import get_current_printable_catalog, get_owned_product_codes_for_email
 
 
 ONLINE_PRACTICE_APP_CODES = {"math", "spelling", "general", "comprehension"}
@@ -299,6 +300,23 @@ def get_printable_purchase_state_for_email(user_email: str | None) -> tuple[set[
         for key in purchased_keys
         if key.startswith("printable_") and permalink_by_key.get(key)
     }
+
+    owned_product_codes = get_owned_product_codes_for_email(
+        email,
+        families={"printable_paper"},
+    )
+    if owned_product_codes:
+        printable_catalog = get_current_printable_catalog()
+        current_key_by_code = {
+            str(item.get("product_code") or "").strip().upper(): str(item.get("provider_product_key") or "").strip().lower()
+            for item in printable_catalog
+        }
+        purchased_keys.update(owned_product_codes)
+        purchased_permalinks.update(
+            current_key_by_code[code]
+            for code in owned_product_codes
+            if current_key_by_code.get(code)
+        )
     return purchased_keys, purchased_permalinks
 
 
