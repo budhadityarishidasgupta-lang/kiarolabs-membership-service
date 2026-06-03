@@ -1906,7 +1906,6 @@ def _legacy_product_code_from_entitlement(app_code: str | None, mock_test_id: st
         if suffix.isdigit():
             return f"MME{int(suffix)}"
     return None
-
 @app.post("/webhook/gumroad")
 async def gumroad_webhook(request: Request):
     try:
