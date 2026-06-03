@@ -34,6 +34,25 @@ def _first_value(row: dict[str, Any], *keys: str, default=None):
     return default
 
 
+def _clean_text(value: Any, default: str = "") -> str:
+    return str(_first_value({"value": value}, "value", default=default) or default).strip()
+
+
+def _clean_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError, AttributeError):
+        return default
+
+
+def _slugify(value: str) -> str:
+    token = str(value or "").strip().lower()
+    token = "".join(ch if ch.isalnum() else "-" for ch in token)
+    while "--" in token:
+        token = token.replace("--", "-")
+    return token.strip("-") or "grammar"
+
+
 def _normalize_option_key(value: Any) -> str:
     token = str(value or "").strip().upper()
     if token in {"A", "B", "C", "D"}:
@@ -79,6 +98,309 @@ def _question_payload(question: dict[str, Any], *, include_answer: bool = False)
     if include_answer:
         payload["correct_option"] = _first_value(question, "correct_option", "answer_key", default="")
     return payload
+
+
+def _ensure_course(cur, course_name: str, sort_order: int) -> tuple[int, bool]:
+    course_name = course_name.strip() or DEFAULT_GRAMMAR_COURSE_NAME
+    cur.execute(
+        """
+        SELECT *
+        FROM grammar_courses
+        WHERE LOWER(COALESCE(course_name, '')) = LOWER(%s)
+        LIMIT 1
+        """,
+        (course_name,),
+    )
+    row = cur.fetchone()
+    if row:
+        columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
+        course = dict(zip(columns, row))
+        course_id = int(_first_value(course, "course_id", "id", default=0) or 0)
+        if course_id:
+            updates = []
+            params: list[Any] = []
+            if _clean_int(_first_value(course, "sort_order", default=0)) != sort_order:
+                updates.append("sort_order = %s")
+                params.append(sort_order)
+            if not _clean_text(_first_value(course, "course_code", default="")):
+                updates.append("course_code = %s")
+                params.append(_slugify(course_name))
+            if updates:
+                params.append(course_id)
+                cur.execute(
+                    f"""
+                    UPDATE grammar_courses
+                    SET {', '.join(updates)}
+                    WHERE course_id = %s
+                    """,
+                    tuple(params),
+                )
+        return course_id, False
+
+    cur.execute(
+        """
+        INSERT INTO grammar_courses (course_name, course_code, sort_order)
+        VALUES (%s, %s, %s)
+        RETURNING course_id
+        """,
+        (course_name, _slugify(course_name), sort_order),
+    )
+    course_row = cur.fetchone()
+    course_id = int(course_row[0]) if course_row else 0
+    return course_id, True
+
+
+def _ensure_lesson(
+    cur,
+    *,
+    course_id: int,
+    lesson_code: str,
+    lesson_name: str,
+    sort_order: int,
+) -> tuple[int, bool]:
+    lesson_code = lesson_code.strip() or _slugify(lesson_name)
+    lesson_name = lesson_name.strip()
+    cur.execute(
+        """
+        SELECT *
+        FROM grammar_lessons
+        WHERE course_id = %s
+          AND LOWER(COALESCE(lesson_code, '')) = LOWER(%s)
+        LIMIT 1
+        """,
+        (course_id, lesson_code),
+    )
+    row = cur.fetchone()
+    if row:
+        columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
+        lesson = dict(zip(columns, row))
+        lesson_id = int(_first_value(lesson, "lesson_id", "id", default=0) or 0)
+        if lesson_id:
+            updates = []
+            params: list[Any] = []
+            if _clean_text(_first_value(lesson, "lesson_name", default="")) != lesson_name:
+                updates.append("lesson_name = %s")
+                params.append(lesson_name)
+            if _clean_int(_first_value(lesson, "sort_order", default=0)) != sort_order:
+                updates.append("sort_order = %s")
+                params.append(sort_order)
+            if _clean_int(_first_value(lesson, "course_id", default=0)) != course_id:
+                updates.append("course_id = %s")
+                params.append(course_id)
+            if updates:
+                params.append(lesson_id)
+                cur.execute(
+                    f"""
+                    UPDATE grammar_lessons
+                    SET {', '.join(updates)}
+                    WHERE lesson_id = %s
+                    """,
+                    tuple(params),
+                )
+        return lesson_id, False
+
+    cur.execute(
+        """
+        INSERT INTO grammar_lessons (course_id, lesson_code, lesson_name, sort_order)
+        VALUES (%s, %s, %s, %s)
+        RETURNING lesson_id
+        """,
+        (course_id, lesson_code, lesson_name, sort_order),
+    )
+    lesson_row = cur.fetchone()
+    lesson_id = int(lesson_row[0]) if lesson_row else 0
+    return lesson_id, True
+
+
+def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, bool]:
+    question_text = _clean_text(_first_value(row, "question_text", default=""))
+    question_type = _clean_text(_first_value(row, "question_type", default="mcq")) or "mcq"
+    cur.execute(
+        """
+        SELECT q.*
+        FROM grammar_questions q
+        JOIN grammar_lesson_items li
+          ON li.question_id = q.question_id
+        WHERE li.lesson_id = %s
+          AND LOWER(COALESCE(q.question_text, '')) = LOWER(%s)
+        LIMIT 1
+        """,
+        (lesson_id, question_text),
+    )
+    found = cur.fetchone()
+    if found:
+        columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
+        question = dict(zip(columns, found))
+        question_id = int(_first_value(question, "question_id", "id", default=0) or 0)
+        if question_id:
+            updates = []
+            params: list[Any] = []
+            fields = {
+                "question_type": question_type,
+                "question_text": question_text,
+                "option_a": _clean_text(_first_value(row, "option_a", default="")),
+                "option_b": _clean_text(_first_value(row, "option_b", default="")),
+                "option_c": _clean_text(_first_value(row, "option_c", default="")),
+                "option_d": _clean_text(_first_value(row, "option_d", default="")),
+                "correct_option": _normalize_option_key(_first_value(row, "correct_option", default="")),
+                "explanation": _clean_text(_first_value(row, "explanation", default="")),
+                "difficulty": _clean_text(_first_value(row, "difficulty", default="")),
+                "skill_tag": _clean_text(_first_value(row, "skill_tag", default="")),
+                "source_ref": _clean_text(_first_value(row, "source_ref", default="")),
+            }
+            for column, new_value in fields.items():
+                if _clean_text(_first_value(question, column, default="")) != _clean_text(new_value):
+                    updates.append(f"{column} = %s")
+                    params.append(new_value)
+            if updates:
+                params.append(question_id)
+                cur.execute(
+                    f"""
+                    UPDATE grammar_questions
+                    SET {', '.join(updates)}
+                    WHERE question_id = %s
+                    """,
+                    tuple(params),
+                )
+        return question_id, False
+
+    cur.execute(
+        """
+        INSERT INTO grammar_questions (
+            question_type,
+            question_text,
+            option_a,
+            option_b,
+            option_c,
+            option_d,
+            correct_option,
+            explanation,
+            difficulty,
+            skill_tag,
+            source_ref
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING question_id
+        """,
+        (
+            question_type,
+            question_text,
+            _clean_text(_first_value(row, "option_a", default="")),
+            _clean_text(_first_value(row, "option_b", default="")),
+            _clean_text(_first_value(row, "option_c", default="")),
+            _clean_text(_first_value(row, "option_d", default="")),
+            _normalize_option_key(_first_value(row, "correct_option", default="")),
+            _clean_text(_first_value(row, "explanation", default="")),
+            _clean_text(_first_value(row, "difficulty", default="")),
+            _clean_text(_first_value(row, "skill_tag", default="")),
+            _clean_text(_first_value(row, "source_ref", default="")),
+        ),
+    )
+    question_row = cur.fetchone()
+    question_id = int(question_row[0]) if question_row else 0
+    return question_id, True
+
+
+def _ensure_lesson_item(cur, lesson_id: int, question_id: int, sort_order: int) -> bool:
+    cur.execute(
+        """
+        SELECT *
+        FROM grammar_lesson_items
+        WHERE lesson_id = %s
+          AND question_id = %s
+        LIMIT 1
+        """,
+        (lesson_id, question_id),
+    )
+    row = cur.fetchone()
+    if row:
+        columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
+        item = dict(zip(columns, row))
+        lesson_item_id = int(_first_value(item, "lesson_item_id", "id", default=0) or 0)
+        if lesson_item_id and _clean_int(_first_value(item, "sort_order", default=0)) != sort_order:
+            cur.execute(
+                """
+                UPDATE grammar_lesson_items
+                SET sort_order = %s
+                WHERE lesson_item_id = %s
+                """,
+                (sort_order, lesson_item_id),
+            )
+        return False
+
+    cur.execute(
+        """
+        INSERT INTO grammar_lesson_items (lesson_id, question_id, sort_order)
+        VALUES (%s, %s, %s)
+        """,
+        (lesson_id, question_id, sort_order),
+    )
+    return True
+
+
+def import_grammar_csv_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    conn = get_connection()
+    cur = conn.cursor()
+    stats = {
+        "rows_processed": 0,
+        "rows_skipped": 0,
+        "courses_created": 0,
+        "courses_updated": 0,
+        "lessons_created": 0,
+        "lessons_updated": 0,
+        "questions_created": 0,
+        "questions_updated": 0,
+        "lesson_items_created": 0,
+        "lesson_items_updated": 0,
+    }
+
+    try:
+        for index, row in enumerate(rows, start=1):
+            clean_row = {str(key).strip().lower(): value for key, value in (row or {}).items() if key}
+            if not any(str(value or "").strip() for value in clean_row.values()):
+                stats["rows_skipped"] += 1
+                continue
+
+            course_name = _clean_text(_first_value(clean_row, "course_name", default="")) or DEFAULT_GRAMMAR_COURSE_NAME
+            lesson_code = _clean_text(_first_value(clean_row, "lesson_code", default="")) or _slugify(_clean_text(_first_value(clean_row, "lesson_name", default="")))
+            lesson_name = _clean_text(_first_value(clean_row, "lesson_name", default=""))
+            question_text = _clean_text(_first_value(clean_row, "question_text", default=""))
+            if not lesson_name or not question_text:
+                stats["rows_skipped"] += 1
+                continue
+
+            sort_order = _clean_int(_first_value(clean_row, "sort_order", default=index), default=index)
+            course_id, course_created = _ensure_course(cur, course_name, sort_order)
+            lesson_id, lesson_created = _ensure_lesson(
+                cur,
+                course_id=course_id,
+                lesson_code=lesson_code,
+                lesson_name=lesson_name,
+                sort_order=sort_order,
+            )
+            question_id, question_created = _ensure_question(cur, clean_row, lesson_id)
+            lesson_item_created = _ensure_lesson_item(cur, lesson_id, question_id, sort_order)
+
+            stats["rows_processed"] += 1
+            stats["courses_created"] += int(course_created)
+            stats["lessons_created"] += int(lesson_created)
+            stats["questions_created"] += int(question_created)
+            stats["lesson_items_created"] += int(lesson_item_created)
+            stats["courses_updated"] += int(not course_created)
+            stats["lessons_updated"] += int(not lesson_created)
+            stats["questions_updated"] += int(not question_created)
+            stats["lesson_items_updated"] += int(not lesson_item_created)
+
+        conn.commit()
+        stats["course_name"] = DEFAULT_GRAMMAR_COURSE_NAME
+        stats["total_rows"] = len(rows)
+        return stats
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
 
 def _lesson_payload(lesson: dict[str, Any], progress: dict[str, Any] | None = None) -> dict[str, Any]:

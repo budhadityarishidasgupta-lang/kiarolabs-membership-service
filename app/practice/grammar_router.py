@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import csv
+import io
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.auth import get_current_user, require_member_app_access, resolve_verified_learning_user_id
 from app.database import get_connection
 from app.practice.grammar_engine import (
+    import_grammar_csv_for_admin,
     get_grammar_courses,
     get_grammar_question_for_lesson,
     get_grammar_resume_for_user,
@@ -111,3 +114,26 @@ def grammar_resume(user=Depends(get_current_user)):
     _require_grammar_access(user)
     user_id = _resolve_user_id(user)
     return get_grammar_resume_for_user(user_id)
+
+
+@router.post("/upload")
+async def grammar_upload(file: UploadFile = File(...), user=Depends(get_current_user)):
+    _require_grammar_access(user)
+    filename = str(getattr(file, "filename", "") or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a CSV file")
+
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded")
+
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=400, detail="CSV file is empty")
+
+    result = import_grammar_csv_for_admin(rows)
+    result["filename"] = file.filename
+    return result

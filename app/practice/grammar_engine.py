@@ -5,6 +5,7 @@ from typing import Any
 
 from app.repositories.grammar_repository import (
     DEFAULT_GRAMMAR_COURSE_NAME,
+    import_grammar_csv_rows,
     get_grammar_lessons,
     get_grammar_question,
     get_grammar_resume,
@@ -61,3 +62,7 @@ def submit_grammar_answer_for_lesson(
 
 def get_grammar_resume_for_user(user_id: int):
     return get_grammar_resume(user_id)
+
+
+def import_grammar_csv_for_admin(rows):
+    return import_grammar_csv_rows(rows)
