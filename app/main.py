@@ -827,6 +827,7 @@ def dashboard(user=Depends(get_current_user)):
                 "spelling": {"attempts": 0, "accuracy": 0, "unlocked": False},
                 "words": {"attempts": 0, "accuracy": 0, "unlocked": False},
                 "math": {"unlocked": False},
+                "grammar": {"attempts": 0, "accuracy": 0, "completed_lessons": 0, "total_lessons": 0, "completion_percent": 0, "unlocked": False},
                 "practice_papers": {"unlocked": False},
                 "mock_exams": {"unlocked": False},
                 "nvr": {"unlocked": False},
@@ -932,6 +933,14 @@ def dashboard(user=Depends(get_current_user)):
             "total_lessons": m_lessons_total,
             "completion_percent": m_completion,
             "unlocked": is_admin or ("math" in apps)
+        },
+        "grammar": {
+            "attempts": 0,
+            "accuracy": 0,
+            "completed_lessons": 0,
+            "total_lessons": 0,
+            "completion_percent": 0,
+            "unlocked": is_admin or ("grammar" in apps)
         },
 
         # Monetised products (NEVER legacy unlocked)
