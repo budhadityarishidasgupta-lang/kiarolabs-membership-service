@@ -230,7 +230,7 @@ def hash_password(plain: str) -> str:
 #        return payload
 #    except JWTError:
 #        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
+#
 
 def derive_subscription_state(subscription_status: str | None, subscription_end):
     now = datetime.utcnow()
@@ -1545,7 +1545,7 @@ def fix_user_access(payload: dict, user=Depends(get_current_user)):
         if account_type == "free":
             return {"status": "no_action_needed"}
 
-        apps = ["math", "mock", "practice"]
+        apps = ["math", "mock", "practice", "grammar"]
 
         for app_code in apps:
             cur.execute(
@@ -1720,6 +1720,7 @@ def set_user_role(payload: dict, user=Depends(get_current_user)):
             FROM (VALUES
                 ('comprehension'),
                 ('general'),
+                ('grammar'),
                 ('math'),
                 ('mock'),
                 ('nvr'),
@@ -1893,6 +1894,7 @@ def _legacy_product_code_from_entitlement(app_code: str | None, mock_test_id: st
         "spelling": "SSM",
         "general": "WSM",
         "comprehension": "CHM",
+        "grammar": "GSM",
     }
     normalized_app_code = str(app_code or "").strip().lower()
     if normalized_app_code in app_map:
