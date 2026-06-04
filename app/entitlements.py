@@ -7,11 +7,12 @@ from app.database import get_connection
 from app.product_catalog import get_current_printable_catalog, get_owned_product_codes_for_email
 
 
-ONLINE_PRACTICE_APP_CODES = {"math", "spelling", "general", "comprehension"}
+ONLINE_PRACTICE_APP_CODES = {"math", "spelling", "general", "grammar", "comprehension"}
 ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE = {
     "ztwxby": "math",
     "gxvtls": "spelling",
     "sddokb": "general",
+    "gsm": "grammar",
     "gckvb": "comprehension",
 }
 

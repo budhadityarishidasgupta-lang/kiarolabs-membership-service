@@ -145,6 +145,12 @@ AVAILABLE_APP_CATALOG = [
         "group": "core",
     },
     {
+        "app_code": "grammar",
+        "label": "GrammarSprint",
+        "description": "Grammar lesson access",
+        "group": "core",
+    },
+    {
         "app_code": "practice",
         "label": "Printable Papers",
         "description": "Printable practice paper access",

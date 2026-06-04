@@ -84,6 +84,7 @@ def _entitlement_for_product_code(product_code: str) -> tuple[str, str]:
         "MSM": ("member_app", "math"),
         "SSM": ("member_app", "spelling"),
         "WSM": ("member_app", "general"),
+        "GSM": ("member_app", "grammar"),
         "CHM": ("member_app", "comprehension"),
     }
     if code in module_map:
@@ -147,6 +148,7 @@ CATALOG_SEED_PRODUCTS: list[SeedProduct] = [
     _build_seed_product(product_code="MSM", page_section="Online Practice / Packs", frontend_card_name="MathSprint Module", provider_product_key="ztwxby", provider_product_name="MathSprint Module"),
     _build_seed_product(product_code="SSM", page_section="Online Practice / Packs", frontend_card_name="SpellingSprint Module", provider_product_key="gxvtls", provider_product_name="SpellingSprint Module"),
     _build_seed_product(product_code="WSM", page_section="Online Practice / Packs", frontend_card_name="WordSprint Module", provider_product_key="sddokb", provider_product_name="WordSprint Module"),
+    _build_seed_product(product_code="GSM", page_section="Online Practice / Packs", frontend_card_name="GrammarSprint Module", provider_product_key="gsm", provider_product_name="GrammarSprint Module"),
     _build_seed_product(product_code="CHM", page_section="Online Practice / Packs", frontend_card_name="ComprehensionSprint Module", provider_product_key="gckvb", provider_product_name="ComprehensionSprint"),
 ]
 
