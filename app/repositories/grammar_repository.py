@@ -102,6 +102,7 @@ def _question_payload(question: dict[str, Any], *, include_answer: bool = False)
 
 def _ensure_course(cur, course_name: str, sort_order: int) -> tuple[int, bool]:
     course_name = course_name.strip() or DEFAULT_GRAMMAR_COURSE_NAME
+    course_columns = _get_table_columns(cur, "grammar_courses")
     cur.execute(
         """
         SELECT *
@@ -119,10 +120,10 @@ def _ensure_course(cur, course_name: str, sort_order: int) -> tuple[int, bool]:
         if course_id:
             updates = []
             params: list[Any] = []
-            if _clean_int(_first_value(course, "sort_order", default=0)) != sort_order:
+            if "sort_order" in course_columns and _clean_int(_first_value(course, "sort_order", default=0)) != sort_order:
                 updates.append("sort_order = %s")
                 params.append(sort_order)
-            if not _clean_text(_first_value(course, "course_code", default="")):
+            if "course_code" in course_columns and not _clean_text(_first_value(course, "course_code", default="")):
                 updates.append("course_code = %s")
                 params.append(_slugify(course_name))
             if updates:
@@ -137,13 +138,22 @@ def _ensure_course(cur, course_name: str, sort_order: int) -> tuple[int, bool]:
                 )
         return course_id, False
 
+    insert_columns = ["course_name"]
+    insert_values = [course_name]
+    if "course_code" in course_columns:
+        insert_columns.append("course_code")
+        insert_values.append(_slugify(course_name))
+    if "sort_order" in course_columns:
+        insert_columns.append("sort_order")
+        insert_values.append(sort_order)
+
     cur.execute(
-        """
-        INSERT INTO grammar_courses (course_name, course_code, sort_order)
-        VALUES (%s, %s, %s)
+        f"""
+        INSERT INTO grammar_courses ({', '.join(insert_columns)})
+        VALUES ({', '.join(['%s'] * len(insert_columns))})
         RETURNING course_id
         """,
-        (course_name, _slugify(course_name), sort_order),
+        tuple(insert_values),
     )
     course_row = cur.fetchone()
     course_id = int(course_row[0]) if course_row else 0
@@ -434,11 +444,19 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
     conn = get_connection()
     cur = conn.cursor()
     try:
+        course_columns = _get_table_columns(cur, "grammar_courses")
+        lesson_columns = _get_table_columns(cur, "grammar_lessons")
         cur.execute(
             """
             SELECT *
             FROM grammar_courses
-            ORDER BY COALESCE(sort_order, 0), COALESCE(course_id, id)
+            """
+            + (
+                "ORDER BY COALESCE(sort_order, 0), COALESCE(course_id, id)"
+                if "sort_order" in course_columns
+                else "ORDER BY COALESCE(course_id, id)"
+            )
+            + """
             """
         )
         courses = _rows_as_dicts(cur)
@@ -447,7 +465,13 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
             """
             SELECT *
             FROM grammar_lessons
-            ORDER BY COALESCE(sort_order, 0), COALESCE(lesson_id, id)
+            """
+            + (
+                "ORDER BY COALESCE(sort_order, 0), COALESCE(lesson_id, id)"
+                if "sort_order" in lesson_columns
+                else "ORDER BY COALESCE(lesson_id, id)"
+            )
+            + """
             """
         )
         lessons = _rows_as_dicts(cur)
@@ -536,7 +560,15 @@ def get_grammar_lessons(user_id: int | None = None, course_name: str = DEFAULT_G
 
 
 def _fetch_grammar_lessons_map(cur) -> dict[int, dict[str, Any]]:
-    cur.execute("SELECT * FROM grammar_lessons ORDER BY COALESCE(sort_order, 0), COALESCE(lesson_id, id)")
+    lesson_columns = _get_table_columns(cur, "grammar_lessons")
+    cur.execute(
+        "SELECT * FROM grammar_lessons "
+        + (
+            "ORDER BY COALESCE(sort_order, 0), COALESCE(lesson_id, id)"
+            if "sort_order" in lesson_columns
+            else "ORDER BY COALESCE(lesson_id, id)"
+        )
+    )
     lessons = _rows_as_dicts(cur)
     return {
         int(_first_value(lesson, "lesson_id", "id", default=0) or 0): lesson
