@@ -470,15 +470,19 @@ def _get_module_resume(cur, module: str, user_id: int):
         }
 
     if module_key == "grammar":
+        grammar_attempt_columns = _get_table_columns(cur, "grammar_attempts")
+        grammar_timestamp_column = _first_matching_column(grammar_attempt_columns, ["created_at", "submitted_at", "attempted_at"])
+        grammar_attempt_id_column = _first_matching_column(grammar_attempt_columns, ["attempt_id", "id"])
+        order_clause_parts = []
+        if grammar_timestamp_column:
+            order_clause_parts.append(f"COALESCE({grammar_timestamp_column}, NOW()) DESC")
+        if grammar_attempt_id_column:
+            order_clause_parts.append(f"COALESCE({grammar_attempt_id_column}, 0) DESC")
+        order_clause = "ORDER BY " + ", ".join(order_clause_parts) if order_clause_parts else ""
         cur.execute(
-            """
-            SELECT lesson_id, question_id
-            FROM grammar_attempts
-            WHERE user_id = %s
-            ORDER BY COALESCE(created_at, submitted_at, attempted_at, NOW()) DESC,
-                     COALESCE(attempt_id, id) DESC
-            LIMIT 1
-            """,
+            "SELECT lesson_id, question_id FROM grammar_attempts WHERE user_id = %s "
+            + (order_clause + " " if order_clause else "")
+            + "LIMIT 1",
             (user_id,),
         )
         row = cur.fetchone()
