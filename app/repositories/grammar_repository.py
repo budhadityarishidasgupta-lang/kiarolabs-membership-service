@@ -284,6 +284,21 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int, course_id: int) -
     question_text = _clean_text(_first_value(row, "question_text", default=""))
     question_type = _clean_text(_first_value(row, "question_type", default="mcq")) or "mcq"
     question_columns = _get_table_columns(cur, "grammar_questions")
+    insert_fields = [
+        ("course_id", course_id),
+        ("lesson_id", lesson_id),
+        ("question_type", question_type),
+        ("question_text", question_text),
+        ("option_a", _clean_text(_first_value(row, "option_a", default=""))),
+        ("option_b", _clean_text(_first_value(row, "option_b", default=""))),
+        ("option_c", _clean_text(_first_value(row, "option_c", default=""))),
+        ("option_d", _clean_text(_first_value(row, "option_d", default=""))),
+        ("correct_option", _normalize_option_key(_first_value(row, "correct_option", default=""))),
+        ("explanation", _clean_text(_first_value(row, "explanation", default=""))),
+        ("difficulty", _difficulty_to_storage_value(cur, _first_value(row, "difficulty", default=""))),
+        ("skill_tag", _clean_text(_first_value(row, "skill_tag", default=""))),
+        ("source_ref", _clean_text(_first_value(row, "source_ref", default=""))),
+    ]
     cur.execute(
         """
         SELECT q.*
@@ -304,22 +319,7 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int, course_id: int) -
         if question_id:
             updates = []
             params: list[Any] = []
-            fields = {
-                "course_id": course_id,
-                "lesson_id": lesson_id,
-                "question_type": question_type,
-                "question_text": question_text,
-                "option_a": _clean_text(_first_value(row, "option_a", default="")),
-                "option_b": _clean_text(_first_value(row, "option_b", default="")),
-                "option_c": _clean_text(_first_value(row, "option_c", default="")),
-                "option_d": _clean_text(_first_value(row, "option_d", default="")),
-                "correct_option": _normalize_option_key(_first_value(row, "correct_option", default="")),
-                "explanation": _clean_text(_first_value(row, "explanation", default="")),
-                "difficulty": _difficulty_to_storage_value(cur, _first_value(row, "difficulty", default="")),
-                "skill_tag": _clean_text(_first_value(row, "skill_tag", default="")),
-                "source_ref": _clean_text(_first_value(row, "source_ref", default="")),
-            }
-            for column, new_value in fields.items():
+            for column, new_value in insert_fields:
                 if column not in question_columns:
                     continue
                 if _clean_text(_first_value(question, column, default="")) != _clean_text(new_value):
@@ -337,41 +337,18 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int, course_id: int) -
                 )
         return question_id, False
 
+    insert_columns = [column for column, _ in insert_fields if column in question_columns]
+    insert_values = [value for column, value in insert_fields if column in question_columns]
+    if not insert_columns:
+        raise ValueError("grammar_questions table has no writable columns")
+
     cur.execute(
-        """
-        INSERT INTO grammar_questions (
-            course_id,
-            lesson_id,
-            question_type,
-            question_text,
-            option_a,
-            option_b,
-            option_c,
-            option_d,
-            correct_option,
-            explanation,
-            difficulty,
-            skill_tag,
-            source_ref
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        f"""
+        INSERT INTO grammar_questions ({', '.join(insert_columns)})
+        VALUES ({', '.join(['%s'] * len(insert_columns))})
         RETURNING question_id
         """,
-        (
-            course_id,
-            lesson_id,
-            question_type,
-            question_text,
-            _clean_text(_first_value(row, "option_a", default="")),
-            _clean_text(_first_value(row, "option_b", default="")),
-            _clean_text(_first_value(row, "option_c", default="")),
-            _clean_text(_first_value(row, "option_d", default="")),
-            _normalize_option_key(_first_value(row, "correct_option", default="")),
-            _clean_text(_first_value(row, "explanation", default="")),
-            _difficulty_to_storage_value(cur, _first_value(row, "difficulty", default="")),
-            _clean_text(_first_value(row, "skill_tag", default="")),
-            _clean_text(_first_value(row, "source_ref", default="")),
-        ),
+        tuple(insert_values),
     )
     question_row = cur.fetchone()
     question_id = int(question_row[0]) if question_row else 0
