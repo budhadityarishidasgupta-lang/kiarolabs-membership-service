@@ -280,9 +280,10 @@ def _ensure_lesson(
     return lesson_id, True
 
 
-def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, bool]:
+def _ensure_question(cur, row: dict[str, Any], lesson_id: int, course_id: int) -> tuple[int, bool]:
     question_text = _clean_text(_first_value(row, "question_text", default=""))
     question_type = _clean_text(_first_value(row, "question_type", default="mcq")) or "mcq"
+    question_columns = _get_table_columns(cur, "grammar_questions")
     cur.execute(
         """
         SELECT q.*
@@ -304,6 +305,8 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, boo
             updates = []
             params: list[Any] = []
             fields = {
+                "course_id": course_id,
+                "lesson_id": lesson_id,
                 "question_type": question_type,
                 "question_text": question_text,
                 "option_a": _clean_text(_first_value(row, "option_a", default="")),
@@ -317,6 +320,8 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, boo
                 "source_ref": _clean_text(_first_value(row, "source_ref", default="")),
             }
             for column, new_value in fields.items():
+                if column not in question_columns:
+                    continue
                 if _clean_text(_first_value(question, column, default="")) != _clean_text(new_value):
                     updates.append(f"{column} = %s")
                     params.append(new_value)
@@ -335,6 +340,8 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, boo
     cur.execute(
         """
         INSERT INTO grammar_questions (
+            course_id,
+            lesson_id,
             question_type,
             question_text,
             option_a,
@@ -347,10 +354,12 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, boo
             skill_tag,
             source_ref
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING question_id
         """,
         (
+            course_id,
+            lesson_id,
             question_type,
             question_text,
             _clean_text(_first_value(row, "option_a", default="")),
@@ -446,7 +455,7 @@ def import_grammar_csv_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 lesson_name=lesson_name,
                 sort_order=sort_order,
             )
-            question_id, question_created = _ensure_question(cur, clean_row, lesson_id)
+            question_id, question_created = _ensure_question(cur, clean_row, lesson_id, course_id)
             lesson_item_created = _ensure_lesson_item(cur, lesson_id, question_id, sort_order)
 
             stats["rows_processed"] += 1
