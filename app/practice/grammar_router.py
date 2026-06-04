@@ -7,8 +7,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from app.auth import get_current_user, require_member_app_access, resolve_verified_learning_user_id
+from app.auth import get_current_user, resolve_verified_learning_user_id
 from app.database import get_connection
+from app.entitlements import require_member_app_access
 from app.practice.grammar_engine import (
     import_grammar_csv_for_admin,
     get_grammar_courses,
