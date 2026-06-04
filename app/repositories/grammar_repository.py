@@ -309,18 +309,30 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int, course_id: int) -
         ("skill_tag", _clean_text(_first_value(row, "skill_tag", default=""))),
         ("source_ref", _clean_text(_first_value(row, "source_ref", default=""))),
     ]
-    cur.execute(
-        """
-        SELECT q.*
-        FROM grammar_questions q
-        JOIN grammar_lesson_items li
-          ON li.question_id = q.question_id
-        WHERE li.lesson_id = %s
-          AND LOWER(COALESCE(q.question_text, '')) = LOWER(%s)
-        LIMIT 1
-        """,
-        (lesson_id, question_text),
-    )
+    if "course_id" in question_columns:
+        cur.execute(
+            """
+            SELECT *
+            FROM grammar_questions
+            WHERE course_id = %s
+              AND LOWER(COALESCE(question_text, '')) = LOWER(%s)
+            LIMIT 1
+            """,
+            (course_id, question_text),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT q.*
+            FROM grammar_questions q
+            JOIN grammar_lesson_items li
+              ON li.question_id = q.question_id
+            WHERE li.lesson_id = %s
+              AND LOWER(COALESCE(q.question_text, '')) = LOWER(%s)
+            LIMIT 1
+            """,
+            (lesson_id, question_text),
+        )
     found = cur.fetchone()
     if found:
         columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
@@ -667,14 +679,18 @@ def _fetch_question_stats(cur, user_id: int) -> dict[int, dict[str, Any]]:
 
 
 def _fetch_attempt_history(cur, user_id: int, lesson_id: int) -> list[dict[str, Any]]:
+    attempt_columns = _get_table_columns(cur, "grammar_attempts")
+    timestamp_column = _first_matching_column(attempt_columns, ["created_at", "submitted_at", "attempted_at"])
+    attempt_id_column = _first_matching_column(attempt_columns, ["attempt_id", "id"])
+    order_parts = []
+    if timestamp_column:
+        order_parts.append(f"COALESCE({timestamp_column}, NOW()) DESC")
+    if attempt_id_column:
+        order_parts.append(f"COALESCE({attempt_id_column}, 0) DESC")
+    order_clause = "ORDER BY " + ", ".join(order_parts) if order_parts else ""
     cur.execute(
-        """
-        SELECT *
-        FROM grammar_attempts
-        WHERE user_id = %s
-          AND lesson_id = %s
-        ORDER BY COALESCE(created_at, attempted_at, submitted_at, NOW()) DESC, COALESCE(attempt_id, id) DESC
-        """,
+        "SELECT * FROM grammar_attempts WHERE user_id = %s AND lesson_id = %s "
+        + (order_clause + " " if order_clause else ""),
         (user_id, lesson_id),
     )
     return _rows_as_dicts(cur)
@@ -1050,15 +1066,19 @@ def get_grammar_resume(user_id: int) -> dict[str, Any] | None:
     conn = get_connection()
     cur = conn.cursor()
     try:
+        attempt_columns = _get_table_columns(cur, "grammar_attempts")
+        timestamp_column = _first_matching_column(attempt_columns, ["created_at", "submitted_at", "attempted_at"])
+        attempt_id_column = _first_matching_column(attempt_columns, ["attempt_id", "id"])
+        order_parts = []
+        if timestamp_column:
+            order_parts.append(f"COALESCE({timestamp_column}, NOW()) DESC")
+        if attempt_id_column:
+            order_parts.append(f"COALESCE({attempt_id_column}, 0) DESC")
+        order_clause = "ORDER BY " + ", ".join(order_parts) if order_parts else ""
         cur.execute(
-            """
-            SELECT *
-            FROM grammar_attempts
-            WHERE user_id = %s
-            ORDER BY COALESCE(created_at, submitted_at, attempted_at, NOW()) DESC,
-                     COALESCE(attempt_id, id) DESC
-            LIMIT 1
-            """,
+            "SELECT * FROM grammar_attempts WHERE user_id = %s "
+            + (order_clause + " " if order_clause else "")
+            + "LIMIT 1",
             (user_id,),
         )
         row = cur.fetchone()
