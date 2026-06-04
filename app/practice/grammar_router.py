@@ -114,7 +114,11 @@ def grammar_submit(payload: dict, user=Depends(get_current_user)):
 def grammar_resume(user=Depends(get_current_user)):
     _require_grammar_access(user)
     user_id = _resolve_user_id(user)
-    return get_grammar_resume_for_user(user_id)
+    return get_grammar_resume_for_user(user_id) or {
+        "lesson_id": None,
+        "question_id": None,
+        "next_action": "start",
+    }
 
 
 @router.post("/upload")

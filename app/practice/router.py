@@ -487,7 +487,11 @@ def _get_module_resume(cur, module: str, user_id: int):
         )
         row = cur.fetchone()
         if not row:
-            return None
+            return {
+                "lesson_id": None,
+                "question_id": None,
+                "next_action": "start",
+            }
         return {
             "lesson_id": row[0],
             "question_id": row[1],
