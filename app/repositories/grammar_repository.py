@@ -21,6 +21,23 @@ def _get_table_columns(cur, table_name: str) -> set[str]:
     return {str(row[0]).strip().lower() for row in cur.fetchall() if row and row[0]}
 
 
+def _get_table_column_type(cur, table_name: str, column_name: str) -> str:
+    cur.execute(
+        """
+        SELECT LOWER(COALESCE(data_type, '')), LOWER(COALESCE(udt_name, ''))
+        FROM information_schema.columns
+        WHERE table_name = %s
+          AND column_name = %s
+        LIMIT 1
+        """,
+        (table_name, column_name),
+    )
+    row = cur.fetchone()
+    if not row:
+        return ""
+    return ":".join(str(part or "").strip().lower() for part in row if part is not None)
+
+
 def _rows_as_dicts(cur) -> list[dict[str, Any]]:
     columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
     return [dict(zip(columns, row)) for row in cur.fetchall() or []]
@@ -60,6 +77,47 @@ def _normalize_option_key(value: Any) -> str:
     return ""
 
 
+def _difficulty_to_storage_value(cur, value: Any) -> Any:
+    raw = _clean_text(value)
+    if not raw:
+        return 1
+
+    column_type = _get_table_column_type(cur, "grammar_questions", "difficulty")
+    is_numeric = any(token in column_type for token in ("int", "numeric", "decimal", "real", "double"))
+    if not is_numeric:
+        return raw
+
+    if raw.isdigit():
+        return int(raw)
+
+    lowered = raw.lower()
+    difficulty_map = {
+        "easy": 1,
+        "foundation": 1,
+        "beginner": 1,
+        "medium": 2,
+        "intermediate": 2,
+        "hard": 3,
+        "advanced": 3,
+    }
+    return difficulty_map.get(lowered, 1)
+
+
+def _difficulty_to_display_value(value: Any) -> str:
+    raw = _clean_text(value)
+    if not raw:
+        return ""
+
+    if raw.isdigit():
+        label_map = {
+            "1": "easy",
+            "2": "medium",
+            "3": "hard",
+        }
+        return label_map.get(raw, raw)
+    return raw
+
+
 def _normalize_selected_option(selected_option: Any, question: dict[str, Any]) -> str:
     key = _normalize_option_key(selected_option)
     if key:
@@ -90,7 +148,7 @@ def _question_payload(question: dict[str, Any], *, include_answer: bool = False)
             _first_value(question, "option_c", "c", default=""),
             _first_value(question, "option_d", "d", default=""),
         ],
-        "difficulty": _first_value(question, "difficulty", default=""),
+        "difficulty": _difficulty_to_display_value(_first_value(question, "difficulty", default="")),
         "skill_tag": _first_value(question, "skill_tag", default=""),
         "source_ref": _first_value(question, "source_ref", default=""),
         "explanation": _first_value(question, "explanation", default="") if include_answer else "",
@@ -254,7 +312,7 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, boo
                 "option_d": _clean_text(_first_value(row, "option_d", default="")),
                 "correct_option": _normalize_option_key(_first_value(row, "correct_option", default="")),
                 "explanation": _clean_text(_first_value(row, "explanation", default="")),
-                "difficulty": _clean_text(_first_value(row, "difficulty", default="")),
+                "difficulty": _difficulty_to_storage_value(cur, _first_value(row, "difficulty", default="")),
                 "skill_tag": _clean_text(_first_value(row, "skill_tag", default="")),
                 "source_ref": _clean_text(_first_value(row, "source_ref", default="")),
             }
@@ -301,7 +359,7 @@ def _ensure_question(cur, row: dict[str, Any], lesson_id: int) -> tuple[int, boo
             _clean_text(_first_value(row, "option_d", default="")),
             _normalize_option_key(_first_value(row, "correct_option", default="")),
             _clean_text(_first_value(row, "explanation", default="")),
-            _clean_text(_first_value(row, "difficulty", default="")),
+            _difficulty_to_storage_value(cur, _first_value(row, "difficulty", default="")),
             _clean_text(_first_value(row, "skill_tag", default="")),
             _clean_text(_first_value(row, "source_ref", default="")),
         ),
