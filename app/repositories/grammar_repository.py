@@ -38,6 +38,16 @@ def _get_table_column_type(cur, table_name: str, column_name: str) -> str:
     return ":".join(str(part or "").strip().lower() for part in row if part is not None)
 
 
+def _order_by_existing_columns(*, columns: set[str], preferred: list[str], alias: str | None = None) -> str:
+    selected = [column for column in preferred if column in columns]
+    if not selected:
+        return ""
+    prefix = f"{alias}." if alias else ""
+    if len(selected) == 1:
+        return f"ORDER BY COALESCE({prefix}{selected[0]}, 0)"
+    return "ORDER BY " + ", ".join(f"COALESCE({prefix}{column}, 0)" for column in selected)
+
+
 def _rows_as_dicts(cur) -> list[dict[str, Any]]:
     columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
     return [dict(zip(columns, row)) for row in cur.fetchall() or []]
@@ -490,33 +500,17 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
     try:
         course_columns = _get_table_columns(cur, "grammar_courses")
         lesson_columns = _get_table_columns(cur, "grammar_lessons")
+        course_order_by = _order_by_existing_columns(columns=course_columns, preferred=["sort_order", "course_id"])
         cur.execute(
-            """
-            SELECT *
-            FROM grammar_courses
-            """
-            + (
-                "ORDER BY COALESCE(sort_order, 0), COALESCE(course_id, id)"
-                if "sort_order" in course_columns
-                else "ORDER BY COALESCE(course_id, id)"
-            )
-            + """
-            """
+            "SELECT * FROM grammar_courses "
+            + (course_order_by or "")
         )
         courses = _rows_as_dicts(cur)
 
+        lesson_order_by = _order_by_existing_columns(columns=lesson_columns, preferred=["sort_order", "lesson_id"])
         cur.execute(
-            """
-            SELECT *
-            FROM grammar_lessons
-            """
-            + (
-                "ORDER BY COALESCE(sort_order, 0), COALESCE(lesson_id, id)"
-                if "sort_order" in lesson_columns
-                else "ORDER BY COALESCE(lesson_id, id)"
-            )
-            + """
-            """
+            "SELECT * FROM grammar_lessons "
+            + (lesson_order_by or "")
         )
         lessons = _rows_as_dicts(cur)
 
@@ -605,13 +599,9 @@ def get_grammar_lessons(user_id: int | None = None, course_name: str = DEFAULT_G
 
 def _fetch_grammar_lessons_map(cur) -> dict[int, dict[str, Any]]:
     lesson_columns = _get_table_columns(cur, "grammar_lessons")
+    lesson_order_by = _order_by_existing_columns(columns=lesson_columns, preferred=["sort_order", "lesson_id"])
     cur.execute(
-        "SELECT * FROM grammar_lessons "
-        + (
-            "ORDER BY COALESCE(sort_order, 0), COALESCE(lesson_id, id)"
-            if "sort_order" in lesson_columns
-            else "ORDER BY COALESCE(lesson_id, id)"
-        )
+        "SELECT * FROM grammar_lessons " + (lesson_order_by or "")
     )
     lessons = _rows_as_dicts(cur)
     return {
@@ -622,6 +612,8 @@ def _fetch_grammar_lessons_map(cur) -> dict[int, dict[str, Any]]:
 
 
 def _fetch_grammar_question_map(cur, lesson_id: int) -> list[dict[str, Any]]:
+    lesson_item_columns = _get_table_columns(cur, "grammar_lesson_items")
+    question_order_by = _order_by_existing_columns(columns=lesson_item_columns, preferred=["sort_order", "question_id"], alias="li")
     cur.execute(
         """
         SELECT q.*
@@ -629,8 +621,9 @@ def _fetch_grammar_question_map(cur, lesson_id: int) -> list[dict[str, Any]]:
         JOIN grammar_questions q
           ON q.question_id = li.question_id
         WHERE li.lesson_id = %s
-        ORDER BY COALESCE(li.sort_order, 0), COALESCE(li.id, li.lesson_item_id, li.question_id)
-        """,
+        """
+        + (question_order_by or "ORDER BY li.question_id")
+        ,
         (lesson_id,),
     )
     return _rows_as_dicts(cur)
