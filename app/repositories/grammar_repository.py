@@ -532,10 +532,27 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
             except Exception:
                 progress_rows = {}
 
+        valid_course_ids = {
+            int(_first_value(course, "course_id", "id", default=0) or 0)
+            for course in courses
+            if _first_value(course, "course_id", "id") is not None
+        }
+        primary_course_id = next(
+            (
+                int(_first_value(course, "course_id", "id", default=0) or 0)
+                for course in courses
+                if str(_first_value(course, "course_name", "title", "name", default="")).strip().lower()
+                == DEFAULT_GRAMMAR_COURSE_NAME.lower()
+            ),
+            int(_first_value(courses[0], "course_id", "id", default=0) or 0) if courses else 0,
+        )
+
         lesson_buckets: dict[int, list[dict[str, Any]]] = {}
         for lesson in lessons:
             course_id = _first_value(lesson, "course_id")
             bucket_id = int(course_id or 0)
+            if bucket_id not in valid_course_ids:
+                bucket_id = primary_course_id
             lesson_payload = _lesson_payload(lesson, progress_rows.get(int(_first_value(lesson, "lesson_id", "id", default=0) or 0), {}))
             lesson_buckets.setdefault(bucket_id, []).append(lesson_payload)
 
@@ -554,18 +571,6 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
                     ),
                 }
             ]
-
-        if 0 in lesson_buckets and lesson_buckets[0]:
-            primary_course_id = next(
-                (
-                    int(_first_value(course, "course_id", "id", default=0) or 0)
-                    for course in courses
-                    if str(_first_value(course, "course_name", "title", "name", default="")).strip().lower()
-                    == DEFAULT_GRAMMAR_COURSE_NAME.lower()
-                ),
-                int(_first_value(courses[0], "course_id", "id", default=0) or 0),
-            )
-            lesson_buckets.setdefault(primary_course_id, []).extend(lesson_buckets.pop(0))
 
         result = []
         for course in courses:

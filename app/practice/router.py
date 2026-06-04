@@ -469,6 +469,26 @@ def _get_module_resume(cur, module: str, user_id: int):
             "question_id": row[1],
         }
 
+    if module_key == "grammar":
+        cur.execute(
+            """
+            SELECT lesson_id, question_id
+            FROM grammar_attempts
+            WHERE user_id = %s
+            ORDER BY COALESCE(created_at, submitted_at, attempted_at, NOW()) DESC,
+                     COALESCE(attempt_id, id) DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "lesson_id": row[0],
+            "question_id": row[1],
+        }
+
     raise HTTPException(status_code=404, detail="Module not found")
 
 
@@ -2207,6 +2227,7 @@ def get_module_resume(module: str, user=Depends(get_current_user)):
         "math": "math",
         "maths": "math",
         "comprehension": "comprehension",
+        "grammar": "grammar",
     }
     required_app_code = module_access_map.get((module or "").strip().lower())
     if required_app_code:
