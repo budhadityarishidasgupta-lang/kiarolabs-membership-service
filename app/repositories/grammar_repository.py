@@ -535,10 +535,9 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
         lesson_buckets: dict[int, list[dict[str, Any]]] = {}
         for lesson in lessons:
             course_id = _first_value(lesson, "course_id")
-            if course_id is None:
-                continue
+            bucket_id = int(course_id or 0)
             lesson_payload = _lesson_payload(lesson, progress_rows.get(int(_first_value(lesson, "lesson_id", "id", default=0) or 0), {}))
-            lesson_buckets.setdefault(int(course_id), []).append(lesson_payload)
+            lesson_buckets.setdefault(bucket_id, []).append(lesson_payload)
 
         if not courses:
             # Fall back to a single inferred course wrapper when the database only has lessons.
@@ -555,6 +554,18 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
                     ),
                 }
             ]
+
+        if 0 in lesson_buckets and lesson_buckets[0]:
+            primary_course_id = next(
+                (
+                    int(_first_value(course, "course_id", "id", default=0) or 0)
+                    for course in courses
+                    if str(_first_value(course, "course_name", "title", "name", default="")).strip().lower()
+                    == DEFAULT_GRAMMAR_COURSE_NAME.lower()
+                ),
+                int(_first_value(courses[0], "course_id", "id", default=0) or 0),
+            )
+            lesson_buckets.setdefault(primary_course_id, []).extend(lesson_buckets.pop(0))
 
         result = []
         for course in courses:
