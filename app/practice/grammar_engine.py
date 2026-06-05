@@ -7,6 +7,7 @@ from app.repositories.grammar_repository import (
     DEFAULT_GRAMMAR_COURSE_NAME,
     import_grammar_csv_rows,
     get_grammar_lessons,
+    get_grammar_courses as _repo_get_grammar_courses,
     get_grammar_question,
     get_grammar_resume,
     submit_grammar_answer,
@@ -19,7 +20,7 @@ def _normalize_session_id(session_id: str | None) -> str:
 
 
 def get_grammar_courses(user_id: int | None = None):
-    return get_grammar_lessons(user_id=user_id, course_name=DEFAULT_GRAMMAR_COURSE_NAME)
+    return _repo_get_grammar_courses(user_id=user_id)
 
 
 def get_grammar_question_for_lesson(
