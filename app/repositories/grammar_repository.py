@@ -52,6 +52,10 @@ def _order_by_existing_columns(*, columns: set[str], preferred: list[str], alias
     return "ORDER BY " + ", ".join(f"COALESCE({prefix}{column}, 0)" for column in selected)
 
 
+def _first_matching_column(columns: set[str], candidates: list[str]) -> str | None:
+    return next((candidate for candidate in candidates if candidate in columns), None)
+
+
 def _rows_as_dicts(cur) -> list[dict[str, Any]]:
     columns = [str(column[0]).strip().lower() for column in (cur.description or [])]
     return [dict(zip(columns, row)) for row in cur.fetchall() or []]
