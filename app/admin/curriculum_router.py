@@ -1,7 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
+import io
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.admin.ingestion_router import require_admin
+from app.admin.repositories.math_practice_ingest_admin import (
+    build_blank_template_csv,
+    export_lesson_csv,
+    ingest_math_practice_csv,
+)
 from app.admin.repositories.math_admin_repository import (
     create_math_lesson,
     delete_math_lesson,
@@ -364,3 +371,52 @@ def patch_module_content_answer(
         raise HTTPException(status_code=404, detail="Item not found")
 
     return {"status": "ok", "data": data}
+
+
+# ---------------------------------------------------------------------------
+# MathSprint Admin — CSV export / template / upload
+# ---------------------------------------------------------------------------
+
+@router.get("/maths/lessons/{lesson_id}/export-csv")
+def export_maths_lesson_csv(lesson_id: int, _user=Depends(require_admin)):
+    """Download all questions for a lesson as a CSV file."""
+    try:
+        csv_bytes = export_lesson_csv(lesson_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=math-lesson-{lesson_id}.csv"},
+    )
+
+
+@router.get("/maths/template-csv")
+def download_maths_template_csv(_user=Depends(require_admin)):
+    """Download a blank MathSprint CSV template with one example row."""
+    csv_bytes = build_blank_template_csv()
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=math-practice-template.csv"},
+    )
+
+
+@router.post("/maths/upload-csv")
+async def upload_maths_practice_csv(
+    file: UploadFile = File(...),
+    course_id: int = 1,
+    _user=Depends(require_admin),
+):
+    """Upload a MathSprint practice CSV. Idempotent — safe to re-upload."""
+    filename = str(getattr(file, "filename", "") or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a CSV file")
+    content = await file.read()
+    try:
+        result = ingest_math_practice_csv(io.BytesIO(content), course_id=course_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok", "data": result}
