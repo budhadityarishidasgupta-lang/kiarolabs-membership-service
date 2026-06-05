@@ -60,6 +60,22 @@ def grammar_lessons(user=Depends(get_current_user)):
     return get_grammar_courses(user_id=user_id)
 
 
+@router.get("/schema-debug")
+def grammar_schema_debug(user=Depends(get_current_user)):
+    from app.database import get_connection
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        result = {}
+        for tbl in ["grammar_attempts", "grammar_lesson_progress", "grammar_question_stats", "grammar_lessons", "grammar_questions", "grammar_lesson_items", "grammar_courses"]:
+            cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position", (tbl,))
+            result[tbl] = [dict(column_name=r[0], data_type=r[1]) for r in cur.fetchall()]
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
+
 @router.get("/question")
 def grammar_question(
     lesson_id: int | None = None,
