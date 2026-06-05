@@ -210,7 +210,8 @@ def list_math_lessons():
                 COALESCE(display_name, lesson_name) AS display_name,
                 COALESCE(topic, 'General') AS topic,
                 COALESCE(difficulty, 'unspecified') AS difficulty,
-                COALESCE(is_active, TRUE) AS is_active
+                COALESCE(is_active, TRUE) AS is_active,
+                COALESCE(description, '') AS description
             FROM math_lessons
             WHERE {_math_lesson_visibility_sql()}
             ORDER BY id ASC
@@ -236,9 +237,9 @@ def list_math_lessons():
                     "difficulty": row[4],
                     "is_active": row[5],
                     "item_count": item_count,
+                    "description": row[6],
                 }
             )
-
         return lessons
     finally:
         cur.close()
@@ -463,6 +464,7 @@ def create_math_lesson(
     display_name: str | None = None,
     topic: str | None = None,
     difficulty: str | None = None,
+    description: str | None = None,
     is_active: bool = True,
 ):
     conn = get_connection()
@@ -490,8 +492,8 @@ def create_math_lesson(
 
         cur.execute(
             """
-            INSERT INTO math_lessons (lesson_code, lesson_name, display_name, topic, difficulty, is_active)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO math_lessons (lesson_code, lesson_name, display_name, topic, difficulty, is_active, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING
                 id,
                 lesson_code,
@@ -499,7 +501,8 @@ def create_math_lesson(
                 COALESCE(display_name, lesson_name),
                 COALESCE(topic, 'General'),
                 COALESCE(difficulty, 'unspecified'),
-                is_active
+                is_active,
+                COALESCE(description, '')
             """,
             (
                 lesson_code,
@@ -508,6 +511,7 @@ def create_math_lesson(
                 cleaned_topic,
                 cleaned_difficulty,
                 is_active,
+                (description or "").strip() or None,
             ),
         )
         row = cur.fetchone()
@@ -520,6 +524,7 @@ def create_math_lesson(
             "topic": row[4],
             "difficulty": row[5],
             "is_active": row[6],
+            "description": row[7],
             "item_count": 0,
         }
     except Exception:

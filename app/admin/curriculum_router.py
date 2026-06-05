@@ -56,6 +56,7 @@ class CreateLessonRequest(BaseModel):
     display_name: str | None = None
     topic: str | None = None
     difficulty: str | None = None
+    description: str | None = None
     is_active: bool = True
 
 
@@ -192,6 +193,7 @@ def create_module_lesson(module: str, payload: CreateLessonRequest, _user=Depend
             display_name=payload.display_name,
             topic=payload.topic,
             difficulty=payload.difficulty,
+            description=payload.description,
             is_active=payload.is_active,
         )
 
