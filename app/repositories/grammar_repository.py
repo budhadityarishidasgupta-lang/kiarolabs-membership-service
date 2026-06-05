@@ -815,140 +815,97 @@ def get_grammar_question(lesson_id: int, user_id: int, session_id: str | None = 
 
 
 def _upsert_question_stats(cur, user_id: int, question_id: int, correct: bool) -> None:
-    attempts_count = 1
-    correct_count = 1 if correct else 0
-    wrong_count = 0 if correct else 1
-    stats_columns = _get_table_columns(cur, "grammar_question_stats")
-    has_is_weak = "is_weak" in stats_columns
-    has_updated_at = "updated_at" in stats_columns
-
-    insert_cols = ["user_id", "question_id", "attempts_count", "correct_count", "wrong_count", "accuracy"]
-    insert_vals: list[Any] = [user_id, question_id, attempts_count, correct_count, wrong_count, 100.0 if correct else 0.0]
-    if has_is_weak:
-        insert_cols.append("is_weak")
-        insert_vals.append(not correct)
-    insert_cols.append("last_attempt_at")
-    if has_updated_at:
-        insert_cols.append("updated_at")
-
-    placeholders = ", ".join("%s" if c not in ("last_attempt_at", "updated_at") else "NOW()" for c in insert_cols)
-    insert_cols_sql = ", ".join(insert_cols)
-    # Remove NOW() columns from values list
-    insert_vals_clean = [v for c, v in zip(insert_cols, insert_vals) if c not in ("last_attempt_at", "updated_at")]
-
-    is_weak_update = """
-            is_weak = CASE
-                WHEN (grammar_question_stats.attempts_count + EXCLUDED.attempts_count) >= 2
-                 AND ((grammar_question_stats.correct_count + EXCLUDED.correct_count) * 100.0)
-                     / NULLIF(grammar_question_stats.attempts_count + EXCLUDED.attempts_count, 0) < 70
-                THEN TRUE
-                ELSE FALSE
-            END,""" if has_is_weak else ""
-    updated_at_update = "updated_at = NOW()," if has_updated_at else ""
-
+    # DB schema: grammar_question_stats(id, user_id, question_id, attempts_count, correct_count,
+    #   wrong_count, accuracy, last_attempt_at, last_correct_at, created_at, updated_at)
+    accuracy = 100.0 if correct else 0.0
     cur.execute(
-        f"""
-        INSERT INTO grammar_question_stats ({insert_cols_sql})
-        VALUES ({placeholders})
+        """
+        INSERT INTO grammar_question_stats
+            (user_id, question_id, attempts_count, correct_count, wrong_count, accuracy,
+             last_attempt_at, updated_at)
+        VALUES (%s, %s, 1, %s, %s, %s, NOW(), NOW())
         ON CONFLICT (user_id, question_id)
         DO UPDATE SET
-            attempts_count = grammar_question_stats.attempts_count + EXCLUDED.attempts_count,
-            correct_count = grammar_question_stats.correct_count + EXCLUDED.correct_count,
-            wrong_count = grammar_question_stats.wrong_count + EXCLUDED.wrong_count,
+            attempts_count = grammar_question_stats.attempts_count + 1,
+            correct_count  = grammar_question_stats.correct_count + EXCLUDED.correct_count,
+            wrong_count    = grammar_question_stats.wrong_count + EXCLUDED.wrong_count,
             accuracy = CASE
-                WHEN (grammar_question_stats.attempts_count + EXCLUDED.attempts_count) > 0 THEN
+                WHEN (grammar_question_stats.attempts_count + 1) > 0 THEN
                     ROUND(
                         ((grammar_question_stats.correct_count + EXCLUDED.correct_count) * 100.0)
-                        / (grammar_question_stats.attempts_count + EXCLUDED.attempts_count),
-                        2
-                    )
+                        / (grammar_question_stats.attempts_count + 1), 2)
                 ELSE 0
             END,
-            {is_weak_update}
-            last_attempt_at = NOW()
-            {(", " + updated_at_update.rstrip(",")) if has_updated_at else ""}
+            last_attempt_at = NOW(),
+            updated_at = NOW()
         """,
-        tuple(insert_vals_clean),
+        (user_id, question_id, 1 if correct else 0, 0 if correct else 1, accuracy),
     )
 
 
 def _upsert_lesson_progress(cur, user_id: int, lesson_id: int) -> dict[str, Any]:
+    # DB schema: grammar_lesson_progress(id, user_id, course_id, lesson_id, questions_attempted,
+    #   correct_count, wrong_count, accuracy, completed, last_attempt_at, completed_at,
+    #   created_at, updated_at)
     cur.execute(
         """
         SELECT
-            COUNT(*) AS attempts_count,
+            COUNT(DISTINCT question_id) AS questions_attempted,
             COALESCE(SUM(CASE WHEN correct THEN 1 ELSE 0 END), 0) AS correct_count,
             COALESCE(SUM(CASE WHEN correct THEN 0 ELSE 1 END), 0) AS wrong_count,
-            COUNT(DISTINCT question_id) AS attempted_questions
+            COUNT(*) AS total_attempts
         FROM grammar_attempts
-        WHERE user_id = %s
-          AND lesson_id = %s
+        WHERE user_id = %s AND lesson_id = %s
         """,
         (user_id, lesson_id),
     )
     row = cur.fetchone() or (0, 0, 0, 0)
-    attempts_count = int(row[0] or 0)
+    questions_attempted = int(row[0] or 0)
     correct_count = int(row[1] or 0)
     wrong_count = int(row[2] or 0)
-    attempted_questions = int(row[3] or 0)
+    total_attempts = int(row[3] or 0)
 
     cur.execute(
-        """
-        SELECT COUNT(*)
-        FROM grammar_lesson_items
-        WHERE lesson_id = %s
-        """,
+        "SELECT COUNT(*) FROM grammar_lesson_items WHERE lesson_id = %s",
         (lesson_id,),
     )
     total_questions = int((cur.fetchone() or (0,))[0] or 0)
-    accuracy = round((correct_count * 100.0 / attempts_count), 2) if attempts_count else 0.0
-    completed = bool(total_questions and attempted_questions >= total_questions)
+    accuracy = round((correct_count * 100.0 / total_attempts), 2) if total_attempts else 0.0
+    completed = bool(total_questions and questions_attempted >= total_questions)
 
-    # Introspect actual columns to avoid UndefinedColumn errors on partial schemas
-    progress_cols = _get_table_columns(cur, "grammar_lesson_progress")
-    OPTIONAL_COLS = {
-        "total_questions": total_questions,
-        "correct_count": correct_count,
-        "wrong_count": wrong_count,
-        "accuracy": accuracy,
-        "completed": completed,
-    }
-    REQUIRED_COLS = {"user_id": user_id, "lesson_id": lesson_id, "attempts_count": attempts_count}
-    insert_data: dict[str, Any] = {**REQUIRED_COLS}
-    for col, val in OPTIONAL_COLS.items():
-        if col in progress_cols:
-            insert_data[col] = val
-    has_updated_at = "updated_at" in progress_cols
-
-    col_names = list(insert_data.keys())
-    if has_updated_at:
-        col_names.append("updated_at")
-    placeholders = ", ".join("NOW()" if c == "updated_at" else "%s" for c in col_names)
-    vals = [insert_data[c] for c in col_names if c != "updated_at"]
-    update_parts = [
-        f"{c} = EXCLUDED.{c}" for c in col_names if c not in ("user_id", "lesson_id", "updated_at")
-    ]
-    if has_updated_at:
-        update_parts.append("updated_at = NOW()")
+    # Get course_id for this lesson
+    cur.execute("SELECT course_id FROM grammar_lessons WHERE lesson_id = %s", (lesson_id,))
+    lesson_row = cur.fetchone()
+    course_id = lesson_row[0] if lesson_row else None
 
     cur.execute(
-        f"""
-        INSERT INTO grammar_lesson_progress ({', '.join(col_names)})
-        VALUES ({placeholders})
+        """
+        INSERT INTO grammar_lesson_progress
+            (user_id, course_id, lesson_id, questions_attempted, correct_count, wrong_count,
+             accuracy, completed, last_attempt_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         ON CONFLICT (user_id, lesson_id)
-        DO UPDATE SET {', '.join(update_parts)}
+        DO UPDATE SET
+            questions_attempted = EXCLUDED.questions_attempted,
+            correct_count       = EXCLUDED.correct_count,
+            wrong_count         = EXCLUDED.wrong_count,
+            accuracy            = EXCLUDED.accuracy,
+            completed           = EXCLUDED.completed,
+            last_attempt_at     = NOW(),
+            updated_at          = NOW()
         """,
-        tuple(vals),
+        (user_id, course_id, lesson_id, questions_attempted, correct_count, wrong_count,
+         accuracy, completed),
     )
     return {
         "user_id": user_id,
         "lesson_id": lesson_id,
-        "total_questions": total_questions,
-        "attempts_count": attempts_count,
+        "questions_attempted": questions_attempted,
         "correct_count": correct_count,
         "wrong_count": wrong_count,
         "accuracy": accuracy,
         "completed": completed,
+        "progress_percent": round(questions_attempted * 100.0 / total_questions, 1) if total_questions else 0,
     }
 
 
@@ -963,26 +920,29 @@ def record_grammar_attempt(
     conn = get_connection()
     cur = conn.cursor()
     try:
-        attempt_cols = _get_table_columns(cur, "grammar_attempts")
-        _attempt_data: dict[str, Any] = {
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "question_id": question_id,
-            "selected_option": selected_option,
-            "correct": correct,
-        }
-        if "session_id" in attempt_cols:
-            _attempt_data["session_id"] = session_id
-        _attempt_col_names = list(_attempt_data.keys()) + ["created_at"]
-        _attempt_placeholders = ", ".join("NOW()" if c == "created_at" else "%s" for c in _attempt_col_names)
-        _attempt_vals = list(_attempt_data.values())
+        # DB schema: grammar_attempts(attempt_id, user_id, course_id, lesson_id, question_id,
+        #   selected_option, correct, time_taken, session_id uuid, contract_version,
+        #   created_at, submitted_at)
+        # Get course_id for this lesson
+        cur.execute("SELECT course_id FROM grammar_lessons WHERE lesson_id = %s", (lesson_id,))
+        _lesson_row = cur.fetchone()
+        _course_id = _lesson_row[0] if _lesson_row else None
+        import uuid as _uuid
+        _session_uuid = None
+        if session_id:
+            try:
+                _session_uuid = _uuid.UUID(str(session_id))
+            except (ValueError, AttributeError):
+                _session_uuid = None
         cur.execute(
-            f"""
-            INSERT INTO grammar_attempts ({', '.join(_attempt_col_names)})
-            VALUES ({_attempt_placeholders})
+            """
+            INSERT INTO grammar_attempts
+                (user_id, course_id, lesson_id, question_id, selected_option, correct,
+                 session_id, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
             RETURNING *
             """,
-            tuple(_attempt_vals),
+            (user_id, _course_id, lesson_id, question_id, selected_option, correct, _session_uuid),
         )
         attempt_row = cur.fetchone()
         _upsert_question_stats(cur, user_id, question_id, correct)
