@@ -927,13 +927,8 @@ def record_grammar_attempt(
         cur.execute("SELECT course_id FROM grammar_lessons WHERE lesson_id = %s", (lesson_id,))
         _lesson_row = cur.fetchone()
         _course_id = _lesson_row[0] if _lesson_row else None
-        import uuid as _uuid
-        _session_uuid = None
-        if session_id:
-            try:
-                _session_uuid = _uuid.UUID(str(session_id))
-            except (ValueError, AttributeError):
-                _session_uuid = None
+        # Pass session_id as plain string — psycopg2 handles casting to uuid column
+        _session_uuid = str(session_id) if session_id else None
         cur.execute(
             """
             INSERT INTO grammar_attempts
