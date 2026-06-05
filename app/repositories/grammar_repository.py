@@ -9,6 +9,10 @@ DEFAULT_GRAMMAR_COURSE_NAME = "GrammarSprint v1"
 REVIEW_COOLDOWN_WINDOW = 4
 
 
+def _first_matching_column(columns: set[str], candidates: list[str]) -> str | None:
+    return next((c for c in candidates if c in columns), None)
+
+
 def _get_table_columns(cur, table_name: str) -> set[str]:
     cur.execute(
         """
