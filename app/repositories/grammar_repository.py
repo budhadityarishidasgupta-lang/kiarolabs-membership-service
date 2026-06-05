@@ -818,20 +818,38 @@ def _upsert_question_stats(cur, user_id: int, question_id: int, correct: bool) -
     attempts_count = 1
     correct_count = 1 if correct else 0
     wrong_count = 0 if correct else 1
+    stats_columns = _get_table_columns(cur, "grammar_question_stats")
+    has_is_weak = "is_weak" in stats_columns
+    has_updated_at = "updated_at" in stats_columns
+
+    insert_cols = ["user_id", "question_id", "attempts_count", "correct_count", "wrong_count", "accuracy"]
+    insert_vals: list[Any] = [user_id, question_id, attempts_count, correct_count, wrong_count, 100.0 if correct else 0.0]
+    if has_is_weak:
+        insert_cols.append("is_weak")
+        insert_vals.append(not correct)
+    insert_cols.append("last_attempt_at")
+    if has_updated_at:
+        insert_cols.append("updated_at")
+
+    placeholders = ", ".join("%s" if c not in ("last_attempt_at", "updated_at") else "NOW()" for c in insert_cols)
+    insert_cols_sql = ", ".join(insert_cols)
+    # Remove NOW() columns from values list
+    insert_vals_clean = [v for c, v in zip(insert_cols, insert_vals) if c not in ("last_attempt_at", "updated_at")]
+
+    is_weak_update = """
+            is_weak = CASE
+                WHEN (grammar_question_stats.attempts_count + EXCLUDED.attempts_count) >= 2
+                 AND ((grammar_question_stats.correct_count + EXCLUDED.correct_count) * 100.0)
+                     / NULLIF(grammar_question_stats.attempts_count + EXCLUDED.attempts_count, 0) < 70
+                THEN TRUE
+                ELSE FALSE
+            END,""" if has_is_weak else ""
+    updated_at_update = "updated_at = NOW()," if has_updated_at else ""
+
     cur.execute(
-        """
-        INSERT INTO grammar_question_stats (
-            user_id,
-            question_id,
-            attempts_count,
-            correct_count,
-            wrong_count,
-            accuracy,
-            is_weak,
-            last_attempt_at,
-            updated_at
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        f"""
+        INSERT INTO grammar_question_stats ({insert_cols_sql})
+        VALUES ({placeholders})
         ON CONFLICT (user_id, question_id)
         DO UPDATE SET
             attempts_count = grammar_question_stats.attempts_count + EXCLUDED.attempts_count,
@@ -846,25 +864,11 @@ def _upsert_question_stats(cur, user_id: int, question_id: int, correct: bool) -
                     )
                 ELSE 0
             END,
-            is_weak = CASE
-                WHEN (grammar_question_stats.attempts_count + EXCLUDED.attempts_count) >= 2
-                 AND ((grammar_question_stats.correct_count + EXCLUDED.correct_count) * 100.0)
-                     / NULLIF(grammar_question_stats.attempts_count + EXCLUDED.attempts_count, 0) < 70
-                THEN TRUE
-                ELSE FALSE
-            END,
-            last_attempt_at = NOW(),
-            updated_at = NOW()
+            {is_weak_update}
+            last_attempt_at = NOW()
+            {(", " + updated_at_update.rstrip(",")) if has_updated_at else ""}
         """,
-        (
-            user_id,
-            question_id,
-            attempts_count,
-            correct_count,
-            wrong_count,
-            100.0 if correct else 0.0,
-            not correct,
-        ),
+        tuple(insert_vals_clean),
     )
 
 
