@@ -904,55 +904,43 @@ def _upsert_lesson_progress(cur, user_id: int, lesson_id: int) -> dict[str, Any]
     accuracy = round((correct_count * 100.0 / attempts_count), 2) if attempts_count else 0.0
     completed = bool(total_questions and attempted_questions >= total_questions)
 
+    # Introspect actual columns to avoid UndefinedColumn errors on partial schemas
+    progress_cols = _get_table_columns(cur, "grammar_lesson_progress")
+    OPTIONAL_COLS = {
+        "total_questions": total_questions,
+        "correct_count": correct_count,
+        "wrong_count": wrong_count,
+        "accuracy": accuracy,
+        "completed": completed,
+    }
+    REQUIRED_COLS = {"user_id": user_id, "lesson_id": lesson_id, "attempts_count": attempts_count}
+    insert_data: dict[str, Any] = {**REQUIRED_COLS}
+    for col, val in OPTIONAL_COLS.items():
+        if col in progress_cols:
+            insert_data[col] = val
+    has_updated_at = "updated_at" in progress_cols
+
+    col_names = list(insert_data.keys())
+    if has_updated_at:
+        col_names.append("updated_at")
+    placeholders = ", ".join("NOW()" if c == "updated_at" else "%s" for c in col_names)
+    vals = [insert_data[c] for c in col_names if c != "updated_at"]
+    update_parts = [
+        f"{c} = EXCLUDED.{c}" for c in col_names if c not in ("user_id", "lesson_id", "updated_at")
+    ]
+    if has_updated_at:
+        update_parts.append("updated_at = NOW()")
+
     cur.execute(
-        """
-        INSERT INTO grammar_lesson_progress (
-            user_id,
-            lesson_id,
-            total_questions,
-            attempts_count,
-            correct_count,
-            wrong_count,
-            accuracy,
-            completed,
-            updated_at
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        f"""
+        INSERT INTO grammar_lesson_progress ({', '.join(col_names)})
+        VALUES ({placeholders})
         ON CONFLICT (user_id, lesson_id)
-        DO UPDATE SET
-            total_questions = EXCLUDED.total_questions,
-            attempts_count = EXCLUDED.attempts_count,
-            correct_count = EXCLUDED.correct_count,
-            wrong_count = EXCLUDED.wrong_count,
-            accuracy = EXCLUDED.accuracy,
-            completed = EXCLUDED.completed,
-            updated_at = NOW()
-        RETURNING *
+        DO UPDATE SET {', '.join(update_parts)}
         """,
-        (
-            user_id,
-            lesson_id,
-            total_questions,
-            attempts_count,
-            correct_count,
-            wrong_count,
-            accuracy,
-            completed,
-        ),
+        tuple(vals),
     )
-    progress_row = cur.fetchone()
-    if isinstance(progress_row, tuple):
-        return {
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "total_questions": total_questions,
-            "attempts_count": attempts_count,
-            "correct_count": correct_count,
-            "wrong_count": wrong_count,
-            "accuracy": accuracy,
-            "completed": completed,
-        }
-    return progress_row or {
+    return {
         "user_id": user_id,
         "lesson_id": lesson_id,
         "total_questions": total_questions,
@@ -975,28 +963,26 @@ def record_grammar_attempt(
     conn = get_connection()
     cur = conn.cursor()
     try:
+        attempt_cols = _get_table_columns(cur, "grammar_attempts")
+        _attempt_data: dict[str, Any] = {
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "question_id": question_id,
+            "selected_option": selected_option,
+            "correct": correct,
+        }
+        if "session_id" in attempt_cols:
+            _attempt_data["session_id"] = session_id
+        _attempt_col_names = list(_attempt_data.keys()) + ["created_at"]
+        _attempt_placeholders = ", ".join("NOW()" if c == "created_at" else "%s" for c in _attempt_col_names)
+        _attempt_vals = list(_attempt_data.values())
         cur.execute(
-            """
-            INSERT INTO grammar_attempts (
-                user_id,
-                lesson_id,
-                question_id,
-                selected_option,
-                correct,
-                session_id,
-                created_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            f"""
+            INSERT INTO grammar_attempts ({', '.join(_attempt_col_names)})
+            VALUES ({_attempt_placeholders})
             RETURNING *
             """,
-            (
-                user_id,
-                lesson_id,
-                question_id,
-                selected_option,
-                correct,
-                session_id,
-            ),
+            tuple(_attempt_vals),
         )
         attempt_row = cur.fetchone()
         _upsert_question_stats(cur, user_id, question_id, correct)
