@@ -78,6 +78,7 @@ def grammar_question(
     )
     if not result:
         raise HTTPException(status_code=404, detail="Question not found")
+    logger.warning("GRAMMAR_Q_DEBUG lesson_id=%s keys=%s options=%s", lesson_id, list(result.keys()), result.get("options"))
     return result
 
 
