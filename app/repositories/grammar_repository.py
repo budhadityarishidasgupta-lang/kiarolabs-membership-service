@@ -787,6 +787,8 @@ def get_grammar_question(lesson_id: int, user_id: int, session_id: str | None = 
             review_reason = "weak_question"
 
         payload = _question_payload(selected_question, include_answer=False)
+        if not payload.get("lesson_id"):
+            payload["lesson_id"] = lesson_id
         payload.update(
             {
                 "lesson_name": _first_value(lesson, "lesson_name", "title", "name", default=""),
