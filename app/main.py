@@ -1850,6 +1850,8 @@ def _resolve_gumroad_app_code(identifiers: set[str], product_name: str = "") -> 
         return "math"
     if normalized_name == "comprehensionsprint":
         return "comprehension"
+    if normalized_name in {"grammarsprint", "grammarsprintmodule", "grammarsprintaccess"}:
+        return "grammar"
 
     return None
 

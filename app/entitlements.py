@@ -13,6 +13,7 @@ ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE = {
     "gxvtls": "spelling",
     "sddokb": "general",
     "gsm": "grammar",
+    "cixrf": "grammar",
     "gckvb": "comprehension",
 }
 
