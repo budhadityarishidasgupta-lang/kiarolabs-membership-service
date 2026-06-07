@@ -8,7 +8,19 @@ from typing import BinaryIO, Dict
 
 import pandas as pd
 
+import json
 from app.database import get_connection
+
+
+def _parse_geometry_schema(raw: str):
+    """Parse geometry_schema CSV cell (JSON string or empty) into a Python dict or None."""
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
 
 REQUIRED_COLUMNS = [
     "question_id",
@@ -21,12 +33,13 @@ REQUIRED_COLUMNS = [
     "option_d",
     "correct_option",
 ]
-OPTIONAL_COLUMNS = ["option_e", "explanation", "hint"]
+OPTIONAL_COLUMNS = ["option_e", "explanation", "hint", "geometry_schema"]
 
 TEMPLATE_COLUMNS = [
     "question_id", "topic", "difficulty", "stem",
     "option_a", "option_b", "option_c", "option_d",
     "correct_option", "option_e", "explanation", "hint",
+    "geometry_schema",
 ]
 
 TEMPLATE_EXAMPLE = {
@@ -42,6 +55,7 @@ TEMPLATE_EXAMPLE = {
     "option_e": "",
     "explanation": "1/2 = 2/4, so 2/4 + 1/4 = 3/4.",
     "hint": "Convert to same denominator first.",
+    "geometry_schema": "",
 }
 
 
@@ -77,7 +91,8 @@ def export_lesson_csv(lesson_id: int) -> bytes:
                 COALESCE(q.option_e, '') AS option_e,
                 q.correct_option,
                 COALESCE(q.explanation, '') AS explanation,
-                COALESCE(q.hint, '') AS hint
+                COALESCE(q.hint, '') AS hint,
+                COALESCE(q.geometry_schema::text, '') AS geometry_schema
             FROM math_questions q
             JOIN math_lesson_questions mlq ON mlq.question_id = q.id
             WHERE mlq.lesson_id = %s
@@ -94,6 +109,7 @@ def export_lesson_csv(lesson_id: int) -> bytes:
         "question_id", "topic", "difficulty", "stem",
         "option_a", "option_b", "option_c", "option_d",
         "option_e", "correct_option", "explanation", "hint",
+        "geometry_schema",
     ]
     df = pd.DataFrame(rows, columns=cols)
     buf = io.BytesIO()
@@ -162,9 +178,9 @@ def ingest_math_practice_csv(file_obj: BinaryIO, *, course_id: int = 1) -> Dict[
                 """
                 INSERT INTO math_questions (
                     question_id, stem, option_a, option_b, option_c, option_d, option_e,
-                    correct_option, topic, difficulty, explanation, hint
+                    correct_option, topic, difficulty, explanation, hint, geometry_schema
                 )
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (question_id)
                 DO UPDATE SET
                     stem = EXCLUDED.stem,
@@ -177,7 +193,8 @@ def ingest_math_practice_csv(file_obj: BinaryIO, *, course_id: int = 1) -> Dict[
                     topic = EXCLUDED.topic,
                     difficulty = EXCLUDED.difficulty,
                     explanation = EXCLUDED.explanation,
-                    hint = EXCLUDED.hint
+                    hint = EXCLUDED.hint,
+                    geometry_schema = EXCLUDED.geometry_schema
                 RETURNING id;
                 """,
                 (
@@ -186,6 +203,7 @@ def ingest_math_practice_csv(file_obj: BinaryIO, *, course_id: int = 1) -> Dict[
                     row.get("option_e", ""), correct,
                     row["topic"], row["difficulty"],
                     row.get("explanation", ""), row.get("hint", ""),
+                    _parse_geometry_schema(row.get("geometry_schema", "")),
                 ),
             )
             questions_upserted += 1

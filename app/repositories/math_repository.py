@@ -68,6 +68,7 @@ def _map_question_rows(rows) -> list[dict]:
             "accuracy": float(row[10] or 0),
             "last_seen_at": row[11],
             "is_weak": bool(row[12]),
+            "geometry_schema": row[13],
         }
         for row in rows
     ]
@@ -117,7 +118,8 @@ def _fetch_questions_for_filter(cur, user_id: int, where_sql: str, params: tuple
             COALESCE(s.times_wrong, 0) AS times_wrong,
             COALESCE(s.accuracy, 0) AS accuracy,
             s.last_seen_at,
-            COALESCE(s.is_weak, FALSE) AS is_weak
+            COALESCE(s.is_weak, FALSE) AS is_weak,
+            q.geometry_schema
         FROM math_questions q
         LEFT JOIN math_question_stats s
             ON s.question_id = q.id
@@ -365,7 +367,8 @@ def get_math_question_record(question_id: int):
                 option_e,
                 topic,
                 difficulty,
-                correct_option
+                correct_option,
+                geometry_schema
             FROM math_questions
             WHERE id = %s
             LIMIT 1
@@ -386,6 +389,7 @@ def get_math_question_record(question_id: int):
             "topic": row[7],
             "difficulty": row[8],
             "correct_option": row[9],
+            "geometry_schema": row[10],
         }
     finally:
         cur.close()

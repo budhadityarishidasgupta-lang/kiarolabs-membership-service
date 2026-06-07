@@ -83,6 +83,7 @@ def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
         "correct_option": item["correct_option"],
         "question_position": (item.get("_attempt_count") or 0) + 1,
         "lesson_item_count": int(item.get("_lesson_item_count") or 0),
+        "geometry_schema": item.get("geometry_schema"),
     }
     return _add_review_metadata(payload, review_reason)
 
