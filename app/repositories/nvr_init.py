@@ -54,6 +54,17 @@ def init_nvr_tables():
                 position    INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (lesson_id, question_id)
             );
+
+            CREATE TABLE IF NOT EXISTS nvr_attempts (
+                id              SERIAL PRIMARY KEY,
+                user_id         INTEGER NOT NULL,
+                lesson_id       INTEGER,
+                question_id     TEXT NOT NULL,
+                selected_option CHAR(1),
+                correct_option  CHAR(1),
+                is_correct      BOOLEAN,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
             """
         )
         conn.commit()

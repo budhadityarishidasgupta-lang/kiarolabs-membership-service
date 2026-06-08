@@ -26,6 +26,11 @@ from app.practice.math_engine import (
     get_math_question,
     submit_math_answer
 )
+from app.repositories.nvr_repository import (
+    get_nvr_lessons,
+    get_nvr_question,
+    submit_nvr_answer,
+)
 
 from app.practice.math_test_engine import (
     check_mock_access,
@@ -678,8 +683,46 @@ def math_submit(payload: dict, user=Depends(get_current_user)):
     if result.get("error"):
         logger.warning("Practice math submit rejected: %s", result["error"])
         raise HTTPException(status_code=400, detail=result["error"])
-
     return result
+
+
+# ─── NVR Sprint ───────────────────────────────────────────────────────────────
+
+@router.get("/nvr/lessons")
+def nvr_lessons_endpoint(user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "nvr")
+    return get_nvr_lessons()
+
+
+@router.get("/nvr/question")
+def nvr_question_endpoint(
+    lesson_id: Optional[int] = None,
+    user=Depends(get_current_user),
+):
+    _enforce_full_module_access(user, "nvr")
+    if lesson_id is None:
+        _missing_param("lesson_id")
+    result = get_nvr_question(lesson_id=lesson_id)
+    if not result:
+        _raise_not_found("Question not found")
+    return result
+
+
+@router.post("/nvr/submit")
+def nvr_submit_endpoint(payload: dict, user=Depends(get_current_user)):
+    _enforce_full_module_access(user, "nvr")
+    user_id = _require_user_id(user)
+    lesson_id = _require_payload_param(payload, "lesson_id")
+    question_id = _require_payload_param(payload, "question_id")
+    selected_option = _require_payload_param(payload, "selected_option")
+    correct_option = payload.get("correct_option", "")
+    return submit_nvr_answer(
+        user_id=int(user_id),
+        lesson_id=int(lesson_id),
+        question_id=str(question_id),
+        selected=str(selected_option),
+        correct=str(correct_option),
+    )
 
 
 @router.post("/math/retry-incorrect")
