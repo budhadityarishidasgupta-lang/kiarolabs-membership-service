@@ -4,20 +4,22 @@ Ported from english-spelling-trainer for use in kiarolabs-membership-service.
 No schema changes. Idempotent upserts only.
 """
 import io
+import json
 from typing import BinaryIO, Dict
 
 import pandas as pd
+import psycopg2.extras
 
-import json
 from app.database import get_connection
 
 
 def _parse_geometry_schema(raw: str):
-    """Parse geometry_schema CSV cell (JSON string or empty) into a Python dict or None."""
+    """Parse geometry_schema CSV cell into psycopg2.extras.Json or None."""
     if not raw or not str(raw).strip():
         return None
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        return psycopg2.extras.Json(parsed)
     except (json.JSONDecodeError, TypeError):
         return None
 

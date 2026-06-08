@@ -9,6 +9,7 @@ import re
 from typing import BinaryIO, Dict
 
 import pandas as pd
+import psycopg2.extras
 
 from app.database import get_connection
 
@@ -51,10 +52,12 @@ TEMPLATE_EXAMPLE = {
 
 
 def _parse_geometry_schema(raw: str):
+    """Parse geometry_schema CSV cell into psycopg2.extras.Json or None."""
     if not raw or not str(raw).strip():
         return None
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        return psycopg2.extras.Json(parsed)
     except (json.JSONDecodeError, TypeError):
         return None
 
