@@ -1,5 +1,6 @@
 import io
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from typing import Optional
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -503,15 +504,19 @@ def download_nvr_template_csv(_user=Depends(require_admin)):
 @router.post("/nvr/upload-csv")
 async def upload_nvr_practice_csv(
     file: UploadFile = File(...),
+    lesson_id: Optional[int] = Form(None),
     _user=Depends(require_admin),
 ):
-    """Upload an NVRSprint practice CSV. Idempotent — safe to re-upload."""
+    """Upload an NVRSprint practice CSV. Idempotent — safe to re-upload.
+    Pass lesson_id (form field) to pin all questions to an existing lesson
+    instead of deriving lesson names from the CSV topic column.
+    """
     filename = str(getattr(file, "filename", "") or "").lower()
     if not filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file")
     content = await file.read()
     try:
-        result = ingest_nvr_practice_csv(io.BytesIO(content))
+        result = ingest_nvr_practice_csv(io.BytesIO(content), lesson_id=lesson_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

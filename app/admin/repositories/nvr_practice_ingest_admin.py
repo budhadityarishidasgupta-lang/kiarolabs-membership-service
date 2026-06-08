@@ -119,11 +119,12 @@ def export_lesson_csv(lesson_id: int) -> bytes:
     return buf.getvalue()
 
 
-def ingest_nvr_practice_csv(file_obj: BinaryIO) -> Dict[str, int]:
+def ingest_nvr_practice_csv(file_obj: BinaryIO, lesson_id: int | None = None) -> Dict[str, int]:
     """
     Idempotent ingestion for NVRSprint practice CSVs.
-    Upserts lessons (by topic->lesson_name), questions (by question_id),
-    and lesson<->question mappings. Never deletes.
+    If lesson_id is provided, all questions are pinned to that lesson and
+    no new lessons are created from the CSV topic column.
+    Otherwise, lessons are upserted by topic->lesson_name.
     """
     try:
         content = file_obj.read()
@@ -230,9 +231,10 @@ def ingest_nvr_practice_csv(file_obj: BinaryIO) -> Dict[str, int]:
             row = {c: str(r.get(c, "")) for c in df.columns}
             if not row["question_id"]:
                 continue
-            lesson_id = upsert_lesson(row["topic"])
+            # Use pinned lesson_id if provided, otherwise derive from topic
+            row_lesson_id = lesson_id if lesson_id is not None else upsert_lesson(row["topic"])
             question_id = upsert_question(row)
-            ensure_mapping(lesson_id, question_id, idx + 1)
+            ensure_mapping(row_lesson_id, question_id, idx + 1)
 
         conn.commit()
     except Exception:
