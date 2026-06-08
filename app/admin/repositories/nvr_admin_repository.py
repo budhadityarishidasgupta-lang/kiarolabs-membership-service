@@ -154,6 +154,13 @@ def create_nvr_lesson(
             """
             INSERT INTO nvr_lessons (lesson_code, lesson_name, display_name, topic, difficulty, is_active, description)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (lesson_name)
+            DO UPDATE SET
+                display_name = EXCLUDED.display_name,
+                topic        = EXCLUDED.topic,
+                difficulty   = EXCLUDED.difficulty,
+                is_active    = EXCLUDED.is_active,
+                description  = EXCLUDED.description
             RETURNING id, lesson_code, lesson_name,
                 COALESCE(display_name, lesson_name),
                 COALESCE(topic, 'General'),
