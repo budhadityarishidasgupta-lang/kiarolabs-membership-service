@@ -23,6 +23,7 @@ def get_nvr_lessons():
             LEFT JOIN nvr_lesson_questions lq ON lq.lesson_id = l.id
             WHERE l.is_active = TRUE
             GROUP BY l.id, l.lesson_name, l.display_name, l.topic, l.difficulty, l.description
+            HAVING COUNT(lq.question_id) > 0
             ORDER BY l.id;
             """
         )
