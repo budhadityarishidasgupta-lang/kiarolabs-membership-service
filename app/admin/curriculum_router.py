@@ -9,6 +9,19 @@ from app.admin.repositories.math_practice_ingest_admin import (
     export_lesson_csv,
     ingest_math_practice_csv,
 )
+from app.admin.repositories.nvr_practice_ingest_admin import (
+    build_blank_template_csv as nvr_build_blank_template_csv,
+    export_lesson_csv as nvr_export_lesson_csv,
+    ingest_nvr_practice_csv,
+)
+from app.admin.repositories.nvr_admin_repository import (
+    create_nvr_lesson,
+    delete_nvr_lesson,
+    get_nvr_overview,
+    list_nvr_lesson_question_answers,
+    list_nvr_lessons,
+    update_nvr_lesson,
+)
 from app.admin.repositories.math_admin_repository import (
     create_math_lesson,
     delete_math_lesson,
@@ -86,7 +99,7 @@ def _normalize_module(module: str) -> str:
     key = (module or "").strip().lower()
     if key == "math":
         return "maths"
-    if key in {"maths", "spelling", "words"}:
+    if key in {"maths", "spelling", "words", "nvr"}:
         return key
     raise HTTPException(status_code=404, detail="Module not found")
 
@@ -99,6 +112,7 @@ def get_admin_modules(_user=Depends(require_admin)):
             get_words_overview(),
             get_spelling_overview(),
             get_math_overview(),
+            get_nvr_overview(),
         ],
     }
 
@@ -111,6 +125,8 @@ def get_module_overview(module: str, _user=Depends(require_admin)):
         data = get_words_overview()
     elif normalized == "spelling":
         data = get_spelling_overview()
+    elif normalized == "nvr":
+        data = get_nvr_overview()
     else:
         data = get_math_overview()
 
@@ -160,6 +176,8 @@ def get_module_lessons(module: str, course_id: int | None = None, _user=Depends(
         data = list_words_lessons(course_id)
     elif normalized == "spelling":
         data = list_spelling_lessons(course_id)
+    elif normalized == "nvr":
+        data = list_nvr_lessons()
     else:
         data = list_math_lessons()
 
@@ -185,6 +203,15 @@ def create_module_lesson(module: str, payload: CreateLessonRequest, _user=Depend
             course_id=payload.course_id,
             lesson_name=lesson_name,
             display_name=payload.display_name,
+            is_active=payload.is_active,
+        )
+    elif normalized == "nvr":
+        data = create_nvr_lesson(
+            lesson_name=lesson_name,
+            display_name=payload.display_name,
+            topic=payload.topic,
+            difficulty=payload.difficulty,
+            description=payload.description,
             is_active=payload.is_active,
         )
     else:
@@ -223,6 +250,12 @@ def update_module_lesson(
             )
         elif normalized == "spelling":
             data = update_spelling_lesson(
+                lesson_id,
+                lesson_name=lesson_name,
+                display_name=display_name,
+            )
+        elif normalized == "nvr":
+            data = update_nvr_lesson(
                 lesson_id,
                 lesson_name=lesson_name,
                 display_name=display_name,
@@ -417,6 +450,68 @@ async def upload_maths_practice_csv(
     content = await file.read()
     try:
         result = ingest_math_practice_csv(io.BytesIO(content), course_id=course_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok", "data": result}
+
+
+# ---------------------------------------------------------------------------
+# NVRSprint Admin — lessons, CSV export / template / upload
+# ---------------------------------------------------------------------------
+
+@router.delete("/nvr/lessons/{lesson_id}")
+def delete_nvr_lesson_endpoint(lesson_id: int, _user=Depends(require_admin)):
+    data = delete_nvr_lesson(lesson_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return {"status": "ok", "data": data}
+
+
+@router.get("/nvr/lessons/{lesson_id}/questions")
+def get_nvr_lesson_questions(lesson_id: int, _user=Depends(require_admin)):
+    data = list_nvr_lesson_question_answers(lesson_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return {"status": "ok", "data": data}
+
+
+@router.get("/nvr/lessons/{lesson_id}/export-csv")
+def export_nvr_lesson_csv(lesson_id: int, _user=Depends(require_admin)):
+    try:
+        csv_bytes = nvr_export_lesson_csv(lesson_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=nvr-lesson-{lesson_id}.csv"},
+    )
+
+
+@router.get("/nvr/template-csv")
+def download_nvr_template_csv(_user=Depends(require_admin)):
+    csv_bytes = nvr_build_blank_template_csv()
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=nvr-practice-template.csv"},
+    )
+
+
+@router.post("/nvr/upload-csv")
+async def upload_nvr_practice_csv(
+    file: UploadFile = File(...),
+    _user=Depends(require_admin),
+):
+    """Upload an NVRSprint practice CSV. Idempotent — safe to re-upload."""
+    filename = str(getattr(file, "filename", "") or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a CSV file")
+    content = await file.read()
+    try:
+        result = ingest_nvr_practice_csv(io.BytesIO(content))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
