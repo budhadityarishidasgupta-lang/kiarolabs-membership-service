@@ -69,6 +69,8 @@ def _map_question_rows(rows) -> list[dict]:
             "last_seen_at": row[11],
             "is_weak": bool(row[12]),
             "geometry_schema": row[13],
+            "hint": row[14] if len(row) > 14 else "",
+            "explanation": row[15] if len(row) > 15 else "",
         }
         for row in rows
     ]
@@ -119,7 +121,9 @@ def _fetch_questions_for_filter(cur, user_id: int, where_sql: str, params: tuple
             COALESCE(s.accuracy, 0) AS accuracy,
             s.last_seen_at,
             COALESCE(s.is_weak, FALSE) AS is_weak,
-            q.geometry_schema
+            q.geometry_schema,
+            COALESCE(q.hint, '') AS hint,
+            COALESCE(q.explanation, '') AS explanation
         FROM math_questions q
         LEFT JOIN math_question_stats s
             ON s.question_id = q.id
@@ -368,7 +372,9 @@ def get_math_question_record(question_id: int):
                 topic,
                 difficulty,
                 correct_option,
-                geometry_schema
+                geometry_schema,
+                COALESCE(hint, '') AS hint,
+                COALESCE(explanation, '') AS explanation
             FROM math_questions
             WHERE id = %s
             LIMIT 1
@@ -390,6 +396,8 @@ def get_math_question_record(question_id: int):
             "difficulty": row[8],
             "correct_option": row[9],
             "geometry_schema": row[10],
+            "hint": row[11] if len(row) > 11 else "",
+            "explanation": row[12] if len(row) > 12 else "",
         }
     finally:
         cur.close()

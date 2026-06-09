@@ -84,6 +84,8 @@ def get_math_question(lesson_id, user_id=None, session_id: str | None = None):
         "question_position": (item.get("_attempt_count") or 0) + 1,
         "lesson_item_count": int(item.get("_lesson_item_count") or 0),
         "geometry_schema": item.get("geometry_schema"),
+        "hint": item.get("hint") or "",
+        "explanation": item.get("explanation") or "",
     }
     return _add_review_metadata(payload, review_reason)
 
@@ -136,6 +138,7 @@ def submit_math_answer(student_id, lesson_id, question_id, selected_option, sess
     return {
         "correct": is_correct,
         "correct_option": question["correct_option"],
+        "explanation": question.get("explanation") or "",
         "lesson_id": lesson_id,
         "question_id": question_id,
         "session_id": normalized_session_id,
