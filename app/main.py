@@ -1355,13 +1355,14 @@ def get_all_users(user=Depends(get_current_user)):
                 COALESCE(u.role, 'student') as role,
                 m.account_type,
                 m.created_at,
-                COALESCE(array_agg(ma.app_code) FILTER (WHERE ma.app_code IS NOT NULL), '{}') as apps
+                COALESCE(array_agg(ma.app_code) FILTER (WHERE ma.app_code IS NOT NULL), '{}') as apps,
+                u.name
             FROM kiaro_membership.members m
             LEFT JOIN users u
                 ON LOWER(u.email) = LOWER(m.email)
             LEFT JOIN kiaro_membership.member_apps ma
                 ON ma.member_id = m.id
-            GROUP BY m.id, u.user_id, m.email, u.role, m.account_type, m.created_at
+            GROUP BY m.id, u.user_id, m.email, u.role, m.account_type, m.created_at, u.name
             ORDER BY m.created_at DESC
             """
         )
@@ -1389,6 +1390,7 @@ def get_all_users(user=Depends(get_current_user)):
                     "account_type": r[4],
                     "created_at": str(r[5]),
                     "apps": apps,
+                    "name": r[7] or "",
                 }
             )
 
