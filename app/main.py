@@ -559,6 +559,29 @@ def _replace_member_apps(cur, member_id: int, normalized_apps: list[str]):
         )
 
 
+def _add_member_apps(cur, member_id: int, normalized_apps: list[str]):
+    for app_code in normalized_apps:
+        cur.execute(
+            """
+            INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (member_id, app_code),
+        )
+
+
+def _remove_member_apps(cur, member_id: int, normalized_apps: list[str]):
+    for app_code in normalized_apps:
+        cur.execute(
+            """
+            DELETE FROM kiaro_membership.member_apps
+            WHERE member_id = %s AND app_code = %s
+            """,
+            (member_id, app_code),
+        )
+
+
 # =========================
 # Health
 # =========================
@@ -1490,6 +1513,9 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
         raise HTTPException(status_code=400, detail="At least one user is required")
 
     normalized_apps = _normalize_admin_app_codes(payload.get("apps", []))
+    mode = str(payload.get("mode", "replace")).strip().lower()
+    if mode not in ("replace", "add", "remove"):
+        mode = "replace"
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1515,7 +1541,12 @@ def set_admin_user_apps_bulk(payload: dict = Body(...), user=Depends(get_current
             if member_id in seen_member_ids:
                 continue
 
-            _replace_member_apps(cur, member_id, normalized_apps)
+            if mode == "add":
+                _add_member_apps(cur, member_id, normalized_apps)
+            elif mode == "remove":
+                _remove_member_apps(cur, member_id, normalized_apps)
+            else:
+                _replace_member_apps(cur, member_id, normalized_apps)
             seen_member_ids.add(member_id)
             updated_users.append(
                 {
