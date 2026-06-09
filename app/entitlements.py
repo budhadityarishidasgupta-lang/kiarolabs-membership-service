@@ -7,7 +7,7 @@ from app.database import get_connection
 from app.product_catalog import get_current_printable_catalog, get_owned_product_codes_for_email
 
 
-ONLINE_PRACTICE_APP_CODES = {"math", "spelling", "general", "grammar", "comprehension"}
+ONLINE_PRACTICE_APP_CODES = {"math", "spelling", "general", "grammar", "comprehension", "nvr"}
 ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE = {
     "ztwxby": "math",
     "gxvtls": "spelling",
@@ -15,6 +15,7 @@ ACTIVE_ONLINE_PRACTICE_PERMALINK_APP_CODE = {
     "gsm": "grammar",
     "cixrf": "grammar",
     "gckvb": "comprehension",
+    "vykzat": "nvr",
 }
 
 ACTIVE_MATH_MOCK_PERMALINK_TEST_ID = {
