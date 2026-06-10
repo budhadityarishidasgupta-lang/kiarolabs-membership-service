@@ -803,6 +803,19 @@ async def login(request: Request):
         except Exception:
             member_id = None
 
+        # Track last login
+        try:
+            cur.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ"
+            )
+            cur.execute(
+                "UPDATE users SET last_login = NOW() WHERE LOWER(email) = LOWER(%s)",
+                (email,),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
         token = jwt.encode(
             {
                 "sub": member_email,
@@ -1418,6 +1431,65 @@ def get_all_users(user=Depends(get_current_user)):
             )
 
         return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/admin/user-activity")
+def get_user_activity(user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        # Ensure last_login column exists
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ")
+        conn.commit()
+        cur.execute(
+            """
+            SELECT
+                u.user_id,
+                u.name,
+                LOWER(u.email) as email,
+                u.last_login,
+                u.created_at,
+                -- MathSprint attempts
+                (SELECT COUNT(*) FROM math_attempts ma WHERE ma.student_id = u.user_id) as math_attempts,
+                -- WordSprint attempts
+                (SELECT COUNT(*) FROM words_attempts wa WHERE wa.user_id = u.user_id) as words_attempts,
+                -- NVR attempts
+                (SELECT COUNT(*) FROM nvr_attempts na WHERE na.user_id = u.user_id) as nvr_attempts,
+                -- VR printable submissions
+                (SELECT COUNT(DISTINCT paper_code) FROM vr_attempts va WHERE va.user_id = u.user_id) as vr_papers,
+                -- English/Grammar printable submissions
+                (SELECT COUNT(DISTINCT paper_code) FROM english_attempts ea WHERE ea.user_id = u.user_id) as english_papers,
+                -- Maths printable submissions
+                (SELECT COUNT(*) FROM math_submission_attempts msa WHERE msa.user_id = u.user_id) as math_papers
+            FROM users u
+            WHERE u.role != 'admin'
+            ORDER BY u.last_login DESC NULLS LAST
+            """
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "user_id": r[0],
+                "name": r[1] or "",
+                "email": r[2],
+                "last_login": str(r[3]) if r[3] else None,
+                "registered_at": str(r[4]) if r[4] else None,
+                "usage": {
+                    "math_sprint": int(r[5] or 0),
+                    "word_sprint": int(r[6] or 0),
+                    "nvr_sprint": int(r[7] or 0),
+                    "vr_papers": int(r[8] or 0),
+                    "english_papers": int(r[9] or 0),
+                    "math_papers": int(r[10] or 0),
+                },
+            }
+            for r in rows
+        ]
     finally:
         cur.close()
         conn.close()
