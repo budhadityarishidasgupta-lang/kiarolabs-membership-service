@@ -615,6 +615,57 @@ def health_check():
 # =========================
 # Auth: Register
 # =========================
+def _replay_pending_gumroad_grants(conn, cur, email: str) -> None:
+    """Grant any app/product access for Gumroad purchases that arrived before the user registered."""
+    try:
+        cur.execute(
+            """
+            SELECT id, product_name, event_type
+            FROM math_gumroad_events
+            WHERE LOWER(email) = LOWER(%s)
+              AND COALESCE(processed, FALSE) = FALSE
+            """,
+            (email,),
+        )
+        rows = cur.fetchall() or []
+        if not rows:
+            return
+        cur.execute(
+            "SELECT id FROM kiaro_membership.members WHERE LOWER(email) = LOWER(%s) ORDER BY id DESC LIMIT 1",
+            (email,),
+        )
+        member_row = cur.fetchone()
+        if not member_row:
+            return
+        member_id = member_row[0]
+        for (event_id, product_name_raw, event_type) in rows:
+            if not _is_purchase_event(event_type or ""):
+                continue
+            # Extract permalink embedded as |permalink=<token>
+            permalink_match = re.search(r"\|permalink=([a-z0-9_-]+)", product_name_raw or "")
+            identifiers: set[str] = set()
+            if permalink_match:
+                identifiers.add(permalink_match.group(1))
+            app_code = _resolve_gumroad_app_code(identifiers, product_name=product_name_raw or "")
+            if app_code:
+                cur.execute(
+                    """
+                    INSERT INTO kiaro_membership.member_apps (member_id, app_code)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (member_id, app_code),
+                )
+                print(f"✅ REPLAY GRANT → {email} → {app_code} (event {event_id})")
+            cur.execute(
+                "UPDATE math_gumroad_events SET processed = TRUE WHERE id = %s",
+                (event_id,),
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ REPLAY GRANTS ERROR for {email}: {e}")
+
+
 @app.post("/register")
 def register(req: RegisterRequest):
     name = req.name
@@ -688,11 +739,14 @@ def register(req: RegisterRequest):
         conn.rollback()
 
     print(f"REGISTER SUCCESS: email={email}")
+    # Replay any Gumroad purchases that arrived before this user registered
+    try:
+        _replay_pending_gumroad_grants(conn, cur, email)
+    except Exception:
+        pass
     cur.close()
     conn.close()
-
     token, exp = create_access_token(email, "free")
-
     return {
         "access_token": token,
         "token_type": "bearer",
