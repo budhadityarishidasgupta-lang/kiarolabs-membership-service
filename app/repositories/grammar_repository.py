@@ -753,6 +753,7 @@ def _choose_next_grammar_question(questions: list[dict[str, Any]], stats_rows: d
 
 
 def get_grammar_question(lesson_id: int, user_id: int, session_id: str | None = None) -> dict[str, Any] | None:
+    from app.adaptive_difficulty import get_student_mastery_grammar, target_difficulty, filter_by_difficulty
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -765,6 +766,12 @@ def get_grammar_question(lesson_id: int, user_id: int, session_id: str | None = 
         questions = _fetch_grammar_question_map(cur, lesson_id)
         if not questions:
             return None
+
+        # Adaptive difficulty: filter by mastery
+        mastery = get_student_mastery_grammar(cur, user_id, lesson_id)
+        preferred = target_difficulty(mastery)
+        adaptive_questions = filter_by_difficulty(questions, preferred)
+        questions = adaptive_questions if adaptive_questions else questions
 
         stats_rows = _fetch_question_stats(cur, user_id)
         attempts = _fetch_attempt_history(cur, user_id, lesson_id)

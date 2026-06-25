@@ -1,4 +1,5 @@
 from datetime import datetime
+from app.adaptive_difficulty import get_student_mastery_math, target_difficulty, filter_by_difficulty
 import re
 
 from app.database import get_connection
@@ -308,6 +309,13 @@ def get_math_next_question(user_id: int, lesson_id_or_scope: int):
         items = _fetch_lesson_questions(cur, user_id, lesson_id_or_scope)
         if not items:
             return None
+
+        # Adaptive difficulty: filter pool by student mastery level
+        mastery = get_student_mastery_math(cur, user_id, lesson_id_or_scope)
+        preferred = target_difficulty(mastery)
+        adaptive_items = filter_by_difficulty(items, preferred)
+        # Use adaptive pool if it has items, otherwise fall back to full pool
+        items = adaptive_items if adaptive_items else items
 
         last_question_id = _get_latest_question_id(cur, user_id, lesson_id_or_scope)
         recent_question_ids = _get_recent_question_ids(cur, user_id, lesson_id_or_scope)

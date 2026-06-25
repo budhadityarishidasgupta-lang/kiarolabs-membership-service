@@ -702,7 +702,8 @@ def nvr_question_endpoint(
     _enforce_full_module_access(user, "nvr")
     if lesson_id is None:
         _missing_param("lesson_id")
-    result = get_nvr_question(lesson_id=lesson_id)
+    user_id = user.get("user_id")
+    result = get_nvr_question(lesson_id=lesson_id, user_id=user_id)
     if not result:
         _raise_not_found("Question not found")
     return result
