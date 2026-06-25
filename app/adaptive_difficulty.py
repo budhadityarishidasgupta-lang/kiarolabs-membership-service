@@ -164,3 +164,23 @@ def get_student_mastery_synonym(cur, user_id: int, lesson_id: int) -> str:
         except Exception:
             continue
     return "beginner"
+
+
+def get_synonym_mastery_difficulty(user_id: int, lesson_id: int) -> list[int] | None:
+    """
+    Returns a list of preferred difficulty integers (1=easy, 2=medium, 3=hard)
+    for the synonym engine based on student mastery.
+    Returns None if mastery cannot be determined (falls back to no filter).
+    """
+    from app.database import get_connection
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        mastery = get_student_mastery_synonym(cur, user_id, lesson_id)
+        mapping = {"beginner": [1, 2], "developing": [2, 3], "mastered": [3, 2]}
+        return mapping.get(mastery)
+    except Exception:
+        return None
+    finally:
+        cur.close()
+        conn.close()

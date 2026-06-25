@@ -440,76 +440,68 @@ def _get_next_progression_word_id(cur, user_id, lesson_id, latest_attempt_word_i
     return None, lesson_word_ids
 
 
-def _fetch_random_synonym_row(cur, excluded_word_ids=None, lesson_id=None):
+def _fetch_random_synonym_row(cur, excluded_word_ids=None, lesson_id=None, difficulty_levels=None):
+    """Fetch a random synonym word, optionally filtered by difficulty levels (list of ints 1/2/3)."""
     excluded_word_ids = [word_id for word_id in (excluded_word_ids or []) if word_id is not None]
+    diff_w = "AND w.difficulty = ANY(%s)" if difficulty_levels else ""
+    diff_b = "AND difficulty = ANY(%s)" if difficulty_levels else ""
+
+    def _run(sql, args):
+        cur.execute(sql, args)
+        return cur.fetchone()
 
     if lesson_id is not None and excluded_word_ids:
-        cur.execute(
-            """
-            SELECT w.word_id, w.headword, w.synonyms
-            FROM public.words w
-            JOIN public.lesson_words lw ON lw.word_id = w.word_id
-            WHERE lw.lesson_id = %s
-            AND w.word_id <> ALL(%s)
-            AND w.synonyms IS NOT NULL
-            AND TRIM(w.synonyms) <> ''
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (lesson_id, excluded_word_ids),
+        row = _run(
+            f"""SELECT w.word_id, w.headword, w.synonyms
+            FROM public.words w JOIN public.lesson_words lw ON lw.word_id = w.word_id
+            WHERE lw.lesson_id = %s AND w.word_id <> ALL(%s)
+            AND w.synonyms IS NOT NULL AND TRIM(w.synonyms) <> '' {diff_w}
+            ORDER BY RANDOM() LIMIT 1""",
+            (lesson_id, excluded_word_ids, *([difficulty_levels] if difficulty_levels else [])),
         )
-        row = cur.fetchone()
         if row:
             return row
 
     if lesson_id is not None:
-        cur.execute(
-            """
-            SELECT w.word_id, w.headword, w.synonyms
-            FROM public.words w
-            JOIN public.lesson_words lw ON lw.word_id = w.word_id
-            WHERE lw.lesson_id = %s
-            AND w.synonyms IS NOT NULL
-            AND TRIM(w.synonyms) <> ''
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (lesson_id,),
+        row = _run(
+            f"""SELECT w.word_id, w.headword, w.synonyms
+            FROM public.words w JOIN public.lesson_words lw ON lw.word_id = w.word_id
+            WHERE lw.lesson_id = %s AND w.synonyms IS NOT NULL AND TRIM(w.synonyms) <> '' {diff_w}
+            ORDER BY RANDOM() LIMIT 1""",
+            (lesson_id, *([difficulty_levels] if difficulty_levels else [])),
         )
-        row = cur.fetchone()
         if row:
             return row
-        # Never leak across lessons when a specific lesson context is requested.
+        # Fall back to any difficulty if filtered result is empty
+        if difficulty_levels:
+            row = _run(
+                """SELECT w.word_id, w.headword, w.synonyms
+                FROM public.words w JOIN public.lesson_words lw ON lw.word_id = w.word_id
+                WHERE lw.lesson_id = %s AND w.synonyms IS NOT NULL AND TRIM(w.synonyms) <> ''
+                ORDER BY RANDOM() LIMIT 1""",
+                (lesson_id,),
+            )
+            if row:
+                return row
         return None
 
     if excluded_word_ids:
-        cur.execute(
-            """
-            SELECT word_id, headword, synonyms
-            FROM public.words
-            WHERE word_id <> ALL(%s)
-              AND synonyms IS NOT NULL
-              AND TRIM(synonyms) <> ''
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (excluded_word_ids,),
+        row = _run(
+            f"""SELECT word_id, headword, synonyms FROM public.words
+            WHERE word_id <> ALL(%s) AND synonyms IS NOT NULL AND TRIM(synonyms) <> '' {diff_b}
+            ORDER BY RANDOM() LIMIT 1""",
+            (excluded_word_ids, *([difficulty_levels] if difficulty_levels else [])),
         )
-        row = cur.fetchone()
         if row:
             return row
 
-    cur.execute(
-        """
-        SELECT word_id, headword, synonyms
-        FROM public.words
-        WHERE synonyms IS NOT NULL
-          AND TRIM(synonyms) <> ''
-        ORDER BY RANDOM()
-        LIMIT 1
-        """
+    row = _run(
+        f"""SELECT word_id, headword, synonyms FROM public.words
+        WHERE synonyms IS NOT NULL AND TRIM(synonyms) <> '' {diff_b}
+        ORDER BY RANDOM() LIMIT 1""",
+        tuple([difficulty_levels] if difficulty_levels else []),
     )
-    return cur.fetchone()
+    return row
 
 
 def _fetch_synonym_row_by_word_id(cur, word_id, lesson_id=None):
@@ -1241,6 +1233,15 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
         lesson_word_ids = []
         lesson_item_count = 0
 
+        # Compute adaptive difficulty levels based on student mastery
+        difficulty_levels = None
+        if user_id:
+            try:
+                from app.adaptive_difficulty import get_synonym_mastery_difficulty
+                difficulty_levels = get_synonym_mastery_difficulty(user_id, lesson_id)
+            except Exception:
+                pass
+
         if user_id:
             attempt_count = _get_lesson_synonym_attempt_count(cur, user_id, lesson_id)
             recent_attempted_word_ids = _get_recent_lesson_synonym_attempt_word_ids(
@@ -1274,6 +1275,7 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
                 cur,
                 excluded_word_ids=recent_attempted_word_ids,
                 lesson_id=lesson_id,
+                difficulty_levels=difficulty_levels,
             )
         if (
             not row
@@ -1284,9 +1286,10 @@ def _get_lesson_synonym_question(lesson_id, user_id=None):
                 cur,
                 excluded_word_ids=[latest_attempt_word_id],
                 lesson_id=lesson_id,
+                difficulty_levels=difficulty_levels,
             )
         if not row:
-            row = _fetch_random_synonym_row(cur, lesson_id=lesson_id)
+            row = _fetch_random_synonym_row(cur, lesson_id=lesson_id, difficulty_levels=difficulty_levels)
         if not row:
             return {"error": "No synonym word found for lesson"}
 
