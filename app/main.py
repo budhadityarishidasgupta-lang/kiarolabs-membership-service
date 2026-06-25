@@ -1490,6 +1490,70 @@ def get_all_users(user=Depends(get_current_user)):
         conn.close()
 
 
+@app.get("/admin/student-mastery")
+def get_student_mastery_overview(user=Depends(get_current_user)):
+    """Returns per-student, per-lesson mastery levels and the difficulty band currently being served."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    conn = get_connection()
+    cur = conn.cursor()
+    results = []
+    def _mastery(att, acc):
+        att, acc = int(att or 0), float(acc or 0)
+        if att < 10: return att, acc, "beginner"
+        if acc >= 75: return att, acc, "mastered"
+        if acc >= 50: return att, acc, "developing"
+        return att, acc, "beginner"
+    diff_map = {"beginner": "easy", "developing": "medium", "mastered": "hard"}
+    try:
+        # MathSprint
+        cur.execute("""
+            SELECT u.user_id, u.name, LOWER(u.email),
+                   ml.id, COALESCE(ml.display_name, ml.lesson_name),
+                   COUNT(ma.id), COALESCE(AVG(CASE WHEN ma.is_correct THEN 100.0 ELSE 0.0 END),0)
+            FROM users u JOIN math_attempts ma ON ma.student_id=u.user_id
+            JOIN math_lessons ml ON ml.id=ma.lesson_id
+            WHERE u.role!='admin' GROUP BY u.user_id,u.name,u.email,ml.id,ml.lesson_name,ml.display_name
+            HAVING COUNT(ma.id)>=1 ORDER BY u.email,ml.id""")
+        for r in cur.fetchall():
+            att, acc, mastery = _mastery(r[5], r[6])
+            results.append({"user_id":r[0],"name":r[1] or "","email":r[2],"module":"MathSprint",
+                "lesson":r[4],"lesson_id":r[3],"attempts":att,"accuracy":round(acc,1),
+                "mastery":mastery,"serving_difficulty":diff_map[mastery]})
+        # NVRSprint
+        cur.execute("""
+            SELECT u.user_id, u.name, LOWER(u.email),
+                   nl.id, COALESCE(nl.display_name, nl.lesson_name),
+                   COUNT(na.id), COALESCE(AVG(CASE WHEN na.is_correct THEN 100.0 ELSE 0.0 END),0)
+            FROM users u JOIN nvr_attempts na ON na.user_id=u.user_id
+            JOIN nvr_lessons nl ON nl.id=na.lesson_id
+            WHERE u.role!='admin' GROUP BY u.user_id,u.name,u.email,nl.id,nl.lesson_name,nl.display_name
+            HAVING COUNT(na.id)>=1 ORDER BY u.email,nl.id""")
+        for r in cur.fetchall():
+            att, acc, mastery = _mastery(r[5], r[6])
+            results.append({"user_id":r[0],"name":r[1] or "","email":r[2],"module":"NVRSprint",
+                "lesson":r[4],"lesson_id":r[3],"attempts":att,"accuracy":round(acc,1),
+                "mastery":mastery,"serving_difficulty":diff_map[mastery]})
+        # GrammarSprint
+        cur.execute("""
+            SELECT u.user_id, u.name, LOWER(u.email),
+                   gl.lesson_id, COALESCE(gl.display_name, gl.lesson_name),
+                   COUNT(ga.id), COALESCE(AVG(CASE WHEN ga.correct THEN 100.0 ELSE 0.0 END),0)
+            FROM users u JOIN grammar_attempts ga ON ga.user_id=u.user_id
+            JOIN grammar_lessons gl ON gl.lesson_id=ga.lesson_id
+            WHERE u.role!='admin' GROUP BY u.user_id,u.name,u.email,gl.lesson_id,gl.lesson_name,gl.display_name
+            HAVING COUNT(ga.id)>=1 ORDER BY u.email,gl.lesson_id""")
+        for r in cur.fetchall():
+            att, acc, mastery = _mastery(r[5], r[6])
+            results.append({"user_id":r[0],"name":r[1] or "","email":r[2],"module":"GrammarSprint",
+                "lesson":r[4],"lesson_id":r[3],"attempts":att,"accuracy":round(acc,1),
+                "mastery":mastery,"serving_difficulty":diff_map[mastery]})
+        return results
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/admin/user-activity")
 def get_user_activity(user=Depends(get_current_user)):
     if user.get("role") != "admin":
