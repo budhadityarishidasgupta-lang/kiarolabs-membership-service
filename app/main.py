@@ -1519,35 +1519,36 @@ def get_student_mastery_overview(user=Depends(get_current_user)):
             att, acc, mastery = _mastery(r[5], r[6])
             results.append({"user_id":r[0],"name":r[1] or "","email":r[2],"module":"MathSprint",
                 "lesson":r[4],"lesson_id":r[3],"attempts":att,"accuracy":round(acc,1),
-                "mastery":mastery,"serving_difficulty":diff_map[mastery]})
-        # NVRSprint
+                "mastery_level":mastery,"serving_difficulty":diff_map[mastery]})
+        # NVRSprint — nvr_attempts has no lesson_id; join via pattern_id(text)->nvr_questions.question_id->topic->nvr_lessons.topic
         cur.execute("""
             SELECT u.user_id, u.name, LOWER(u.email),
                    nl.id, COALESCE(nl.display_name, nl.lesson_name),
                    COUNT(na.id), COALESCE(AVG(CASE WHEN na.is_correct THEN 100.0 ELSE 0.0 END),0)
             FROM users u JOIN nvr_attempts na ON na.user_id=u.user_id
-            JOIN nvr_lessons nl ON nl.id=na.lesson_id
+            JOIN nvr_questions nq ON nq.question_id=na.pattern_id
+            JOIN nvr_lessons nl ON nl.topic=nq.topic
             WHERE u.role!='admin' GROUP BY u.user_id,u.name,u.email,nl.id,nl.lesson_name,nl.display_name
             HAVING COUNT(na.id)>=1 ORDER BY u.email,nl.id""")
         for r in cur.fetchall():
             att, acc, mastery = _mastery(r[5], r[6])
             results.append({"user_id":r[0],"name":r[1] or "","email":r[2],"module":"NVRSprint",
                 "lesson":r[4],"lesson_id":r[3],"attempts":att,"accuracy":round(acc,1),
-                "mastery":mastery,"serving_difficulty":diff_map[mastery]})
-        # GrammarSprint
+                "mastery_level":mastery,"serving_difficulty":diff_map[mastery]})
+        # GrammarSprint — grammar_attempts PK is attempt_id
         cur.execute("""
             SELECT u.user_id, u.name, LOWER(u.email),
                    gl.lesson_id, COALESCE(gl.display_name, gl.lesson_name),
-                   COUNT(ga.id), COALESCE(AVG(CASE WHEN ga.correct THEN 100.0 ELSE 0.0 END),0)
+                   COUNT(ga.attempt_id), COALESCE(AVG(CASE WHEN ga.correct THEN 100.0 ELSE 0.0 END),0)
             FROM users u JOIN grammar_attempts ga ON ga.user_id=u.user_id
             JOIN grammar_lessons gl ON gl.lesson_id=ga.lesson_id
             WHERE u.role!='admin' GROUP BY u.user_id,u.name,u.email,gl.lesson_id,gl.lesson_name,gl.display_name
-            HAVING COUNT(ga.id)>=1 ORDER BY u.email,gl.lesson_id""")
+            HAVING COUNT(ga.attempt_id)>=1 ORDER BY u.email,gl.lesson_id""")
         for r in cur.fetchall():
             att, acc, mastery = _mastery(r[5], r[6])
             results.append({"user_id":r[0],"name":r[1] or "","email":r[2],"module":"GrammarSprint",
                 "lesson":r[4],"lesson_id":r[3],"attempts":att,"accuracy":round(acc,1),
-                "mastery":mastery,"serving_difficulty":diff_map[mastery]})
+                "mastery_level":mastery,"serving_difficulty":diff_map[mastery]})
         return results
     finally:
         cur.close()
