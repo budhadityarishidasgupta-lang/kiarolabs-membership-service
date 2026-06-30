@@ -480,7 +480,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                     "word_audio": "",
                     "masked_word": "",
                     "hint": "",
-                    "example_sentence": clean_text(item.get("example_sentence")),
+                    "example_sentence": None,
                     "lesson_item_count": lesson_item_count,
                     "weak_word_id": weak_word_id,
                     "resume_from_word_id": resume_word_id,
@@ -585,7 +585,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
             "word_audio": "",
             "masked_word": "",
             "hint": "",
-            "example_sentence": clean_text(item.get("example_sentence")),
+            "example_sentence": None,
             "lesson_item_count": 0,
         }
 
@@ -602,7 +602,7 @@ def get_word_by_id(user_id: int, word_id: int):
         "word_id": word_id,
         "masked_word": mask_word_simple(details["word"]),
         "hint": details["hint"] or "",
-        "example_sentence": clean_text(item.get("example_sentence")),
+        "example_sentence": clean_text(details.get("example_sentence")),
         "encouragement_message": None,
         "review_reason": None,
         "is_review": False,
