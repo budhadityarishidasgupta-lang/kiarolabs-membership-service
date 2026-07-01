@@ -1584,7 +1584,9 @@ def get_user_activity(user=Depends(get_current_user)):
                 -- English/Grammar printable submissions
                 (SELECT COUNT(DISTINCT paper_code) FROM english_attempts ea WHERE ea.user_id = u.user_id) as english_papers,
                 -- Maths printable submissions
-                (SELECT COUNT(*) FROM math_submission_attempts msa WHERE msa.user_id = u.user_id) as math_papers
+                (SELECT COUNT(*) FROM math_submission_attempts msa WHERE msa.user_id = u.user_id) as math_papers,
+                -- SpellingSprint attempts
+                (SELECT COUNT(*) FROM spelling_attempts sa WHERE sa.user_id = u.user_id) as spelling_attempts
             FROM users u
             WHERE u.role != 'admin'
             ORDER BY u.last_login DESC NULLS LAST
@@ -1605,6 +1607,7 @@ def get_user_activity(user=Depends(get_current_user)):
                     "vr_papers": int(r[8] or 0),
                     "english_papers": int(r[9] or 0),
                     "math_papers": int(r[10] or 0),
+                    "spelling_sprint": int(r[11] or 0),
                 },
             }
             for r in rows
