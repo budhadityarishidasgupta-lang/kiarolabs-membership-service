@@ -76,7 +76,7 @@ def get_student_mastery_grammar(cur, user_id: int, lesson_id: int) -> str:
     cur.execute(
         """
         SELECT COUNT(*) AS attempts,
-               COALESCE(AVG(CASE WHEN is_correct THEN 100.0 ELSE 0.0 END), 0) AS accuracy
+               COALESCE(AVG(CASE WHEN correct THEN 100.0 ELSE 0.0 END), 0) AS accuracy
         FROM grammar_attempts
         WHERE user_id = %s AND lesson_id = %s
         """,
@@ -91,7 +91,7 @@ def get_student_mastery_words(cur, user_id: int, lesson_id: int) -> str:
     cur.execute(
         """
         SELECT COUNT(*) AS attempts,
-               COALESCE(AVG(CASE WHEN is_correct THEN 100.0 ELSE 0.0 END), 0) AS accuracy
+               COALESCE(AVG(CASE WHEN correct THEN 100.0 ELSE 0.0 END), 0) AS accuracy
         FROM words_attempts
         WHERE user_id = %s AND lesson_id = %s
         """,
