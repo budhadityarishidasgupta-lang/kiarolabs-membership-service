@@ -61,8 +61,9 @@ def get_student_mastery_nvr(cur, user_id: int, lesson_id: int) -> str:
         """
         SELECT COUNT(*) AS attempts,
                COALESCE(AVG(CASE WHEN is_correct THEN 100.0 ELSE 0.0 END), 0) AS accuracy
-        FROM nvr_attempts
-        WHERE user_id = %s AND lesson_id = %s
+        FROM nvr_attempts na
+        JOIN nvr_lesson_questions lq ON lq.question_id = na.pattern_id::integer
+        WHERE na.user_id = %s AND lq.lesson_id = %s
         """,
         (user_id, lesson_id),
     )
