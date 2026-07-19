@@ -16,6 +16,7 @@ from app.admin.branding_router import router as admin_branding_router
 from app.admin.curriculum_router import router as admin_curriculum_router
 from app.practice.router import admin_router as practice_admin_router
 from app.practice.router import router as practice_router
+from app.practice.grammar_router import router as grammar_router
 from app.practice.math_test_engine import init_math_submission_tables
 from app.repositories.nvr_init import init_nvr_tables
 from app.ingestion.english_printable.service import init_english_paper_printable_tables
@@ -2434,6 +2435,7 @@ def validate_user(email: str):
 # =========================
 app.include_router(practice_router, prefix="")
 app.include_router(practice_admin_router)
+app.include_router(grammar_router)
 app.include_router(comprehension_router)
 app.include_router(auth_reset_router)
 app.include_router(admin_ingestion_router)
