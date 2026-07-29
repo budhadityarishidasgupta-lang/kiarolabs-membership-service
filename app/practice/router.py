@@ -2897,3 +2897,38 @@ def toggle_comprehension_passage(passage_id: int, user=Depends(get_current_user)
     finally:
         cur.close()
         conn.close()
+
+@router.get("/comprehension/passages/{passage_id}/export")
+def export_comprehension_passage(passage_id: int, user=Depends(get_current_user)):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT passage_id, title, passage_text, difficulty FROM comprehension_passages WHERE passage_id = %s", (passage_id,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(status_code=404, detail="Passage not found")
+        cur.execute("""
+            SELECT question_text, option_a, option_b, option_c, option_d, correct_answer, question_type, sort_order
+            FROM comprehension_questions WHERE passage_id = %s ORDER BY sort_order
+        """, (passage_id,))
+        questions = cur.fetchall()
+        rows = []
+        for i, q in enumerate(questions):
+            rows.append({
+                "passage_id": p[0],
+                "new_passage": "",
+                "title": p[1] if i == 0 else "",
+                "passage_text": p[2] if i == 0 else "",
+                "difficulty": p[3] if i == 0 else "",
+                "question_text": q[0],
+                "option_a": q[1], "option_b": q[2], "option_c": q[3], "option_d": q[4],
+                "correct_answer": q[5],
+                "question_type": q[6] or "comprehension",
+                "sort_order": q[7] or i + 1,
+            })
+        return rows
+    finally:
+        cur.close()
+        conn.close()
