@@ -553,7 +553,7 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "session_id": active_session_id,
                 "lesson_id": lesson_id,
                 "word_id": selected_word_id,
-                "word_audio": "",
+                "word_audio": item["word"],
                 "masked_word": mask_word(item["word"], patterns, blanks_count=3),
                 "hint": clean_text(item["hint"]),
                 "example_sentence": clean_text(item.get("example_sentence")),
