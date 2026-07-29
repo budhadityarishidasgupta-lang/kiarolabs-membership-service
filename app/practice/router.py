@@ -2757,53 +2757,62 @@ def upload_comprehension_csv(
     try:
         # ✅ FIX 1 — Handle BOM properly
         content = file.file.read().decode("utf-8-sig")
-
         reader = csv.DictReader(io.StringIO(content))
-
         current_passage_id = None
-
-        for idx, row in enumerate(reader, start=1):
-            # ✅ FIX 2 — Clean headers + values
-            row = {
-                (k.strip() if k else k): (v.strip() if isinstance(v, str) else v)
-                for k, v in row.items()
-            }
-
-            # ✅ FIX 3 — Validate required fields
-            if not row.get("question_text"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Row {idx}: missing question_text"
-                )
-
-            # ✅ FIX 4 — Create passage
-            if row.get("new_passage") == "1":
-                current_passage_id = insert_passage(
-                    title=row.get("title"),
-                    passage_text=row.get("passage_text"),
-                    difficulty=row.get("difficulty")
-                )
-
-            # ✅ FIX 5 — Guardrail (THIS WAS YOUR 500 ERROR)
-            if not current_passage_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Row {idx}: question before passage"
-                )
-
-            # ✅ FIX 6 — Safe insert
-            insert_question(
-                passage_id=current_passage_id,
-                question_text=row["question_text"],
-                a=row["option_a"],
-                b=row["option_b"],
-                c=row["option_c"],
-                d=row["option_d"],
-                correct=row["correct_answer"],
-                qtype=row.get("question_type", "comprehension"),
-                order=int(row.get("sort_order") or 0)
-            )
-
+        upsert_passage_ids = set()  # track passages that were upserted (questions replaced)
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            for idx, row in enumerate(reader, start=1):
+                row = {
+                    (k.strip() if k else k): (v.strip() if isinstance(v, str) else v)
+                    for k, v in row.items()
+                }
+                if not row.get("question_text"):
+                    raise HTTPException(status_code=400, detail=f"Row {idx}: missing question_text")
+                # Upsert mode: passage_id provided → update existing passage
+                if row.get("passage_id"):
+                    pid = int(row["passage_id"])
+                    if pid != current_passage_id:
+                        current_passage_id = pid
+                        # Update passage metadata if provided
+                        if row.get("title") or row.get("passage_text") or row.get("difficulty"):
+                            cur.execute("""
+                                UPDATE comprehension_passages
+                                SET title = COALESCE(NULLIF(%s,''), title),
+                                    passage_text = COALESCE(NULLIF(%s,''), passage_text),
+                                    difficulty = COALESCE(NULLIF(%s,''), difficulty)
+                                WHERE passage_id = %s
+                            """, (row.get("title"), row.get("passage_text"), row.get("difficulty"), pid))
+                        # Delete existing questions for this passage (replace mode)
+                        if pid not in upsert_passage_ids:
+                            cur.execute("DELETE FROM comprehension_questions WHERE passage_id = %s", (pid,))
+                            upsert_passage_ids.add(pid)
+                # New passage mode
+                elif row.get("new_passage") == "1":
+                    current_passage_id = insert_passage(
+                        title=row.get("title"),
+                        passage_text=row.get("passage_text"),
+                        difficulty=row.get("difficulty")
+                    )
+                if not current_passage_id:
+                    raise HTTPException(status_code=400, detail=f"Row {idx}: question before passage")
+                cur.execute("""
+                    INSERT INTO comprehension_questions
+                    (passage_id, question_text, option_a, option_b, option_c, option_d, correct_answer, question_type, sort_order)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    current_passage_id,
+                    row["question_text"],
+                    row["option_a"], row["option_b"], row["option_c"], row["option_d"],
+                    row["correct_answer"],
+                    row.get("question_type", "comprehension"),
+                    int(row.get("sort_order") or 0)
+                ))
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
         return {"status": "success"}
 
     except HTTPException:
@@ -2815,3 +2824,76 @@ def upload_comprehension_csv(
         print(traceback.format_exc())
 
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/comprehension/admin-passages")
+def get_admin_comprehension_passages(user=Depends(get_current_user)):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT
+                p.passage_id,
+                p.title,
+                p.difficulty,
+                p.is_active,
+                p.created_at,
+                COUNT(q.question_id) AS question_count
+            FROM comprehension_passages p
+            LEFT JOIN comprehension_questions q ON q.passage_id = p.passage_id
+            GROUP BY p.passage_id, p.title, p.difficulty, p.is_active, p.created_at
+            ORDER BY p.created_at DESC
+        """)
+        rows = cur.fetchall()
+        cols = [d[0] for d in cur.description]
+        result = []
+        for row in rows:
+            r = dict(zip(cols, row))
+            r["status"] = "Active" if r.get("is_active") else "Inactive"
+            r["id"] = r["passage_id"]
+            r["level"] = r.get("difficulty") or ""
+            r["created_at"] = r["created_at"].isoformat() if r.get("created_at") else None
+            result.append(r)
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.delete("/comprehension/passages/{passage_id}")
+def delete_comprehension_passage(passage_id: int, user=Depends(get_current_user)):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM comprehension_questions WHERE passage_id = %s", (passage_id,))
+        cur.execute("DELETE FROM comprehension_passages WHERE passage_id = %s", (passage_id,))
+        conn.commit()
+        return {"status": "deleted"}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.patch("/comprehension/passages/{passage_id}/toggle")
+def toggle_comprehension_passage(passage_id: int, user=Depends(get_current_user)):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE comprehension_passages SET is_active = NOT is_active WHERE passage_id = %s RETURNING is_active",
+            (passage_id,)
+        )
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            raise HTTPException(status_code=404, detail="Passage not found")
+        return {"is_active": row[0], "status": "Active" if row[0] else "Inactive"}
+    finally:
+        cur.close()
+        conn.close()
