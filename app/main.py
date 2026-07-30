@@ -2134,6 +2134,10 @@ def _resolve_gumroad_product_key(identifiers: set[str], product_name: str = "") 
 
 def _is_purchase_event(event_type: str) -> bool:
     normalized = (event_type or "").strip().lower()
+    # Gumroad often omits the event field on sale webhooks; treat blank as a sale.
+    # Only explicit refund/chargeback events are non-purchases.
+    if not normalized:
+        return True
     return normalized in {"sale", "purchase", "sale.created", "purchase.created"}
 
 
