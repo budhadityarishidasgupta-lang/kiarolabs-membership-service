@@ -2553,7 +2553,7 @@ def get_comprehension_question(
 
         cur.execute(
             """
-            SELECT question_id, question_text, option_a, option_b, option_c, option_d
+            SELECT question_id, question_text, option_a, option_b, option_c, option_d, option_e
             FROM comprehension_questions
             WHERE question_id = %s
               AND passage_id = %s
@@ -2605,7 +2605,7 @@ def get_comprehension_question(
         payload = {
             "question_id": question[0],
             "question_text": question[1],
-            "options": [question[2], question[3], question[4], question[5]],
+            "options": [option for option in [question[2], question[3], question[4], question[5], question[6]] if option],
         }
 
         return _add_review_metadata(
@@ -2799,12 +2799,12 @@ def upload_comprehension_csv(
                     raise HTTPException(status_code=400, detail=f"Row {idx}: question before passage")
                 cur.execute("""
                     INSERT INTO comprehension_questions
-                    (passage_id, question_text, option_a, option_b, option_c, option_d, correct_answer, question_type, sort_order)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (passage_id, question_text, option_a, option_b, option_c, option_d, option_e, correct_answer, question_type, sort_order)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     current_passage_id,
                     row["question_text"],
-                    row["option_a"], row["option_b"], row["option_c"], row["option_d"],
+                    row["option_a"], row["option_b"], row["option_c"], row["option_d"], row.get("option_e") or None,
                     row["correct_answer"],
                     row.get("question_type", "comprehension"),
                     int(row.get("sort_order") or 0)
@@ -2910,7 +2910,7 @@ def export_comprehension_passage(passage_id: int, user=Depends(get_current_user)
         if not p:
             raise HTTPException(status_code=404, detail="Passage not found")
         cur.execute("""
-            SELECT question_text, option_a, option_b, option_c, option_d, correct_answer, question_type, sort_order
+            SELECT question_text, option_a, option_b, option_c, option_d, option_e, correct_answer, question_type, sort_order
             FROM comprehension_questions WHERE passage_id = %s ORDER BY sort_order
         """, (passage_id,))
         questions = cur.fetchall()
@@ -2923,10 +2923,10 @@ def export_comprehension_passage(passage_id: int, user=Depends(get_current_user)
                 "passage_text": p[2] if i == 0 else "",
                 "difficulty": p[3] if i == 0 else "",
                 "question_text": q[0],
-                "option_a": q[1], "option_b": q[2], "option_c": q[3], "option_d": q[4],
-                "correct_answer": q[5],
-                "question_type": q[6] or "comprehension",
-                "sort_order": q[7] or i + 1,
+                "option_a": q[1], "option_b": q[2], "option_c": q[3], "option_d": q[4], "option_e": q[5],
+                "correct_answer": q[6],
+                "question_type": q[7] or "comprehension",
+                "sort_order": q[8] or i + 1,
             })
         return rows
     finally:

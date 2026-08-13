@@ -38,7 +38,7 @@ def start_passage(passage_id, user_id=None):
 
         # Fetch questions
         cur.execute("""
-            SELECT question_id, question_text, option_a, option_b, option_c, option_d, sort_order
+            SELECT question_id, question_text, option_a, option_b, option_c, option_d, option_e, sort_order
             FROM comprehension_questions
             WHERE passage_id = %s
             ORDER BY sort_order ASC, question_id ASC
@@ -68,7 +68,7 @@ def start_passage(passage_id, user_id=None):
                 {
                     "question_id": q[0],
                     "question_text": q[1],
-                    "options": [q[2], q[3], q[4], q[5]],
+                    "options": [option for option in [q[2], q[3], q[4], q[5], q[6]] if option],
                     "attempted": q[0] in attempted
                 }
                 for q in questions

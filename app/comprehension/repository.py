@@ -113,7 +113,7 @@ def get_questions_for_passage(passage_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT question_id, question_text, option_a, option_b, option_c, option_d, correct_answer
+        SELECT question_id, question_text, option_a, option_b, option_c, option_d, option_e, correct_answer
         FROM comprehension_questions
         WHERE passage_id = %s
         ORDER BY sort_order ASC;
@@ -133,7 +133,7 @@ def get_question_by_id(question_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT question_id, passage_id, question_text, option_a, option_b, option_c, option_d, correct_answer
+        SELECT question_id, passage_id, question_text, option_a, option_b, option_c, option_d, option_e, correct_answer
         FROM comprehension_questions
         WHERE question_id = %s;
     """, (question_id,))
@@ -287,15 +287,15 @@ def get_next_comprehension_question(
             conn.close()
 
 
-def insert_question(passage_id, question_text, a, b, c, d, correct, qtype, order):
+def insert_question(passage_id, question_text, a, b, c, d, correct, qtype, order, e=None):
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
         INSERT INTO comprehension_questions
-        (passage_id, question_text, option_a, option_b, option_c, option_d, correct_answer, question_type, sort_order)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-    """, (passage_id, question_text, a, b, c, d, correct, qtype, order))
+        (passage_id, question_text, option_a, option_b, option_c, option_d, option_e, correct_answer, question_type, sort_order)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+    """, (passage_id, question_text, a, b, c, d, e, correct, qtype, order))
 
     conn.commit()
 
