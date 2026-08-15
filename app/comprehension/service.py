@@ -105,5 +105,6 @@ def submit_answer(user_id, passage_id, question_id, selected_answer):
     )
 
     return {
-        "correct": correct
+        "correct": correct,
+        "correct_answer": question["correct_answer"],
     }
