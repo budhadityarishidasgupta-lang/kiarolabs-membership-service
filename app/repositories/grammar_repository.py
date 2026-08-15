@@ -524,8 +524,10 @@ def get_grammar_courses(user_id: int | None = None) -> list[dict[str, Any]]:
         courses = _rows_as_dicts(cur)
 
         lesson_order_by = _order_by_existing_columns(columns=lesson_columns, preferred=["sort_order", "lesson_id"])
+        active_lesson_filter = "WHERE COALESCE(is_active, TRUE) = TRUE " if "is_active" in lesson_columns else ""
         cur.execute(
             "SELECT * FROM grammar_lessons "
+            + active_lesson_filter
             + (lesson_order_by or "")
         )
         lessons = _rows_as_dicts(cur)
