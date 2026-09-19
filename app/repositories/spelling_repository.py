@@ -79,34 +79,32 @@ def get_spelling_lesson_item_count(lesson_id: int, conn=None) -> int:
 
 def get_resume_word_id(user_id, lesson_id, conn):
     """
-    Returns next word_id based on last correct attempt.
-    Uses spelling_lesson_items as the source-of-truth lesson mapping.
+    Returns the next not-yet-attempted word in lesson order.
+
+    Incorrect answers still count as progress and are handled by spaced review
+    after the first pass rather than restarting the lesson.
     """
 
     query = """
-        WITH last_correct AS (
-            SELECT word_id
-            FROM spelling_attempts
-            WHERE user_id = %s
-              AND lesson_id = %s
-              AND correct = TRUE
-            ORDER BY created_at DESC
-            LIMIT 1
-        )
         SELECT li.word_id
         FROM spelling_lesson_items li
         JOIN spelling_lessons l
           ON l.lesson_id = li.lesson_id
-        JOIN last_correct lc ON TRUE
         WHERE li.lesson_id = %s
           AND l.is_active = TRUE
-          AND li.word_id > lc.word_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM spelling_attempts sa
+              WHERE sa.user_id = %s
+                AND sa.lesson_id = %s
+                AND sa.word_id = li.word_id
+          )
         ORDER BY li.word_id ASC
         LIMIT 1
     """
 
     with conn.cursor() as cur:
-        cur.execute(query, (user_id, lesson_id, lesson_id))
+        cur.execute(query, (lesson_id, user_id, lesson_id))
         result = cur.fetchone()
 
     return result[0] if result else None
@@ -401,8 +399,8 @@ def get_word_timing_stats(user_id, lesson_id, word_id, conn):
 
 def get_next_unmastered_word(user_id, lesson_id, conn):
     """
-    Returns next unmastered word in lesson.
-    Skips mastered words.
+    Returns the next not-yet-attempted word in lesson order.
+    Incorrect words are selected by spaced review after the first pass.
     """
 
     query = """
@@ -412,14 +410,12 @@ def get_next_unmastered_word(user_id, lesson_id, conn):
           ON l.lesson_id = li.lesson_id
         WHERE li.lesson_id = %s
           AND l.is_active = TRUE
-          AND li.word_id NOT IN (
-              SELECT word_id
-              FROM spelling_attempts
-              WHERE user_id = %s
-                AND lesson_id = %s
-              GROUP BY word_id
-              HAVING COUNT(*) FILTER (WHERE correct = TRUE) >= 2
-                 AND COUNT(*) FILTER (WHERE correct = FALSE) = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM spelling_attempts sa
+              WHERE sa.user_id = %s
+                AND sa.lesson_id = %s
+                AND sa.word_id = li.word_id
           )
         ORDER BY li.word_id ASC
         LIMIT 1
@@ -430,6 +426,29 @@ def get_next_unmastered_word(user_id, lesson_id, conn):
         result = cur.fetchone()
 
     return result[0] if result else None
+
+
+def get_lesson_progress_summary(user_id: int, lesson_id: int, conn) -> dict:
+    """Return durable totals used by the client after logout and re-login."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*),
+                   COUNT(*) FILTER (WHERE correct = TRUE),
+                   COUNT(*) FILTER (WHERE correct = FALSE)
+            FROM spelling_attempts
+            WHERE user_id = %s AND lesson_id = %s
+            """,
+            (user_id, lesson_id),
+        )
+        row = cur.fetchone() or (0, 0, 0)
+    attempted_count = int(row[0] or 0)
+    return {
+        "attempted_count": attempted_count,
+        "correct_count": int(row[1] or 0),
+        "incorrect_count": int(row[2] or 0),
+        "next_question_number": attempted_count + 1,
+    }
 
 
 def get_next_lesson_word_after(lesson_id: int, current_word_id: int, conn):

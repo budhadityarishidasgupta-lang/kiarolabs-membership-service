@@ -18,6 +18,7 @@ from app.repositories.spelling_repository import (
     is_word_mastered,
     get_word_timing_stats,
     get_next_unmastered_word,
+    get_lesson_progress_summary,
     get_next_lesson_word_after,
     get_spelling_next_item,
     get_spelling_micro_challenge_data,
@@ -193,17 +194,17 @@ def _build_progression_candidate(
         conn=conn,
     )
 
-    if session_bootstrap:
-        progression_word_id = resume_word_id or next_unmastered_word_id
-        selected_strategy = "resume" if resume_word_id else "next"
+    # The resume cursor is based on all attempts, not only correct answers.
+    # Prefer it in every session so an incorrect answer never sends the learner
+    # back to the beginning or causes an already attempted word to repeat while
+    # unseen lesson words remain.
+    progression_word_id = resume_word_id or next_unmastered_word_id
+    if resume_word_id:
+        selected_strategy = "resume"
+    elif next_unmastered_word_id:
+        selected_strategy = "next"
     else:
-        progression_word_id = next_progression_word_id or next_unmastered_word_id or resume_word_id
-        if next_progression_word_id:
-            selected_strategy = "next"
-        elif next_unmastered_word_id:
-            selected_strategy = "next"
-        else:
-            selected_strategy = "resume"
+        selected_strategy = "resume"
 
     if not progression_word_id:
         return None, resume_word_id, next_unmastered_word_id
@@ -353,6 +354,11 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
         conn = get_connection()
         try:
             lesson_item_count = get_spelling_lesson_item_count(lesson_id, conn=conn)
+            progress_summary = get_lesson_progress_summary(
+                user_id=user_id,
+                lesson_id=lesson_id,
+                conn=conn,
+            )
             latest_attempt_summary = get_latest_attempt_summary(
                 user_id=user_id,
                 lesson_id=lesson_id,
@@ -558,6 +564,10 @@ def get_spelling_question(lesson_id: int, user_id: int, session_id: str | None =
                 "hint": clean_text(item["hint"]),
                 "example_sentence": clean_text(item.get("example_sentence")),
                 "lesson_item_count": lesson_item_count,
+                "attempted_count": progress_summary["attempted_count"],
+                "correct_count": progress_summary["correct_count"],
+                "incorrect_count": progress_summary["incorrect_count"],
+                "next_question_number": progress_summary["next_question_number"],
                 "weak_word_id": weak_word_id,
                 "resume_from_word_id": resume_word_id,
                 "next_unmastered_word_id": next_unmastered_word_id,
